@@ -213,6 +213,10 @@ pub(super) fn reject_foreign_prefixes(
 
 #[test]
 fn stage3_p64_extension_endpoint_matches_the_committed_base_prefix_oracle() {
+    p64_typed_prefix_endpoint(true, 0);
+}
+
+pub(super) fn p64_typed_prefix_endpoint(word: bool, planes: usize) -> BinaryCommittedGroupManifest {
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_params::binary_setup::BinaryFieldProfile;
     use akita_types::binary_source::{
@@ -221,16 +225,16 @@ fn stage3_p64_extension_endpoint_matches_the_committed_base_prefix_oracle() {
     use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
-    let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
     let plan = BinaryRootWitnessPlan::for_profile(
         manifest.descriptor(),
         3,
         64,
         BinaryFieldProfile::P64,
-        true,
-        0,
+        word,
+        planes,
     )
     .unwrap();
+    let typed = BinaryTypedPrefix::from_plan(&manifest, &plan).unwrap();
     let extension = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + i * 31 + c * 43) as u64));
     let stage2 = (0..plan.repacking().domain_len().trailing_zeros())
         .map(|i| extension(i as usize))
@@ -241,7 +245,7 @@ fn stage3_p64_extension_endpoint_matches_the_committed_base_prefix_oracle() {
     let a = BinaryAProduct::new(&plan, &rho, &stage2, typed.domain_len).unwrap();
     let batches = [
         vec![extension(3000); manifest.b_rows()],
-        vec![extension(4000); manifest.d_label(true, 0).unwrap().rank as usize],
+        vec![extension(4000); manifest.d_label(word, planes).unwrap().rank as usize],
     ];
     let weights = typed
         .prover_weights(
@@ -285,4 +289,5 @@ fn stage3_p64_extension_endpoint_matches_the_committed_base_prefix_oracle() {
             });
         assert_ne!(online * altered, online * eval);
     }
+    manifest
 }
