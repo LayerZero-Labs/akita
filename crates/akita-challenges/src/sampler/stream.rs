@@ -578,11 +578,13 @@ impl BinomialTable {
                 previous = column;
             }
         }
-        let narrow_entries = if max_n <= 64 {
-            entries.iter().map(|&v| v as u64).collect()
-        } else {
-            Vec::new()
-        };
+        let mut narrow_entries = Vec::new();
+        if max_n <= 64 {
+            narrow_entries.try_reserve_exact(len).map_err(|_| {
+                AkitaError::InvalidInput("sparse binomial table allocation failed".into())
+            })?;
+            narrow_entries.extend(entries.iter().map(|&v| v as u64));
+        }
         Ok(Self {
             max_n,
             max_k,
