@@ -26,10 +26,10 @@ pub(super) fn plan(
     let prime = PrimePlaneManifest::new(
         &descriptor,
         (planes > 0).then(|| PrimeGroupClaim {
-            point: vec![2; arity],
+            point: vec![2.into(); arity],
             evaluations: vec![PrimePlaneClaim {
                 polynomial: 0,
-                value: 0,
+                value: 0.into(),
             }],
         }),
     )?;

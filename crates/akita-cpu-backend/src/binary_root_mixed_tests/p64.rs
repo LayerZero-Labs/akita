@@ -12,7 +12,7 @@ use akita_types::binary_source::{
     binary_word_manifest_fixture, BinaryRootPublic, OrdinaryNativeRootPlan, PrimeGroupClaim,
     PrimePlaneClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
 };
-use jolt_field::{CanonicalEncoding, Prime64Offset59 as F, Ring, Zero};
+use jolt_field::{CanonicalEncoding, Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
 
 #[test]
 fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
@@ -75,39 +75,42 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             FoldChallengeDistribution::BinaryRoot,
         )
         .unwrap();
-        let point = (0..11).map(|i| 19 + i * 7).collect::<Vec<u128>>();
+        type E = Ext2<F>;
+        let point = (0..11)
+            .map(|i| E::from_base_fn(|c| F::from_u64(19 + i * 7 + c as u64 * 13)))
+            .collect::<Vec<_>>();
         // Independent evaluation of the signed source, in scalar row/column/
         // coefficient order, including the virtual zero coefficients.
-        let low = EqPolynomial::evals(
-            &point[..8]
-                .iter()
-                .copied()
-                .map(F::from_u128)
-                .collect::<Vec<_>>(),
-        )
-        .unwrap();
-        let high = EqPolynomial::evals(
-            &point[8..]
-                .iter()
-                .copied()
-                .map(F::from_u128)
-                .collect::<Vec<_>>(),
-        )
-        .unwrap();
-        let mut value = F::zero();
+        let low = EqPolynomial::evals(&point[..8]).unwrap();
+        let high = EqPolynomial::evals(&point[8..]).unwrap();
+        let mut value = E::zero();
         for (column, source) in sources.iter().enumerate() {
             let components = unpack_signed_components(source).unwrap();
             for (row, component) in components.iter().enumerate() {
                 for (coefficient, &v) in component.iter().enumerate() {
-                    value += high[column + 2 * row] * low[coefficient] * F::from_i128(v);
+                    value += high[column + 2 * row] * low[coefficient] * E::from_i128(v);
                 }
             }
         }
+        assert_ne!(value.base_coefficient(1), F::zero());
         let prime_claim = PrimeGroupClaim {
-            point,
+            point: point
+                .iter()
+                .map(|v| {
+                    [
+                        v.base_coefficient(0).to_u128_checked().unwrap(),
+                        v.base_coefficient(1).to_u128_checked().unwrap(),
+                    ]
+                    .into()
+                })
+                .collect(),
             evaluations: vec![PrimePlaneClaim {
                 polynomial: 0,
-                value: value.to_u128_checked().unwrap(),
+                value: [
+                    value.base_coefficient(0).to_u128_checked().unwrap(),
+                    value.base_coefficient(1).to_u128_checked().unwrap(),
+                ]
+                .into(),
             }],
         };
         let prime =
@@ -128,7 +131,8 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             BinaryRootRelation::image_digits(&images).unwrap(),
             prime_plane_digits::<F>(descriptor, &prime, &sources).unwrap(),
         ];
-        assert_eq!(natural[2].len(), 2 * 22 * 162);
+        assert_eq!(natural[2].len(), 2 * 2 * 22 * 162);
+        assert!(natural[2][2 * 22 * 162..].iter().any(|&digit| digit != 0));
         let ordinary = profile.map(|profile| {
             let ordinary = OrdinaryNativeRootPlan::new(profile, 3).unwrap();
             let compression = profile.outer_compression_plan().unwrap();
@@ -173,16 +177,31 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             binary_public_digit_commitment::<F>(&seed, manifest.b_label(), 0, &natural[1]).unwrap();
         let d = binary_public_digit_commitment::<F>(
             &seed,
-            manifest.d_label(false, 1).unwrap(),
+            manifest.d_label(false, 2).unwrap(),
             0,
             &natural[2],
         )
         .unwrap();
-        let mut bad = prime_claim;
-        bad.evaluations[0].value = (bad.evaluations[0].value + 1) % field.modulus();
-        let bad = PrimePlaneManifest::with_field_profile(descriptor, Some(bad), field).unwrap();
-        let false_public =
-            BinaryRootPublic::new(&manifest, None, &bad, &setup, 1 << 17, 64, profile).unwrap();
+        let mut false_publics = Vec::new();
+        for coordinate in 0..2 {
+            for point in [false, true] {
+                let mut bad = prime_claim.clone();
+                let value = if point {
+                    &mut bad.point[3]
+                } else {
+                    &mut bad.evaluations[0].value
+                };
+                let mut coordinates: [u128; 2] = value.coordinates().try_into().unwrap();
+                coordinates[coordinate] = (coordinates[coordinate] + 1) % field.modulus();
+                *value = coordinates.into();
+                let bad =
+                    PrimePlaneManifest::with_field_profile(descriptor, Some(bad), field).unwrap();
+                false_publics.push(
+                    BinaryRootPublic::new(&manifest, None, &bad, &setup, 1 << 17, 64, profile)
+                        .unwrap(),
+                );
+            }
+        }
         crate::opaque::sumcheck::stage3::p64_root_transcript_tests::root_round_trip(
             &manifest,
             &public,
@@ -194,7 +213,7 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             ordinary
                 .as_ref()
                 .map(|(point, value, payload)| (point.as_slice(), *value, payload.as_slice())),
-            Some(&false_public),
+            &false_publics.iter().collect::<Vec<_>>(),
         );
     }
 }

@@ -115,11 +115,13 @@ fn public(shape: Shape, rng: &mut StdRng) -> BinaryRootPublic {
     });
     let arity = descriptor.index_map().padded_carriers().trailing_zeros() as usize + 8;
     let claims = (shape.prime_planes > 0).then(|| PrimeGroupClaim {
-        point: (0..arity).map(|_| rng.gen::<u128>() >> 1).collect(),
+        point: (0..arity)
+            .map(|_| (rng.gen::<u128>() >> 1).into())
+            .collect(),
         evaluations: (0..shape.prime_planes)
             .map(|polynomial| PrimePlaneClaim {
                 polynomial,
-                value: rng.gen::<u128>() >> 1,
+                value: (rng.gen::<u128>() >> 1).into(),
             })
             .collect(),
     });

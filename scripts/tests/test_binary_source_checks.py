@@ -240,16 +240,20 @@ class BinarySourceAdjointTests(unittest.TestCase):
         bad_product = checks.convolution(rho, operand[::-1])
         bad_adjoint = [bad_product[len(rho) - 1 + s] for s in range(len(rho))]
         self.assertNotEqual(target, checks.dot(bad_adjoint, vector))
-
-    def test_literal_convolution_last_coefficient_is_nonzero(self):
-        # rho[322]=1 gives g[1294]=-1. With v[0]=1, reverse(v)[647]=1,
-        # so the last ordinary convolution coefficient is -1 at degree 1941.
+        # A unit weight at the last high-degree reduction destination and a
+        # constant operand make the full convolution's final coefficient nonzero.
         degree = checks.D
-        last_extended = dict(checks.monomial_reduction(degree, 1, 2 * degree - 2))
-        self.assertEqual(last_extended[322], -1)
-        reverse_last = 1
-        self.assertEqual(last_extended[322] * reverse_last, -1)
-        self.assertEqual((2 * degree - 2) + (degree - 1), 1941)
+        rho = [0] * degree
+        rho[degree // 2 - 2] = 1
+        operand = [1] + [0] * (degree - 1)
+        extended = [
+            sum(rho[index] * coefficient for index, coefficient in
+                checks.monomial_reduction(degree, 1, exponent))
+            for exponent in range(2 * degree - 1)
+        ]
+        product = checks.convolution(extended, operand[::-1])
+        self.assertEqual(len(product), 3 * degree - 2)
+        self.assertNotEqual(product[-1], 0)
 
 
 if __name__ == "__main__":
