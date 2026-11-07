@@ -31,6 +31,7 @@ pub struct Challenges {
     sampled_family: Option<(usize, SparseChallengeConfig)>,
     embedding_stride: usize,
     materialized: std::sync::Arc<std::sync::OnceLock<Vec<SparseChallenge>>>,
+    quartet_codes: std::sync::Arc<std::sync::OnceLock<Vec<[u64; 4]>>>,
 }
 
 impl PartialEq for Challenges {
@@ -38,7 +39,9 @@ impl PartialEq for Challenges {
         self.num_live_blocks_per_claim == other.num_live_blocks_per_claim
             && self.num_claims == other.num_claims
             && ((self.embedding_stride == other.embedding_stride
-                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges))
+                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges)
+                && (!self.challenges.is_empty()
+                    || std::sync::Arc::ptr_eq(&self.quartet_codes, &other.quartet_codes)))
                 || self.as_slice() == other.as_slice())
     }
 }
@@ -54,6 +57,33 @@ impl Challenges {
         let mut result = Self::from_sparse(challenges, blocks, claims)?;
         result.sampled_family = Some((ring_d, config));
         Ok(result)
+    }
+
+    pub(crate) fn from_checked_quartets(
+        packed: Vec<[u64; 4]>,
+        blocks: usize,
+        claims: usize,
+    ) -> Result<Self, AkitaError> {
+        if blocks.checked_mul(claims) != Some(packed.len()) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let cache = std::sync::OnceLock::new();
+        cache.get_or_init(|| packed);
+        Ok(Self {
+            challenges: Vec::new().into(),
+            num_live_blocks_per_claim: blocks,
+            num_claims: claims,
+            sampled_family: Some((
+                64,
+                SparseChallengeConfig {
+                    count_pm1: 31,
+                    count_pm2: 10,
+                },
+            )),
+            embedding_stride: 1,
+            materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+            quartet_codes: std::sync::Arc::new(cache),
+        })
     }
     /// Whether immutable challenge storage was generated in this checked family.
     /// Values supplied through `from_sparse` always require full validation.
@@ -90,6 +120,7 @@ impl Challenges {
             sampled_family: None,
             embedding_stride: 1,
             materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+            quartet_codes: std::sync::Arc::new(std::sync::OnceLock::new()),
         })
     }
 
@@ -97,6 +128,43 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn as_slice(&self) -> &[SparseChallenge] {
+        if self.challenges.is_empty() && self.quartet_codes.get().is_some() {
+            return self.materialized.get_or_init(|| {
+                self.quartet_codes
+                    .get()
+                    .into_iter()
+                    .flatten()
+                    .map(|words| {
+                        let mut p1 = crate::SparseChallengePositions::new();
+                        let mut p2 = crate::SparseChallengePositions::new();
+                        let mut c1 = crate::SparseChallengeCoefficients::new();
+                        let mut c2 = crate::SparseChallengeCoefficients::new();
+                        for q in 0..16 {
+                            let mut code = (words[q / 4] >> (10 * (q % 4))) & 1023;
+                            for i in 0..4 {
+                                let c = (code % 5) as i8 - 2;
+                                code /= 5;
+                                let p = ((4 * q + i) * self.embedding_stride) as u32;
+                                if c.unsigned_abs() == 1 {
+                                    p1.push(p);
+                                    c1.push(c);
+                                }
+                                if c.unsigned_abs() == 2 {
+                                    p2.push(p);
+                                    c2.push(c);
+                                }
+                            }
+                        }
+                        p1.extend(p2);
+                        c1.extend(c2);
+                        SparseChallenge {
+                            positions: p1,
+                            coeffs: c1,
+                        }
+                    })
+                    .collect()
+            });
+        }
         if self.embedding_stride == 1 {
             return &self.challenges;
         }
@@ -126,14 +194,16 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        self.challenges.len()
+        self.quartet_codes
+            .get()
+            .map_or(self.challenges.len(), Vec::len)
     }
 
     /// Whether this challenge set is empty.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.challenges.is_empty()
+        self.len() == 0
     }
 
     /// Number of claims represented by this challenge set.
@@ -181,6 +251,17 @@ impl Challenges {
         F: Field + Ring,
         E: Field + ExtField<F>,
     {
+        if self.quartet_codes.get().is_some()
+            && self.len() >= 1024
+            && self.sampled_family.as_ref().is_some_and(|(d, config)| {
+                *d == alpha_pows.len()
+                    && *d / self.embedding_stride == 64
+                    && config.count_pm1 == 31
+                    && config.count_pm2 == 10
+            })
+        {
+            return self.evaluate_quartets::<F, E>(alpha_pows);
+        }
         let sampled = self
             .sampled_family
             .as_ref()
@@ -190,7 +271,7 @@ impl Challenges {
         } else {
             Vec::new()
         };
-        let source = if sampled.is_some() {
+        let source = if sampled.is_some() && !self.challenges.is_empty() {
             self.challenges.as_ref()
         } else {
             self.as_slice()
@@ -266,6 +347,52 @@ impl Challenges {
         }
 
         source.iter().map(evaluate).collect()
+    }
+
+    fn evaluate_quartets<F: Field + Ring, E: Field + ExtField<F>>(
+        &self,
+        powers: &[E],
+    ) -> Result<Vec<E>, AkitaError> {
+        let codes = self.quartet_codes.get().ok_or(AkitaError::InvalidProof)?;
+        let mut tables = Vec::with_capacity(16 * 625);
+        {
+            for q in 0..16 {
+                let mut p = [E::zero(); 4];
+                for (i, value) in p.iter_mut().enumerate() {
+                    *value = *powers
+                        .get((q * 4 + i) * self.embedding_stride)
+                        .ok_or(AkitaError::InvalidProof)?;
+                }
+                let sum = p.iter().copied().fold(E::zero(), |a, b| a + b);
+                let mut v3 = -(sum + sum);
+                for _ in 0..5 {
+                    let mut v2 = v3;
+                    for _ in 0..5 {
+                        let mut v1 = v2;
+                        for _ in 0..5 {
+                            let mut v0 = v1;
+                            for _ in 0..5 {
+                                tables.push(v0);
+                                v0 += p[0];
+                            }
+                            v1 += p[1];
+                        }
+                        v2 += p[2];
+                    }
+                    v3 += p[3];
+                }
+            }
+        }
+        let mut output = Vec::with_capacity(codes.len());
+        for words in codes {
+            let mut sum = E::zero();
+            for q in 0..16 {
+                let code = ((words[q / 4] >> (10 * (q % 4))) & 1023) as usize;
+                sum += *tables.get(q * 625 + code).ok_or(AkitaError::InvalidProof)?;
+            }
+            output.push(sum);
+        }
+        Ok(output)
     }
 
     /// Select complete claims in the requested order.
@@ -359,6 +486,7 @@ impl Challenges {
                     .map(|(_, config)| (ambient_ring_dimension, *config)),
                 embedding_stride: stride,
                 materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
+                quartet_codes: std::sync::Arc::clone(&self.quartet_codes),
             });
         }
         let source = self.as_slice();
@@ -627,3 +755,6 @@ mod embedding_view_tests {
         assert_eq!(once, eager);
     }
 }
+
+#[cfg(test)]
+mod sampled_evaluation_tests;
