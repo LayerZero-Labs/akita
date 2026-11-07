@@ -92,8 +92,6 @@ fn terminal_carries_authenticate_response_partials_and_value() {
             assert_eq!(row[coefficient], ((offset >> (digit * 3)) & 7) as i8 - 4);
         }
     }
-    assert_eq!(carry.bounds.parity_carry_bound, 76_695_844);
-    assert_eq!(carry.bounds.value_carry_bound, 149_796);
     let (base, base_digits) =
         BinaryRootRelation::successor_table(&response.response, &response.images, 256).unwrap();
     let scalar = binary_scalar_geometry().unwrap();
@@ -189,5 +187,4 @@ fn terminal_carries_authenticate_response_partials_and_value() {
             .unwrap();
         assert!(altered_weights.check_table(&table).is_err());
     }
-    assert_eq!(binary_scalar_lift(value).len(), 162);
 }

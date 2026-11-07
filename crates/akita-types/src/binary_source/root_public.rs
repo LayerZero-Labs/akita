@@ -10,7 +10,7 @@ use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, ExtField, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
-    BinaryTerminalClaim, OrdinaryNativeRootPlan,
+    BinaryScalarChallengeSource, BinaryTerminalClaim, OrdinaryNativeRootPlan,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -284,6 +284,7 @@ impl BinaryRootPublic {
                 actual: batches.len(),
             });
         }
+        let challenges = challenges.prepare(self.manifest.descriptor())?;
         let (rho, projection_claim) = self.coefficient_inputs(batches, rho, projected_values)?;
         let [terminal, b, d, ordinary_rows, negative_bits, prime_rows] = self.batch_ranges()?;
         // The A image and terminal, prime-plane and ordinary components are
@@ -294,7 +295,7 @@ impl BinaryRootPublic {
             self.plan.relation_weights(
                 self.claim.as_ref(),
                 matrix,
-                challenges,
+                challenges.as_ref(),
                 alpha,
                 rho.as_ref(),
                 batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
@@ -311,7 +312,7 @@ impl BinaryRootPublic {
                         self.plan.repacking(),
                         0,
                         segment,
-                        challenges,
+                        challenges.as_ref(),
                         alpha,
                         batches.get(prime_rows).ok_or(AkitaError::InvalidProof)?,
                     )

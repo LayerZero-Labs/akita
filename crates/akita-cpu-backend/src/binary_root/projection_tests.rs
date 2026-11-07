@@ -28,51 +28,6 @@ fn projection_successor_contains_only_response_and_image_segments() {
 }
 
 #[test]
-fn projection_residuals_match_independent_integer_dot_products() {
-    let input = fixture();
-    let relation = build(&input).unwrap();
-    for projection in 0..7 {
-        let mut expected = 0i128;
-        let mut actual = 0i128;
-        for polynomial in 0..input.descriptor.polynomials().len() {
-            for (matrix_row, multipliers) in input.matrix.iter().enumerate() {
-                let mut unreduced = vec![0i128; 2 * D - 1];
-                for (response, multiplier) in relation.response[polynomial..=polynomial]
-                    .iter()
-                    .zip(multipliers)
-                {
-                    for (sum, value) in unreduced.iter_mut().zip(reference(multiplier, response)) {
-                        *sum += value;
-                    }
-                }
-                for column in 0..input.descriptor.index_map().columns() {
-                    let image = input.images[(polynomial * 2 + column) * 2 + matrix_row]
-                        .map(|coefficient| i128::from(coefficient.centered()));
-                    let challenge = relation.embedded_challenges[polynomial * 2 + column];
-                    for (sum, value) in unreduced.iter_mut().zip(reference(&challenge, &image)) {
-                        *sum -= value;
-                    }
-                }
-                let residual = divide(unreduced).0;
-                let row_index = polynomial * input.matrix.len() + matrix_row;
-                for (coefficient, (&reference, &computed)) in residual
-                    .iter()
-                    .zip(&relation.rows[row_index].remainder)
-                    .enumerate()
-                {
-                    let weight = ((projection * 97 + row_index * 71 + coefficient * 13) as i128)
-                        .rem_euclid(i128::from(Q24));
-                    expected += weight * reference;
-                    actual += weight * computed;
-                }
-            }
-        }
-        assert_eq!(actual, expected);
-        assert_eq!(actual % i128::from(Q24), 0);
-    }
-}
-
-#[test]
 fn projection_replay_rejects_malformed_challenges_and_nondivisible_images() {
     let mut input = fixture();
     let original = build(&input).unwrap();

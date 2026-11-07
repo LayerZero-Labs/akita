@@ -24,11 +24,22 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
         let backend = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
         let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
         let make_manifest = |setup_group| {
-            let profiles =
-                BinaryCommittedGroupManifest::commitment_profiles(&index, 1, setup_group).unwrap();
+            let profiles = BinaryCommittedGroupManifest::profiles_for_field(
+                &index,
+                1,
+                setup_group,
+                BinaryFieldProfile::P128,
+            )
+            .unwrap();
             let descriptor =
                 BinarySourceDescriptor::new(index.clone(), vec![[29; 32]], profiles).unwrap();
-            BinaryCommittedGroupManifest::new(descriptor, setup_group, &carrier).unwrap()
+            BinaryCommittedGroupManifest::with_field_profile(
+                descriptor,
+                setup_group,
+                &carrier,
+                BinaryFieldProfile::P128,
+            )
+            .unwrap()
         };
         let installed_manifest = make_manifest(0);
         let typed = BinaryTypedPrefix::new(
@@ -44,11 +55,11 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
             swapped_manifest.descriptor().index_map()
         );
         let prefixes = backend
-            .prepare_binary_a_prefixes(&installed_manifest, &typed, &first, &[])
+            .prepare_binary_typed_prefixes(&installed_manifest, &typed, &first, &[])
             .unwrap();
         let ordinary = scheme.setup_verifier(&setup).unwrap();
         let prepared = backend
-            .prepare_binary_a_verifier_setup(
+            .prepare_binary_typed_verifier_setup(
                 &ordinary,
                 &installed_manifest,
                 &typed,
@@ -66,7 +77,9 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
                 carrier,
                 akita_types::Commitment::new(akita_types::RingVec::from_coeffs(vec![
                     F::zero();
-                    akita_types::binary_source::BINARY_COMMITTED_PAYLOAD_COEFFICIENTS
+                    manifest
+                        .payload_coefficients()
+                        .unwrap()
                 ])),
                 manifest.clone(),
             )
@@ -164,7 +177,7 @@ pub(super) fn reject_foreign_prefixes(
 ) {
     let ordinary = backend.prepare_setup_prefix(first_prefix).unwrap();
     assert!(backend
-        .prepare_binary_a_verifier_setup(
+        .prepare_binary_typed_verifier_setup(
             ordinary_verifier_setup,
             manifest,
             typed,
@@ -188,7 +201,7 @@ pub(super) fn reject_foreign_prefixes(
         .prepare_setup_prefix_from_coefficients(first_prefix, foreign)
         .unwrap();
     assert!(backend
-        .prepare_binary_a_verifier_setup(
+        .prepare_binary_typed_verifier_setup(
             ordinary_verifier_setup,
             manifest,
             typed,
@@ -196,93 +209,6 @@ pub(super) fn reject_foreign_prefixes(
             &foreign.public
         )
         .is_err());
-}
-
-/// Time the root's A arithmetic and actual Stage 3 transcript replay.
-///
-/// Capture is active only on the calling thread for the duration of `verify`,
-/// which keeps unrelated fixture spans out and requires exactly one completed
-/// root A span per verification. The subscriber itself is the binary's global
-/// default, installed once, for the reason documented at
-/// `common::proof_size::install_capture_layer`: with a scoped subscriber,
-/// another thread that reaches the root A callsite first without one can cache
-/// it as never interested, and this capture then records nothing.
-pub(super) fn measure_root_a<T>(verify: impl FnOnce() -> T) -> (T, std::time::Duration) {
-    use std::cell::RefCell;
-    use std::sync::Once;
-    use std::time::{Duration, Instant};
-    use tracing::subscriber::Interest;
-    use tracing::{span::Id, Metadata, Subscriber};
-    use tracing_subscriber::layer::{Context, SubscriberExt};
-    use tracing_subscriber::registry::LookupSpan;
-    use tracing_subscriber::Layer;
-
-    const ROOT_A: &str = "binary_root_a_stage3";
-    thread_local! {
-        /// The completed root A duration, while this thread's capture is active.
-        static CAPTURE: RefCell<Option<Option<Duration>>> = const { RefCell::new(None) };
-    }
-    fn captures(metadata: &Metadata<'_>) -> bool {
-        metadata.is_span() && metadata.name() == ROOT_A
-    }
-
-    struct Started(Instant);
-    struct Capture;
-    impl<S> Layer<S> for Capture
-    where
-        S: Subscriber + for<'lookup> LookupSpan<'lookup>,
-    {
-        fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
-            if captures(metadata) {
-                Interest::always()
-            } else {
-                Interest::never()
-            }
-        }
-
-        fn enabled(&self, metadata: &Metadata<'_>, _context: Context<'_, S>) -> bool {
-            captures(metadata)
-        }
-
-        fn on_enter(&self, id: &Id, context: Context<'_, S>) {
-            let span = context.span(id).expect("entered span is registered");
-            let mut extensions = span.extensions_mut();
-            if extensions.get_mut::<Started>().is_none() {
-                extensions.insert(Started(Instant::now()));
-            }
-        }
-
-        fn on_close(&self, id: Id, context: Context<'_, S>) {
-            let span = context.span(&id).expect("closing span is registered");
-            let elapsed = span
-                .extensions()
-                .get::<Started>()
-                .expect("root A span was entered")
-                .0
-                .elapsed();
-            CAPTURE.with(|capture| {
-                if let Some(slot) = capture.borrow_mut().as_mut() {
-                    assert!(
-                        slot.replace(elapsed).is_none(),
-                        "verification emitted more than one root A span"
-                    );
-                }
-            });
-        }
-    }
-
-    static INSTALL: Once = Once::new();
-    INSTALL.call_once(|| {
-        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Capture))
-            .expect("the root A capture is the test binary's only global subscriber");
-    });
-    CAPTURE.with(|capture| *capture.borrow_mut() = Some(None));
-    let output = verify();
-    let elapsed = CAPTURE
-        .with(|capture| capture.borrow_mut().take())
-        .expect("the capture stays active for the whole verification")
-        .expect("verification emitted exactly one root A span");
-    (output, elapsed)
 }
 
 #[test]

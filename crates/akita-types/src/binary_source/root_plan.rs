@@ -1,14 +1,13 @@
 //! Public outgoing layout and direct relation assembly for a binary root.
 
-use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
 use jolt_field::Field;
 
 use super::{
-    binary_scalar_geometry, BinaryEvaluationBounds, BinaryEvaluationSegments,
-    BinaryProjectionBounds, BinarySourceDescriptor, BinaryTerminalClaim,
+    binary_scalar_geometry, BinaryEvaluationBounds, BinaryEvaluationSegments, BinaryResidualBounds,
+    BinaryScalarChallengeSource, BinarySourceDescriptor, BinaryTerminalClaim,
     BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
 use crate::native_root_relation::NativeRootWeights;
@@ -33,28 +32,13 @@ pub struct BinaryRootWitnessPlan {
     descriptor: BinarySourceDescriptor,
     rank: usize,
     pub(super) repacking: RootCoefficientRepacking,
-    projection_bounds: BinaryProjectionBounds,
+    projection_bounds: BinaryResidualBounds,
     field_profile: BinaryFieldProfile,
     pub(super) word: bool,
     pub(super) prime_planes: usize,
 }
 
 impl BinaryRootWitnessPlan {
-    pub fn new(
-        descriptor: &BinarySourceDescriptor,
-        rank: usize,
-        destination_ring_dimension: usize,
-    ) -> Result<Self, AkitaError> {
-        Self::for_profile(
-            descriptor,
-            rank,
-            destination_ring_dimension,
-            BinaryFieldProfile::P128,
-            true,
-            0,
-        )
-    }
-
     /// Compile a selected field and view layout, without admitting a runtime root.
     /// Quotients follow every selected source segment; they are never part of D.
     pub fn for_profile(
@@ -70,13 +54,26 @@ impl BinaryRootWitnessPlan {
                 "binary root matrix has zero rank".into(),
             ));
         }
+        if prime_planes
+            > checked::product([
+                descriptor.polynomials().len(),
+                field_profile.extension_degree(),
+            ])
+            .ok_or(AkitaError::InvalidProof)?
+            || !prime_planes.is_multiple_of(field_profile.extension_degree())
+            || (!word && prime_planes == 0)
+        {
+            return Err(AkitaError::InvalidInput(
+                "invalid binary plane selection".into(),
+            ));
+        }
         let columns = descriptor.index_map().columns();
         let scalar_rows = checked::exact_div(descriptor.index_map().padded_carriers(), columns)
             .ok_or(AkitaError::InvalidProof)?;
         let ring_rows = checked::exact_div(scalar_rows, 4).ok_or(AkitaError::InvalidProof)?;
         let owners = descriptor.polynomials().len();
         let projection_bounds =
-            BinaryProjectionBounds::for_profile(ring_rows, columns, rank, owners, field_profile)?;
+            BinaryResidualBounds::for_profile(ring_rows, columns, rank, owners, field_profile)?;
         BinaryEvaluationBounds::new(scalar_rows, columns, field_profile.modulus())?;
         let ring = RelationRowGeometry::for_polynomial(
             RelationPolynomial::minus_trinomial(648)?,
@@ -84,42 +81,63 @@ impl BinaryRootWitnessPlan {
             1024,
         )?;
         let scalar = binary_scalar_geometry()?;
-        let segments = [
-            (ring, checked::product([owners, ring_rows]), 4),
-            (ring, checked::product([owners, columns, rank]), 8),
-            (scalar, checked::product([owners, columns]), 1),
-            (scalar, Some(owners), BINARY_PARITY_CARRY_DIGITS),
-            (scalar, Some(owners), BINARY_VALUE_CARRY_DIGITS),
-        ]
-        .into_iter()
-        .map(|(geometry, elements, digits)| {
-            Ok(RootRepackingSegment {
-                geometry,
-                elements: elements.ok_or(AkitaError::InvalidProof)?,
-                digits,
-            })
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-        let mut plan = Self {
-            descriptor: descriptor.clone(),
-            rank,
-            projection_bounds,
-            field_profile,
-            word: true,
-            prime_planes: 0,
-            repacking: RootCoefficientRepacking::new(segments, destination_ring_dimension)?,
+        let mut segments = vec![
+            RootRepackingSegment {
+                geometry: ring,
+                elements: checked::product([owners, ring_rows]).ok_or(AkitaError::InvalidProof)?,
+                digits: 4,
+            },
+            RootRepackingSegment {
+                geometry: ring,
+                elements: checked::product([owners, columns, rank])
+                    .ok_or(AkitaError::InvalidProof)?,
+                digits: 8,
+            },
+        ];
+        if word {
+            segments.extend([
+                RootRepackingSegment {
+                    geometry: scalar,
+                    elements: checked::product([owners, columns])
+                        .ok_or(AkitaError::InvalidProof)?,
+                    digits: 1,
+                },
+                RootRepackingSegment {
+                    geometry: scalar,
+                    elements: owners,
+                    digits: BINARY_PARITY_CARRY_DIGITS,
+                },
+                RootRepackingSegment {
+                    geometry: scalar,
+                    elements: owners,
+                    digits: BINARY_VALUE_CARRY_DIGITS,
+                },
+            ]);
         }
-        .with_prime_planes(word, prime_planes)?;
-        if let Some(bounds) = plan.projection_bounds.quotient() {
-            let mut segments = plan.repacking.segments().to_vec();
+        if prime_planes > 0 {
+            segments.push(RootRepackingSegment {
+                geometry: scalar,
+                elements: checked::product([prime_planes, columns])
+                    .ok_or(AkitaError::InvalidProof)?,
+                digits: field_profile.prime_plane_digits(),
+            });
+        }
+        if let Some(bounds) = projection_bounds.quotient() {
             segments.push(RootRepackingSegment {
                 geometry: ring,
                 elements: checked::product([owners, rank]).ok_or(AkitaError::InvalidProof)?,
                 digits: bounds.digits,
             });
-            plan.repacking = RootCoefficientRepacking::new(segments, destination_ring_dimension)?;
         }
-        Ok(plan)
+        Ok(Self {
+            descriptor: descriptor.clone(),
+            rank,
+            projection_bounds,
+            field_profile,
+            word,
+            prime_planes,
+            repacking: RootCoefficientRepacking::new(segments, destination_ring_dimension)?,
+        })
     }
 
     pub fn field_profile(&self) -> BinaryFieldProfile {
@@ -165,7 +183,7 @@ impl BinaryRootWitnessPlan {
         })
     }
 
-    pub fn projection_bounds(&self) -> &BinaryProjectionBounds {
+    pub fn projection_bounds(&self) -> &BinaryResidualBounds {
         &self.projection_bounds
     }
 
@@ -227,12 +245,13 @@ impl BinaryRootWitnessPlan {
         &self,
         claim: Option<&BinaryTerminalClaim>,
         matrix: Option<BinaryAOperand<'_, E>>,
-        challenges: &Challenges,
+        challenges: &impl BinaryScalarChallengeSource,
         alpha: E,
         rho: &[[E; 648]],
         terminal_batches: impl AsRef<[E]>,
     ) -> Result<NativeRootWeights<E>, AkitaError> {
-        let a = binary_direct_a_weights(self, matrix, challenges, rho)?;
+        let challenges = challenges.prepare(&self.descriptor)?;
+        let a = binary_direct_a_weights(self, matrix, challenges.as_ref(), rho)?;
         let Some(claim) = claim else {
             if !terminal_batches.as_ref().is_empty() {
                 return Err(AkitaError::InvalidProof);
@@ -248,7 +267,7 @@ impl BinaryRootWitnessPlan {
                 parity_carry: 3,
                 value_carry: 4,
             },
-            challenges,
+            challenges.as_ref(),
             alpha,
             terminal_batches
                 .as_ref()
