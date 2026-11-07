@@ -795,14 +795,50 @@ fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
         return Ok(F::zero());
     }
 
-    if left_stride == 1 && right_stride == 1 && seeds.len() >= 128 && len >= 512 {
-        return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-            left_challenges,
-            right_challenges,
-            len,
-            seeds,
-            work,
-        );
+    if left_stride == 1
+        && len >= 128
+        && ((right_stride == 1 && seeds.len() >= 8) || seeds.len() >= 128)
+    {
+        match right_stride {
+            1 => {
+                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 2>(
+                    left_challenges,
+                    right_challenges,
+                    len,
+                    seeds,
+                    work,
+                )
+            }
+            3 => {
+                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 4>(
+                    left_challenges,
+                    right_challenges,
+                    len,
+                    seeds,
+                    work,
+                )
+            }
+            5 => {
+                return unit_intervals::eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL, 6>(
+                    left_challenges,
+                    right_challenges,
+                    len,
+                    seeds,
+                    work,
+                )
+            }
+            n if n.is_power_of_two() && n.trailing_zeros() as usize <= right_challenges.len() => {
+                return unit_intervals::eval_power_two_right::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                    left_challenges,
+                    right_challenges,
+                    n,
+                    len,
+                    seeds,
+                    work,
+                );
+            }
+            _ => {}
+        }
     }
 
     let left_domain = 1usize << left_challenges.len();
