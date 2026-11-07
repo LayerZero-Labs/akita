@@ -1,6 +1,9 @@
 use akita_error::AkitaError;
 use std::{cell::RefCell, sync::Arc};
 
+#[cfg(test)]
+mod table_tests;
+
 thread_local! {
     static HINTS: RefCell<Option<(Arc<[u64]>, usize)>> = const { RefCell::new(None) };
 }
