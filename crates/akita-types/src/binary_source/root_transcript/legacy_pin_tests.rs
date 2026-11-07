@@ -31,7 +31,7 @@ where
         [0; 16],
     )
     .unwrap();
-    let prime = PrimePlaneManifest::new(descriptor, None).unwrap();
+    let prime = PrimePlaneManifest::with_field_profile(descriptor, None, profile).unwrap();
     let payload = (0..manifest.payload_coefficients().unwrap())
         .map(|i| F::from_u64(17 + i as u64))
         .collect::<Vec<_>>();
