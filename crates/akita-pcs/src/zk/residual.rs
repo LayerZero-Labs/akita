@@ -237,8 +237,9 @@ impl ResidualShape {
         Ok(s)
     }
 
-    /// The shapes of `A` and `[B | B′]` over `R_D`.
-    fn matrix_shapes<const D: usize>(&self) -> (MatrixShape, MatrixShape) {
+    /// The shapes of `A` and `[B | B′]` over the residual ring.
+    fn matrix_shapes(&self) -> (MatrixShape, MatrixShape) {
+        let ring_dim = self.ring_dim();
         let profile = self.geometry.profile;
         let rows = profile.inner.matrix.output_rank();
         let inner_rings = profile.blocks.live_blocks * rows * profile.outer.digits.num_digits;
@@ -246,14 +247,30 @@ impl ResidualShape {
             MatrixShape {
                 rows,
                 width: profile.blocks.positions_per_block,
-                ring_dim: D,
+                ring_dim,
             },
             MatrixShape {
                 rows: profile.outer.matrix.output_rank(),
                 width: inner_rings + profile.randomness_columns,
-                ring_dim: D,
+                ring_dim,
             },
         )
+    }
+
+    /// How many field elements of Akita's setup stream [`Self::matrices`]
+    /// reads: both matrices are cut from its start.
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidSetup`] if a matrix's size overflows `usize`.
+    pub fn stream_len(&self) -> Result<usize, AkitaError> {
+        let (a, b) = self.matrix_shapes();
+        let len = |shape: MatrixShape| {
+            shape
+                .num_field_elements()
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))
+        };
+        Ok(len(a)?.max(len(b)?))
     }
 
     /// The opening matrices `A` and `[B | B′]`, cut from Akita's setup
@@ -281,7 +298,7 @@ impl ResidualShape {
                     .map_err(crypto)?,
             ))
         };
-        let (a, b) = self.matrix_shapes::<D>();
+        let (a, b) = self.matrix_shapes();
         Ok(ResidualMatrices {
             a: prepare(a)?,
             b: prepare(b)?,
@@ -314,7 +331,7 @@ impl ResidualShape {
                 "the residual commitment differs from the schedule's residual shape".into(),
             ));
         }
-        if (matrices.a.shape(), matrices.b.shape()) != self.matrix_shapes::<D>() {
+        if (matrices.a.shape(), matrices.b.shape()) != self.matrix_shapes() {
             return Err(AkitaError::InvalidInput(
                 "the residual matrices are another residual shape's".into(),
             ));

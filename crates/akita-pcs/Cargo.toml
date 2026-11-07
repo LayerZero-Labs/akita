@@ -120,10 +120,11 @@ compression-weights-crosscheck = ["akita-types/compression-weights-crosscheck"]
 # Dev protocol (`docs/branches.md`); see `akita-params`.
 dev-protocol = ["akita-params/dev-protocol"]
 # Zero knowledge (`specs/whiteout-akita.md` §1.1): `ZkCommitmentConfig`, the
-# masked prefix's prover and verifier, and Whiteout's response prover
-# (`zk::AkitaResponseProver`). It selects nothing: a zero-knowledge
-# configuration does. It compiles no hiding sampler (jolt-zk's `whiteout`
-# only), so a hiding commitment fails without `zk-prover`.
+# masked prefix's prover and verifier, and Whiteout's response verifier
+# (`zk::AkitaResponseVerifier`; the prover is under `zk-prover`). It selects
+# nothing: a zero-knowledge configuration does. It compiles no hiding sampler
+# (jolt-zk's `whiteout` only), so a hiding commitment fails without
+# `zk-prover`.
 zk = [
   "dep:jolt-zk",
   "dep:akita-sumcheck",
