@@ -589,45 +589,63 @@ fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
 }
 
 #[test]
-fn p64_digit_ranks_match_every_spec_row_and_width_boundary() {
-    let p64 = BinaryFieldProfile::P64;
-    for (b, br, d, dr) in [
-        (486, 2, 562, 2),
-        (1_990_656, 3, 21_293, 2),
-        (62_208, 2, 71_928, 2),
-        (622_080, 3, 77_760, 3),
-        (254_803_968, 5, 2_725_488, 3),
+fn p64_digit_ranks_cover_actual_widths_and_role_boundaries() {
+    use crate::sis::{
+        generated_sis_max_widths, sis_role_cell, SisMatrixRole, SisModulusProfileId,
+        SisSecurityPolicyId,
+    };
+    let field = BinaryFieldProfile::P64;
+    // Read the canonical generated q64 row directly, without routing expected
+    // ranks through min_secure_rank.
+    let generated = generated_sis_max_widths(
+        SisSecurityPolicyId::Quantum169BitADPS16,
+        SisModulusProfileId::Q64Offset59,
+        64,
+        7,
+    )
+    .unwrap();
+    for (role, matrix_role) in [
+        (SetupStreamRole::ImageCommitment, SisMatrixRole::Outer),
+        (SetupStreamRole::WitnessCommitment, SisMatrixRole::Open),
     ] {
-        assert_eq!(
-            p64.digit_commitment_rank(SetupStreamRole::ImageCommitment, b)
-                .unwrap(),
-            br
-        );
-        assert_eq!(
-            p64.digit_commitment_rank(SetupStreamRole::WitnessCommitment, d)
-                .unwrap(),
-            dr
-        );
+        let cell = sis_role_cell(matrix_role, SisModulusProfileId::Q64Offset59, 64, 7).unwrap();
+        let widths = &generated[..generated.len().min(cell.max_module_rank as usize)];
+        let expected = |width: usize| {
+            widths
+                .iter()
+                .position(|&cap| width as u64 <= cap)
+                .map(|i| i + 1)
+        };
+        for (columns, owners) in [
+            (2usize, 1usize),
+            (2, 4096),
+            (256, 1),
+            (256, 10),
+            (256, 4096),
+        ] {
+            // Natural image digits for B; U and selected coordinate planes for D.
+            let planes = field.extension_degree() * owners.min(5);
+            let width = match role {
+                SetupStreamRole::ImageCommitment => (owners * columns * 3 * 8 * 648).div_ceil(64),
+                SetupStreamRole::WitnessCommitment => {
+                    ((owners + planes * field.prime_plane_digits()) * columns * 162).div_ceil(64)
+                }
+                _ => unreachable!(),
+            };
+            let rank = field.digit_commitment_rank(role, width).unwrap();
+            assert_eq!(Some(rank), expected(width));
+            assert!(width as u64 <= widths[rank - 1]);
+            assert!(rank == 1 || width as u64 > widths[rank - 2]);
+        }
+        for &cap in widths {
+            for width in [cap as usize, cap as usize + 1] {
+                assert_eq!(
+                    field.digit_commitment_rank(role, width).ok(),
+                    expected(width)
+                );
+            }
+        }
+        assert!(field.digit_commitment_rank(role, 0).is_err());
+        assert!(field.digit_commitment_rank(role, usize::MAX).is_err());
     }
-    for (index, cap) in [296, 76_306, 4_030_488, 106_021_444, 1_826_815_994]
-        .into_iter()
-        .enumerate()
-    {
-        assert_eq!(
-            p64.digit_commitment_rank(SetupStreamRole::ImageCommitment, cap)
-                .unwrap(),
-            index + 1
-        );
-        assert_eq!(
-            p64.digit_commitment_rank(SetupStreamRole::ImageCommitment, cap + 1)
-                .unwrap(),
-            index + 2
-        );
-    }
-    assert!(p64
-        .digit_commitment_rank(SetupStreamRole::WitnessCommitment, usize::MAX)
-        .is_err());
-    assert!(p64
-        .digit_commitment_rank(SetupStreamRole::ImageCommitment, 0)
-        .is_err());
 }
