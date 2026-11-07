@@ -44,7 +44,7 @@ fn fixture(shape: &'static str) {
                 FAULT.with(|selected| selected.set(Some(fault)));
                 run::prove::<P64>(LOG, shape, &directory).unwrap();
                 FAULT.with(|selected| selected.set(None));
-                let (result, rejections) = fault_backend::root_relation_rejections(|| {
+                let (result, rejections) = super::root_relation_rejections(|| {
                     run::verify::<P64>(LOG, shape, &directory, &metrics::Timings::default())
                 });
                 let error = result.unwrap_err();

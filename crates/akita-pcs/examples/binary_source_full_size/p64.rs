@@ -30,3 +30,31 @@ pub(super) fn fixture_directory() -> std::path::PathBuf {
             "binary-source-p64"
         })
 }
+
+/// Count failures of the binary root's final relation equation on this thread.
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct RootRelationRejections(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for RootRelationRejections {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() == "akita_verifier::binary_root_relation" {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// Run `verify` on this thread and return how often the final root relation
+/// equation rejected. Earlier checks return before that diagnostic event.
+#[cfg(test)]
+pub(crate) fn root_relation_rejections<T>(verify: impl FnOnce() -> T) -> (T, usize) {
+    use tracing_subscriber::layer::SubscriberExt;
+    let rejections = RootRelationRejections::default();
+    let subscriber = tracing_subscriber::registry().with(rejections.clone());
+    let result = tracing::subscriber::with_default(subscriber, verify);
+    (
+        result,
+        rejections.0.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}

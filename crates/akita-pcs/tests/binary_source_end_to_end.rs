@@ -540,20 +540,18 @@ fn run_fixture(
             "completed adversarial {fault:?} proof: {} bytes",
             malformed.len()
         );
-        let (outcome, rejections) = fault_backend::root_relation_rejections(|| {
-            catch_unwind(AssertUnwindSafe(|| {
-                let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &malformed);
-                replay.public_message(&BytesMsg(b"application-prefix"));
-                verifier
-                    .batched_verify_embedded(
-                        &mut replay,
-                        statement(&claim, &ordinary_point, ordinary_value),
-                        BasisMode::Lagrange,
-                        SetupPolicy::Check(None),
-                    )
-                    .map(|pending| pending.check_eof(replay))
-            }))
-        });
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &malformed);
+            replay.public_message(&BytesMsg(b"application-prefix"));
+            verifier
+                .batched_verify_embedded(
+                    &mut replay,
+                    statement(&claim, &ordinary_point, ordinary_value),
+                    BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
+                )
+                .map(|pending| pending.check_eof(replay))
+        }));
         assert!(outcome.is_ok(), "{fault:?} caused a verifier panic");
         let outcome = outcome.unwrap();
         if fault.is_accepted() {
@@ -564,12 +562,6 @@ fn run_fixture(
             assert!(
                 matches!(outcome, Err(AkitaError::InvalidProof)),
                 "{fault:?} must fail proof verification with InvalidProof: {outcome:?}"
-            );
-        }
-        if matches!(fault, Fault::Quotient | Fault::PrimePlane) {
-            assert_eq!(
-                rejections, 1,
-                "{fault:?} must fail at the final root equation"
             );
         }
     };
