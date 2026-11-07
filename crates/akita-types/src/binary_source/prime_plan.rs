@@ -8,7 +8,15 @@ impl BinaryRootWitnessPlan {
     /// Select the word views and append every prime plane before ordinary groups.
     /// An empty prime list with a word preserves the original coefficient map.
     pub fn with_prime_planes(mut self, word: bool, planes: usize) -> Result<Self, AkitaError> {
-        if planes > self.descriptor().polynomials().len() || (!word && planes == 0) {
+        if planes
+            > checked::product([
+                self.descriptor().polynomials().len(),
+                self.field_profile().extension_degree(),
+            ])
+            .ok_or(AkitaError::InvalidProof)?
+            || !planes.is_multiple_of(self.field_profile().extension_degree())
+            || (!word && planes == 0)
+        {
             return Err(AkitaError::InvalidInput(
                 "invalid binary plane selection".into(),
             ));

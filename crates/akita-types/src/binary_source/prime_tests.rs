@@ -5,7 +5,7 @@ use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
-use jolt_field::{One, Prime128Offset275, Ring};
+use jolt_field::{CanonicalEncoding, One, Prime128Offset275, Ring};
 
 type F = Prime128Offset275;
 
@@ -23,10 +23,10 @@ fn descriptor() -> BinarySourceDescriptor {
 
 fn claim() -> PrimeGroupClaim {
     PrimeGroupClaim {
-        point: vec![0; 11],
+        point: vec![0.into(); 11],
         evaluations: vec![PrimePlaneClaim {
             polynomial: 0,
-            value: 0,
+            value: 0.into(),
         }],
     }
 }
@@ -37,8 +37,8 @@ fn prime_manifest_rejects_repeated_owners_empty_values_and_noncanonical_fields()
     for change in 0..7 {
         let mut bad = claim();
         match change {
-            0 => bad.evaluations[0].value = BINARY_SETUP_P,
-            1 => bad.point[0] = BINARY_SETUP_P,
+            0 => bad.evaluations[0].value = BINARY_SETUP_P.into(),
+            1 => bad.point[0] = BINARY_SETUP_P.into(),
             2 => bad.evaluations[0].polynomial = 2,
             3 => bad.evaluations.clear(),
             4 => bad.evaluations.push(bad.evaluations[0].clone()),
@@ -47,7 +47,7 @@ fn prime_manifest_rejects_repeated_owners_empty_values_and_noncanonical_fields()
             }
             _ => bad.evaluations.push(PrimePlaneClaim {
                 polynomial: 0,
-                value: 1,
+                value: 1.into(),
             }),
         }
         assert!(
@@ -73,12 +73,12 @@ fn prime_manifest_orders_one_plane_per_polynomial_without_a_separate_cap() {
     )
     .unwrap();
     let claim = PrimeGroupClaim {
-        point: vec![2; 11],
+        point: vec![2.into(); 11],
         evaluations: (0..6)
             .rev()
             .map(|polynomial| PrimePlaneClaim {
                 polynomial,
-                value: polynomial as u128,
+                value: (polynomial as u128).into(),
             })
             .collect(),
     };
@@ -119,8 +119,8 @@ fn prime_manifest_orders_one_plane_per_polynomial_without_a_separate_cap() {
 fn prime_point_tensor_order_is_explicit() {
     let source = descriptor();
     let mut c = claim();
-    c.point = vec![2; 11];
-    let (rows, columns, omega) = c.weights::<F>(&source).unwrap();
+    c.point = vec![2.into(); 11];
+    let (rows, columns, omega) = c.weights::<F>(&source).unwrap().remove(0);
     assert_eq!(columns, vec![-F::one(), F::from_u64(2)]);
     assert_eq!(omega.len(), 256);
     assert_eq!(omega[0], F::one());
@@ -137,8 +137,8 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
     let mut c = claim();
     // EP_0 = 9 Z, c_0 = Z^161, so V_0 = -9 - 9 Z^81 in Phi_243.
     // Coefficient equality at point (2,...,2) reads EP_0 as -18.
-    c.point[..8].fill(2);
-    c.evaluations[0].value = BINARY_SETUP_P - 18;
+    c.point[..8].fill(2.into());
+    c.evaluations[0].value = (BINARY_SETUP_P - 18).into();
     let manifest = PrimePlaneManifest::new(&source, Some(c)).unwrap();
     let repacking = RootCoefficientRepacking::new(
         vec![
@@ -220,7 +220,8 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
         assert!(weights.check_table(&bad).is_err());
     }
     let mut false_claim = manifest.claim().unwrap().clone();
-    false_claim.evaluations[0].value += 1;
+    false_claim.evaluations[0].value =
+        (false_claim.evaluations[0].value.coordinates()[0] + 1).into();
     let false_manifest = PrimePlaneManifest::new(&source, Some(false_claim)).unwrap();
     assert!(prime_plane_relation_weights(
         &source,
@@ -238,44 +239,93 @@ fn prime_plane_relation_uses_every_response_digit_and_reduced_scalar_product() {
 }
 
 #[test]
-fn p64_prime_manifest_uses_base_residues_and_eight_byte_coordinates() {
-    use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
+fn p64_prime_manifest_binds_both_canonical_coordinates_and_rejects_other_versions() {
     let field = BinaryFieldProfile::P64;
     let source = descriptor();
     let mut c = claim();
-    c.point.fill(field.modulus() - 1);
-    c.evaluations[0].value = field.modulus() - 1;
+    c.point.fill([field.modulus() - 1, 17].into());
+    c.evaluations[0].value = [19, field.modulus() - 1].into();
     let manifest = PrimePlaneManifest::with_field_profile(&source, Some(c.clone()), field).unwrap();
-    let mut expected = b"AkitaPrimePlanes/p64\x03".to_vec();
+    assert_eq!(manifest.planes().len(), 2);
+    let mut expected = b"AkitaPrimePlanes/p64\x04".to_vec();
     expected.extend_from_slice(&11u64.to_le_bytes());
     for _ in 0..11 {
         expected.extend_from_slice(&((field.modulus() - 1) as u64).to_le_bytes());
+        expected.extend_from_slice(&17u64.to_le_bytes());
     }
     expected.extend_from_slice(&1u64.to_le_bytes());
     expected.extend_from_slice(&0u64.to_le_bytes());
+    expected.extend_from_slice(&19u64.to_le_bytes());
     expected.extend_from_slice(&((field.modulus() - 1) as u64).to_le_bytes());
     assert_eq!(manifest.canonical_bytes(), expected);
-    assert!(c.weights::<Ext2<Base>>(&source).is_ok());
-    for raw in [field.modulus(), u128::MAX, 1u128 << 64] {
-        for point in [false, true] {
-            let mut bad = c.clone();
-            if point {
-                bad.point[0] = raw;
-            } else {
-                bad.evaluations[0].value = raw;
-            }
+    assert_eq!(
+        PrimePlaneManifest::from_bytes(&source, field, &expected).unwrap(),
+        manifest
+    );
+    assert!(PrimePlaneManifest::from_bytes(&source, BinaryFieldProfile::P128, &expected).is_err());
+    let p128 = PrimePlaneManifest::new(&source, Some(claim())).unwrap();
+    assert_eq!(
+        PrimePlaneManifest::from_bytes(&source, BinaryFieldProfile::P128, &p128.canonical_bytes())
+            .unwrap(),
+        p128
+    );
+    assert!(PrimePlaneManifest::from_bytes(&source, field, &p128.canonical_bytes()).is_err());
+    for end in 0..expected.len() {
+        assert!(PrimePlaneManifest::from_bytes(&source, field, &expected[..end]).is_err());
+    }
+    let mut trailing = expected.clone();
+    trailing.push(0);
+    assert!(matches!(
+        PrimePlaneManifest::from_bytes(&source, field, &trailing),
+        Err(akita_serialization::SerializationError::InvalidData(_))
+    ));
+    for offset in [
+        b"AkitaPrimePlanes/p64\x04".len(),
+        b"AkitaPrimePlanes/p64\x04".len() + 8 + 11 * 16,
+    ] {
+        let mut huge = expected.clone();
+        huge[offset..offset + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(matches!(
+            PrimePlaneManifest::from_bytes(&source, field, &huge),
+            Err(akita_serialization::SerializationError::InvalidData(_))
+        ));
+    }
+    for offset in [
+        b"AkitaPrimePlanes/p64\x04".len() + 8,
+        b"AkitaPrimePlanes/p64\x04".len() + 8 + 11 * 16 + 16,
+    ] {
+        for coordinate in 0..2 {
+            let mut bad = manifest.canonical_bytes();
+            let start = offset + 8 * coordinate;
+            bad[start..start + 8].copy_from_slice(&(field.modulus() as u64).to_le_bytes());
             assert!(matches!(
-                PrimePlaneManifest::with_field_profile(&source, Some(bad), field),
-                Err(AkitaError::InvalidInput(_))
+                PrimePlaneManifest::from_bytes(&source, field, &bad),
+                Err(akita_serialization::SerializationError::InvalidData(_))
             ));
         }
     }
-    // An E64 point or value cannot be converted to this base-residue API.
-    let extension = Ext2::<Base>::from_base_fn(|i| if i == 0 { Base::zero() } else { Base::one() });
-    let base = crate::field_reduction::FpExtEncoding::<Base>::degree_one_base(&extension)
-        .ok_or_else(|| AkitaError::InvalidInput("prime claims require base residues".into()));
-    assert!(matches!(base, Err(AkitaError::InvalidInput(_))));
+    expected[b"AkitaPrimePlanes/p64".len()] = 3;
+    assert!(PrimePlaneManifest::from_bytes(&source, field, &expected).is_err());
+    for raw in [field.modulus(), u128::MAX, 1u128 << 64] {
+        for coordinate in 0..2 {
+            for point in [false, true] {
+                let mut bad = c.clone();
+                let mut value = [1, 2];
+                value[coordinate] = raw;
+                if point {
+                    bad.point[0] = value.into();
+                } else {
+                    bad.evaluations[0].value = value.into();
+                }
+                assert!(matches!(
+                    PrimePlaneManifest::with_field_profile(&source, Some(bad), field),
+                    Err(AkitaError::InvalidInput(_))
+                ));
+            }
+        }
+    }
+    assert!(PrimePlaneManifest::new(&source, Some(c)).is_err());
+    assert!(PrimePlaneManifest::with_field_profile(&source, Some(claim()), field).is_err());
 }
 
 #[test]
@@ -289,14 +339,14 @@ fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
     assert_eq!(BINARY_SETUP_P64 / 2, 9_223_372_036_854_775_778);
     assert!(reach(21) < u128::from(BINARY_SETUP_P64 / 2));
     assert!(reach(22) > u128::from(BINARY_SETUP_P64));
-    for planes in [1, 5] {
+    for planes in [2, 10] {
         let field = BinaryFieldProfile::P64;
         let index = BinaryIndexMap::new(128, 1024, 1024, 256).unwrap();
         let profiles =
-            BinaryCommittedGroupManifest::profiles_for_field(&index, planes, 0, field).unwrap();
+            BinaryCommittedGroupManifest::profiles_for_field(&index, planes / 2, 0, field).unwrap();
         let source = BinarySourceDescriptor::new(
             index,
-            (0..planes).map(|i| [i as u8; 32]).collect(),
+            (0..planes / 2).map(|i| [i as u8; 32]).collect(),
             profiles,
         )
         .unwrap();
@@ -310,6 +360,17 @@ fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
         let plan =
             BinaryRootWitnessPlan::for_profile(manifest.descriptor(), 3, 64, field, false, planes)
                 .unwrap();
+        assert!(BinaryRootWitnessPlan::for_profile(
+            manifest.descriptor(),
+            3,
+            64,
+            field,
+            false,
+            planes + 2
+        )
+        .is_err());
+        assert!(manifest.d_label(false, planes + 2).is_err());
+        assert!(manifest.d_label(false, planes - 1).is_err());
         let segment = plan.prime_segment().unwrap();
         let shape = &plan.repacking().segments()[segment];
         assert_eq!(shape.digits, 22);
@@ -362,10 +423,17 @@ fn p64_prime_structured_and_reference_weights_match_over_e64() {
     let field = BinaryFieldProfile::P64;
     let source = descriptor();
     let mut c = claim();
-    c.point[..8].fill(2);
-    c.evaluations[0].value = field.modulus() - 18;
+    c.point.fill([0, 0].into());
+    c.point[..8].fill([2, 1].into());
+    let x = E::from_base_fn(|i| Base::from_u64(if i == 0 { 2 } else { 1 }));
+    let value = E::from_u64(9) * x * (0..7).fold(E::one(), |v, _| v * (E::one() - x));
+    c.evaluations[0].value = [
+        value.base_coefficient(0).to_u128_checked().unwrap(),
+        value.base_coefficient(1).to_u128_checked().unwrap(),
+    ]
+    .into();
     let manifest = PrimePlaneManifest::with_field_profile(&source, Some(c), field).unwrap();
-    let plan = BinaryRootWitnessPlan::for_profile(&source, 3, 64, field, false, 1).unwrap();
+    let plan = BinaryRootWitnessPlan::for_profile(&source, 3, 64, field, false, 2).unwrap();
     let repacking = plan.repacking();
     let segment = plan.prime_segment().unwrap();
     let mut natural = repacking
@@ -460,10 +528,10 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
     let manifest = binary_word_manifest_fixture(field, 1);
     let source = manifest.descriptor();
     let c = PrimeGroupClaim {
-        point: vec![2; 11],
+        point: vec![2.into(); 11],
         evaluations: vec![PrimePlaneClaim {
             polynomial: 0,
-            value: 3,
+            value: 3.into(),
         }],
     };
     let setup = crate::AkitaSetupDescriptor {
@@ -477,6 +545,9 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
         BinaryRootPublic::new(&manifest, None, &legacy, &setup, 1 << 17, 64, None),
         Err(AkitaError::InvalidInput(_))
     ));
+    let mut c = c;
+    c.point.fill([2, 1].into());
+    c.evaluations[0].value = [3, 1].into();
     let prime = PrimePlaneManifest::with_field_profile(source, Some(c), field).unwrap();
     assert!(matches!(
         BinaryRootPublic::new(
@@ -489,5 +560,298 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
             Some(binary_ordinary_profile_fixture(BinaryFieldProfile::P128))
         ),
         Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
+fn p64_native_tensors_and_readings_match_naive_evaluation() {
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
+    type E = Ext2<Base>;
+    let source = descriptor();
+    let point = (0..11)
+        .map(|i| E::from_base_fn(|c| Base::from_u64((19 + 7 * i + 13 * c) as u64)))
+        .collect::<Vec<_>>();
+    // Direct products of equality factors, without the tensor constructor.
+    let naive = |point: &[E], index: usize| {
+        point
+            .iter()
+            .enumerate()
+            .fold(E::one(), |weight, (bit, &x)| {
+                weight
+                    * if index >> bit & 1 == 0 {
+                        E::one() - x
+                    } else {
+                        x
+                    }
+            })
+    };
+    let coefficient =
+        |row: usize, column: usize, k: usize| ((row * 17 + column * 11 + k * 3) % 5) as i128 - 2;
+    let mut value = E::zero();
+    for row in 0..4 {
+        for column in 0..2 {
+            for k in 0..162 {
+                value += naive(&point, k + 256 * (column + 2 * row))
+                    * E::from_i128(coefficient(row, column, k));
+            }
+        }
+    }
+    assert_ne!(value.base_coefficient(1), Base::zero());
+    let coordinates =
+        |v: E| std::array::from_fn::<_, 2, _>(|c| v.base_coefficient(c).to_u128_checked().unwrap());
+    let claim = PrimeGroupClaim {
+        point: point
+            .iter()
+            .copied()
+            .map(|v| coordinates(v).into())
+            .collect(),
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: coordinates(value).into(),
+        }],
+    };
+    let tensors = claim.weights::<Base>(&source).unwrap();
+    for (c, (rows, columns, omega)) in tensors.iter().enumerate() {
+        for (weights, axes) in [
+            (rows, &point[9..]),
+            (columns, &point[8..9]),
+            (omega, &point[..8]),
+        ] {
+            for (index, &weight) in weights.iter().enumerate() {
+                assert_eq!(weight, naive(axes, index).base_coefficient(c));
+            }
+        }
+    }
+    let manifest =
+        PrimePlaneManifest::with_field_profile(&source, Some(claim), BinaryFieldProfile::P64)
+            .unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, false, 2)
+            .unwrap();
+    let repacking = plan.repacking();
+    let segment = plan.prime_segment().unwrap();
+    let mut natural = repacking
+        .segments()
+        .iter()
+        .map(|s| vec![0i8; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()])
+        .collect::<Vec<_>>();
+    let digits = |mut integer: i128, depth: usize| {
+        let mut digits = Vec::new();
+        for _ in 0..depth {
+            let remainder = integer.rem_euclid(8);
+            let digit = if remainder >= 4 {
+                remainder - 8
+            } else {
+                remainder
+            };
+            digits.push(digit as i8);
+            integer = (integer - digit) / 8;
+        }
+        assert_eq!(integer, 0);
+        digits
+    };
+    for row in 0..4 {
+        for k in 0..162 {
+            let packed =
+                (coefficient(row, 0, k) + coefficient(row, 1, k)) * if k % 2 == 0 { 1 } else { -1 };
+            for (digit, value) in digits(packed, 4).into_iter().enumerate() {
+                natural[0][digit * 648 + 4 * k + row] = value;
+            }
+        }
+    }
+    let modulus = BinaryFieldProfile::P64.modulus();
+    for column in 0..2 {
+        for k in 0..162 {
+            let partial = (0..4).fold(E::zero(), |sum, row| {
+                sum + naive(&point[9..], row) * E::from_i128(coefficient(row, column, k))
+            });
+            for (c, canonical) in coordinates(partial).into_iter().enumerate() {
+                let centered = if canonical > modulus / 2 {
+                    -((modulus - canonical) as i128)
+                } else {
+                    canonical as i128
+                };
+                for (digit, value) in digits(centered, 22).into_iter().enumerate() {
+                    natural[segment][((c * 2 + column) * 22 + digit) * 162 + k] = value;
+                }
+            }
+        }
+    }
+    let table = repacking
+        .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+        .unwrap()
+        .into_iter()
+        .map(|v| E::from_i128(i128::from(v)))
+        .collect::<Vec<_>>();
+    let challenges = Challenges::from_sparse(
+        (0..4)
+            .map(|_| SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        2,
+        2,
+    )
+    .unwrap();
+    let ext = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + 31 * i + 43 * c) as u64));
+    let batches = [ext(1), ext(2)];
+    let weights = prime_plane_relation_weights(
+        &source,
+        &manifest,
+        repacking,
+        0,
+        segment,
+        &challenges,
+        ext(0),
+        &batches,
+    )
+    .unwrap();
+    weights.check_table(&table).unwrap();
+    assert_eq!(weights.claim(), batches[1] * value);
+    for isolated in [[batches[0], E::zero()], [E::zero(), batches[1]]] {
+        prime_plane_relation_weights(
+            &source,
+            &manifest,
+            repacking,
+            0,
+            segment,
+            &challenges,
+            ext(0),
+            &isolated,
+        )
+        .unwrap()
+        .check_table(&table)
+        .unwrap();
+    }
+    // Physical coordinate planes do not each introduce two independent rows.
+    assert!(matches!(
+        prime_plane_relation_weights(
+            &source,
+            &manifest,
+            repacking,
+            0,
+            segment,
+            &challenges,
+            ext(0),
+            &[ext(1), ext(2), ext(3), ext(4)],
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
+    let dense = weights.materialize().unwrap();
+    for c in 0..2 {
+        let basis = E::from_base_fn(|i| Base::from_bool(i == c));
+        for column in 0..2 {
+            for k in 0..162 {
+                let product = basis * naive(&point[8..9], column) * naive(&point[..8], k);
+                let reading = product * batches[1];
+                let alpha_power = (0..k).fold(E::one(), |power, _| power * ext(0));
+                let address = repacking
+                    .coefficient_address(segment, c * 2 + column, 0, k)
+                    .unwrap();
+                assert_eq!(dense[address], reading - basis * batches[0] * alpha_power);
+            }
+        }
+    }
+    let reference = crate::binary_source::root_public::reference::prime_plane_weights(
+        &source,
+        &manifest,
+        repacking,
+        0,
+        segment,
+        &challenges,
+        ext(0),
+        &batches,
+    )
+    .unwrap();
+    assert_eq!(reference.materialize().unwrap(), dense);
+    assert_eq!(reference.claim(), weights.claim());
+}
+
+#[test]
+fn p64_prime_compilers_reject_a_different_quadratic_basis() {
+    use jolt_field::{Ext2Config, ExtField, FpExt2, Prime64Offset59 as Base, Zero};
+
+    struct EightNr;
+    impl Ext2Config<Base> for EightNr {
+        fn non_residue() -> Base {
+            Base::from_u64(8)
+        }
+    }
+    type E = FpExt2<Base, EightNr>;
+
+    // Euler's criterion establishes that this is another valid quadratic field.
+    let exponent = (BinaryFieldProfile::P64.modulus() - 1) / 2;
+    let legendre = (0..64).rev().fold(Base::one(), |power, bit| {
+        let square = power.square();
+        if exponent >> bit & 1 == 1 {
+            square * EightNr::non_residue()
+        } else {
+            square
+        }
+    });
+    assert_eq!(legendre, -Base::one());
+    assert_eq!(E::DEGREE, 2);
+    assert_eq!(E::from_u128(BinaryFieldProfile::P64.modulus()), E::zero());
+    let basis = E::from_base_fn(|i| Base::from_bool(i == 1));
+    assert_eq!(basis.square(), E::from_u64(8));
+
+    let source = descriptor();
+    let claim = PrimeGroupClaim {
+        point: vec![[2, 1].into(); 11],
+        evaluations: vec![PrimePlaneClaim {
+            polynomial: 0,
+            value: [3, 5].into(),
+        }],
+    };
+    assert!(claim.field_weights::<Base, super::E64>(&source).is_ok());
+    assert!(matches!(
+        claim.field_weights::<Base, E>(&source),
+        Err(AkitaError::InvalidProof)
+    ));
+    let manifest =
+        PrimePlaneManifest::with_field_profile(&source, Some(claim), BinaryFieldProfile::P64)
+            .unwrap();
+    let plan =
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, false, 2)
+            .unwrap();
+    let challenges = Challenges::from_sparse(
+        (0..4)
+            .map(|_| SparseChallenge {
+                positions: vec![0].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        2,
+        2,
+    )
+    .unwrap();
+    let alpha = E::one() + basis;
+    let batches = [E::one(); 2];
+    assert!(matches!(
+        prime_plane_relation_weights(
+            &source,
+            &manifest,
+            plan.repacking(),
+            0,
+            plan.prime_segment().unwrap(),
+            &challenges,
+            alpha,
+            &batches,
+        ),
+        Err(AkitaError::InvalidProof)
+    ));
+    assert!(matches!(
+        crate::binary_source::root_public::reference::prime_plane_weights(
+            &source,
+            &manifest,
+            plan.repacking(),
+            0,
+            plan.prime_segment().unwrap(),
+            &challenges,
+            alpha,
+            &batches,
+        ),
+        Err(AkitaError::InvalidProof)
     ));
 }

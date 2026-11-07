@@ -150,28 +150,25 @@ mod binary_source_tests {
 
     #[test]
     fn p64_manifest_admits_b_and_d_independently_for_every_spec_geometry() {
-        for (columns, owners, b, d) in [
-            (2, 1, 2, 2),
-            (2, 4096, 3, 2),
-            (256, 1, 2, 2),
-            (256, 10, 3, 3),
-            (256, 4096, 5, 3),
+        for (columns, owners, b, d, width) in [
+            (2, 1, 2, 1, 228),
+            (2, 4096, 3, 2, 21_850),
+            (256, 1, 2, 2, 29_160),
+            (256, 10, 3, 3, 149_040),
+            (256, 4096, 5, 3, 2_796_768),
         ] {
             let manifest = manifest(BinaryFieldProfile::P64, columns, owners);
             assert_eq!(manifest.b_rows(), b);
-            // The spec table prices a word plus five prime planes; a group has
-            // at most one plane per committed polynomial.
-            let planes = owners.min(5);
+            // Up to five E64 claims, each with two coordinate planes, plus U.
+            let planes = 2 * owners.min(5);
             let d_label = manifest.d_label(true, planes).unwrap();
-            if planes == 5 {
-                assert_eq!(d_label.rank, d);
-            } else {
-                assert!(d_label.rank <= d);
-            }
+            assert_eq!(((planes * 22 + owners) * 162 * columns).div_ceil(64), width);
+            assert_eq!(d_label.rank, d);
             assert_eq!(d_label.role, SetupStreamRole::WitnessCommitment);
             assert_eq!(d_label.modulus, SetupStreamModulus::Prime64Offset59);
             assert!(manifest.d_label(false, 0).is_err());
-            assert!(manifest.d_label(true, owners + 1).is_err());
+            assert!(manifest.d_label(true, 2 * owners + 2).is_err());
+            assert!(manifest.d_label(true, 2 * owners - 1).is_err());
         }
     }
 

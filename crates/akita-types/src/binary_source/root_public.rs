@@ -6,7 +6,7 @@ use akita_params::binary_setup::{derive_centered_q_matrix, BinaryFieldProfile};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, Field};
+use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, ExtField, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
@@ -266,7 +266,7 @@ impl BinaryRootPublic {
     /// `rho` batches the public J rows. For P64, supply empty `rho` and y slices;
     /// the independent coefficient weights come directly from `batches`.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-    pub fn relation<E: Field>(
+    pub fn relation<F: Field, E: ExtField<F>>(
         &self,
         challenges: &Challenges,
         alpha: E,
@@ -305,7 +305,7 @@ impl BinaryRootPublic {
             self.plan
                 .prime_segment()
                 .map(|segment| {
-                    super::prime_plane_relation_weights(
+                    super::prime_plane_relation_weights::<F, E>(
                         self.manifest.descriptor(),
                         &self.prime,
                         self.plan.repacking(),
