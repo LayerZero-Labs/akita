@@ -1252,8 +1252,10 @@ the two benchmark sizes use N ordinary coefficients.
 Binary carriers use a fixed integer mixer; the ordinary fixture alternates
 zero and one.
 
-The driver selects the default-off `binary-source-measurements` feature, which
-enables `labinius-trinomial` and the offline plane planner. It accepts:
+The driver selects the default-off `binary-source-measurements` alias for
+`labinius-trinomial`. The example also builds when `labinius-trinomial` is
+selected directly; that feature enables the offline plane planner used by the
+example. It accepts:
 
 ```sh
 scripts/binary-source-full-size.sh --log-carriers 10 --shape binary-and-prime-claims-plus-ordinary
