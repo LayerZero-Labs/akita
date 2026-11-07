@@ -327,3 +327,7 @@ mod p64_tests {
         assert_eq!(values, vec![E::from_base_fn(|i| F::from_u64([7, 9][i]))]);
     }
 }
+
+#[cfg(all(test, feature = "prover", feature = "transcript-keccak"))]
+#[path = "root_transcript/legacy_pin_tests.rs"]
+mod legacy_pin_tests;
