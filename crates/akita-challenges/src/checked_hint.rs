@@ -11,7 +11,7 @@ thread_local! {
 /// consumption, or [`abort_checked_hints`] after a verification error. Both clear
 /// the installed hints so the current thread can verify another proof.
 pub fn install_checked_hints(bytes: &[u8]) -> Result<(), AkitaError> {
-    if bytes.is_empty() || bytes.len() % 8 != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(8) {
         return Err(AkitaError::InvalidProof);
     }
     let words: Arc<[u64]> = if bytes.as_ptr().align_offset(8) == 0 {
