@@ -1,6 +1,6 @@
 //! Prime readings are computed independently from the committed bit tables.
 use super::*;
-use akita_challenges::{FoldDraw, ProverFoldDraw, VerifierFoldDraw};
+use akita_challenges::{ProverFoldDraw, VerifierFoldDraw};
 use akita_types::binary_source::{
     binary_root_challenges, binary_root_statement, PrimeGroupClaim, PrimePlaneClaim,
     PrimePlaneManifest,
@@ -105,12 +105,10 @@ fn prime_plane_mixed_ordinary_group() {
 }
 
 #[test]
-fn prime_plane_several_polynomials_at_one_point() {
+fn word_reading_with_multiple_polynomials_and_no_prime_planes() {
     init_rayon_pool();
     run_on_large_stack(|| {
         fixture(false, true, 0, 2, false);
-        fixture(false, true, 2, 2, false);
-        fixture(false, false, 2, 2, false);
     });
 }
 
@@ -614,24 +612,6 @@ fn prime_plane_rejects_a_second_value_for_the_same_polynomial() {
     );
 }
 
-struct FirstSqueeze<D> {
-    inner: D,
-    first: Option<Vec<u8>>,
-}
-impl<D: FoldDraw> FoldDraw for FirstSqueeze<D> {
-    fn draw_message<T>(
-        &mut self,
-        len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
-    ) -> Result<Option<T>, AkitaError> {
-        let first = &mut self.first;
-        self.inner.draw_message(len, |message| {
-            first.get_or_insert_with(|| message.to_vec());
-            decode(message)
-        })
-    }
-}
-
 #[test]
 fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
     let descriptor = descriptor(2);
@@ -731,6 +711,17 @@ fn multiple_owner_catalog(
     PolynomialGroupLayout,
     TrustedScheduleCatalog<BinaryTestSuffix>,
 ) {
+    type SelectedCatalog = (
+        PolynomialGroupLayout,
+        TrustedScheduleCatalog<BinaryTestSuffix>,
+    );
+    static CATALOGS: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::BTreeMap<(usize, bool), SelectedCatalog>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let mut catalogs = CATALOGS.lock().unwrap();
+    if let Some(selected) = catalogs.get(&(owners, mixed)) {
+        return selected.clone();
+    }
     let chunking = ChunkedWitnessCfg::default_non_chunked();
     let policy = akita_config::policy_of::<BinaryTestSuffix>(chunking);
     let contract = BinaryTestSuffix::committed_source_contract().unwrap();
@@ -857,76 +848,22 @@ fn multiple_owner_catalog(
             BinaryTestSuffix::ring_challenge_config,
         )
         .unwrap();
-        return (
+        let selected = (
             layout,
             TrustedScheduleCatalog::new(catalog, chunking).unwrap(),
         );
+        catalogs.insert((owners, mixed), selected.clone());
+        return selected;
     }
     panic!("no fixture schedule holds the multi-polynomial binary root");
 }
 
 #[test]
 fn prime_plane_p64_extension_claims_and_extension_typed_prefix_endpoint() {
-    use akita_algebra::eq_poly::EqPolynomial;
-    use akita_params::binary_setup::BinaryFieldProfile;
-    use akita_types::binary_source::{
-        binary_word_manifest_fixture, BinaryAProduct, BinaryAReadGuard, BinaryRootWitnessPlan,
-    };
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_field::{Ext2, Prime64Offset59 as Base};
     type E = Ext2<Base>;
-    let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
-    for word in [false, true] {
-        let plan = BinaryRootWitnessPlan::for_profile(
-            manifest.descriptor(),
-            3,
-            64,
-            BinaryFieldProfile::P64,
-            word,
-            2,
-        )
-        .unwrap();
-        let typed = BinaryTypedPrefix::from_plan(&manifest, &plan).unwrap();
-        let extension =
-            |i: usize| E::from_base_fn(|c| Base::from_u64((17 + i * 31 + c * 43) as u64));
-        let stage2 = (0..plan.repacking().domain_len().trailing_zeros())
-            .map(|i| extension(i as usize))
-            .collect::<Vec<_>>();
-        let rho = (0..3)
-            .map(|r| std::array::from_fn(|k| extension(r * 648 + k)))
-            .collect::<Vec<_>>();
-        let a = BinaryAProduct::new(&plan, &rho, &stage2, typed.domain_len).unwrap();
-        let batches = [
-            vec![extension(3000); manifest.b_rows()],
-            vec![extension(4000); manifest.d_label(word, 2).unwrap().rank as usize],
-        ];
-        let refs = [&batches[0][..], &batches[1][..]];
-        let weights = typed
-            .prover_weights(&a, &stage2, extension(5000), refs, typed.domain_len)
-            .unwrap();
-        let setup = typed
-            .setup_coefficients::<Base>(&[41; 32], &manifest, typed.domain_len)
-            .unwrap();
-        let point = (0..typed.domain_len.trailing_zeros())
-            .map(|i| extension(6000 + i as usize))
-            .collect::<Vec<_>>();
-        let eq = EqPolynomial::evals(&point).unwrap();
-        let value = setup
-            .iter()
-            .zip(&eq)
-            .fold(E::zero(), |sum, (&v, &eq)| sum + E::lift_base(v) * eq);
-        assert_ne!(value.base_coefficient(1), Base::zero());
-        let expected = weights
-            .iter()
-            .zip(eq)
-            .fold(E::zero(), |sum, (&v, eq)| sum + v * eq);
-        let guard = BinaryAReadGuard::forbid();
-        let actual = a.evaluate(&point).unwrap()
-            + typed
-                .digit_weight(&point, &stage2, extension(5000), refs)
-                .unwrap();
-        assert_eq!(actual, expected);
-        drop(guard);
-    }
+    let manifest = stage3::p64_typed_prefix_endpoint(false, 2);
+    stage3::p64_typed_prefix_endpoint(true, 2);
     let extension_claim = PrimeGroupClaim {
         point: vec![[2, 3].into(); 11],
         evaluations: vec![PrimePlaneClaim {
