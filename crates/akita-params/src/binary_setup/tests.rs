@@ -588,16 +588,22 @@ fn paired_profiles_bind_exact_challenge_orders_and_block_unfinished_roots() {
         .unwrap();
 }
 
-// Read the canonical generated q64 row directly; this is test-only access to
-// the same source, without routing expected ranks through min_secure_rank.
-#[path = "../sis/generated_sis_table/q64.rs"]
-mod p64_width_table;
-
 #[test]
 fn p64_digit_ranks_cover_actual_widths_and_role_boundaries() {
-    use crate::sis::{sis_role_cell, SisMatrixRole, SisModulusProfileId};
+    use crate::sis::{
+        generated_sis_max_widths, sis_role_cell, SisMatrixRole, SisModulusProfileId,
+        SisSecurityPolicyId,
+    };
     let field = BinaryFieldProfile::P64;
-    let generated = p64_width_table::sis_max_widths(64, 7).unwrap();
+    // Read the canonical generated q64 row directly, without routing expected
+    // ranks through min_secure_rank.
+    let generated = generated_sis_max_widths(
+        SisSecurityPolicyId::Quantum169BitADPS16,
+        SisModulusProfileId::Q64Offset59,
+        64,
+        7,
+    )
+    .unwrap();
     for (role, matrix_role) in [
         (SetupStreamRole::ImageCommitment, SisMatrixRole::Outer),
         (SetupStreamRole::WitnessCommitment, SisMatrixRole::Open),
