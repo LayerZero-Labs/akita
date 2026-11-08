@@ -10,6 +10,8 @@
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
+Proposed packed offset-digit ordinary sources and their proof obligations: [binary-source-pack-offset.md](binary-source-pack-offset.md).
+
 ## Summary
 
 Move the binary-source grouped opening from `P = 2^128 - 275`, with

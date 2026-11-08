@@ -19,6 +19,8 @@
 > prime statement: current groups have one shared point and one plane per
 > claimed polynomial. Those historical rows retain their original values.
 
+Proposed packed offset-digit ordinary sources and their proof obligations: [binary-source-pack-offset.md](binary-source-pack-offset.md).
+
 ## Summary
 
 The binary root checks that every outgoing-witness cell without a natural

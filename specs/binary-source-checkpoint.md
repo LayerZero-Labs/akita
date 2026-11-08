@@ -6,6 +6,8 @@
 | Created | 2026-10-27 |
 | Scope | Mathematical checkpoint for the proposed binary root; not production admission |
 
+Proposed packed offset-digit ordinary sources and their proof obligations: [binary-source-pack-offset.md](binary-source-pack-offset.md).
+
 ## Blockers and corrections
 
 There is no unresolved algebraic blocker in the checkpoint proved below. Two
