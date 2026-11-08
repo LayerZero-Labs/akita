@@ -108,6 +108,19 @@ impl<'a> GroupContext<'a> {
             parameter_source: GroupParameterSource::Explicit(profile),
         }
     }
+
+    /// Extension seam: bind an explicitly selected source group to its ordered context.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    #[must_use]
+    pub const fn explicit_with_precommitted_groups(
+        profile: &'a GroupCommitPhaseParams,
+        precommitteds: &'a PrecommittedGroupProfiles,
+    ) -> Self {
+        Self {
+            precommitted_groups: PrecommittedGroupContext::WithPrecommittedGroups(precommitteds),
+            parameter_source: GroupParameterSource::Explicit(profile),
+        }
+    }
 }
 
 /// Result of committing one polynomial group with policy-selected private state.
