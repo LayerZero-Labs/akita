@@ -67,23 +67,30 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
                 &prefixes.get(&first).unwrap().public,
             )
             .unwrap();
+        let precommitteds =
+            akita_params::PrecommittedGroupProfiles::from_profiles(vec![carrier]).unwrap();
         for (name, manifest, verifier_setup) in [
             ("missing typed context", installed_manifest, ordinary),
             ("same-geometry manifest swap", swapped_manifest, prepared),
         ] {
-            // A structurally valid public payload suffices: context admission
-            // must reject the statement before consuming any proof atom.
-            let commitment = CommittedGroup::new_binary(
-                carrier,
-                akita_types::Commitment::new(akita_types::RingVec::from_coeffs(vec![
-                    F::zero();
-                    manifest
-                        .payload_coefficients()
-                        .unwrap()
-                ])),
-                manifest.clone(),
-            )
-            .unwrap();
+            let source = backend
+                .import_binary_source(manifest.clone(), carrier, vec![vec![0; 8]])
+                .unwrap();
+            let context = if manifest.setup_group() == 0 {
+                GroupContext::explicit(&carrier)
+            } else {
+                assert!(matches!(
+                    backend.commit(scheme.schedules(), &source, GroupContext::explicit(&carrier)),
+                    Err(AkitaError::InvalidInput(_))
+                ));
+                GroupContext::explicit_with_precommitted_groups(&carrier, &precommitteds)
+            };
+            assert_eq!(context.group_index() as u64, manifest.setup_group());
+            let commitment = backend
+                .commit(scheme.schedules(), &source, context)
+                .unwrap()
+                .committed_group;
+            assert_eq!(commitment.profile(), &carrier);
             let claim = honest_claim(manifest.descriptor(), &[0; 8]);
             let claims = PolynomialGroupClaims::<F, _>::new_binary(commitment.clone(), claim)
                 .unwrap()

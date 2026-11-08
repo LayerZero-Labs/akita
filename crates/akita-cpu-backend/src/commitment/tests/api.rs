@@ -136,6 +136,19 @@ fn audited_commit_params(
 }
 
 #[test]
+fn explicit_with_precommitted_groups_preserves_profile_and_group_index() {
+    let profile = commitment_params_for_slice_count(akita_params::CommitmentSliceCount::ONE)
+        .own_group()
+        .profile;
+    for count in 1..=3 {
+        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![profile; count]).unwrap();
+        let context = GroupContext::explicit_with_precommitted_groups(&profile, &precommitteds);
+        assert_eq!(context.group_index(), count);
+        assert_eq!(context.explicit_profile(), Some(&profile));
+    }
+}
+
+#[test]
 fn commit_level_params_reject_log_basis_above_i8_range() {
     let expanded = AkitaProverSetup::<F>::generate_with_capacity(
         5,
