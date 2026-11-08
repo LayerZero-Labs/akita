@@ -361,6 +361,7 @@ impl<E: Field> PrimePlaneWeights<E> {
         .entered();
         profiles.add_shared(&self.response, |element, profile| {
             let (polynomial, ring_row) = (element / self.ring_rows, element % self.ring_rows);
+            let mut rows = [E::zero(); 4];
             for &plane_index in self
                 .owner_planes
                 .get(polynomial)
@@ -370,7 +371,7 @@ impl<E: Field> PrimePlaneWeights<E> {
                     .planes
                     .get(plane_index)
                     .ok_or(AkitaError::InvalidProof)?;
-                for k in 0..4 {
+                for (k, weight) in rows.iter_mut().enumerate() {
                     let row_weight = *plane
                         .factors
                         .rows
@@ -379,14 +380,21 @@ impl<E: Field> PrimePlaneWeights<E> {
                     if row_weight == E::zero() {
                         continue;
                     }
-                    let mut power = plane.relation * row_weight;
-                    for coefficient in 0..162 {
-                        let signed = if coefficient % 2 == 0 { power } else { -power };
-                        *profile
-                            .get_mut(4 * coefficient + k)
-                            .ok_or(AkitaError::InvalidProof)? += signed;
-                        power *= self.alpha;
-                    }
+                    *weight += plane.relation * row_weight;
+                }
+            }
+            // All coordinate planes share the response's alpha powers. Combine
+            // their row scalars before expanding the 162 signed coefficients.
+            for (k, mut power) in rows.into_iter().enumerate() {
+                if power == E::zero() {
+                    continue;
+                }
+                for coefficient in 0..162 {
+                    let signed = if coefficient % 2 == 0 { power } else { -power };
+                    *profile
+                        .get_mut(4 * coefficient + k)
+                        .ok_or(AkitaError::InvalidProof)? += signed;
+                    power *= self.alpha;
                 }
             }
             Ok(())

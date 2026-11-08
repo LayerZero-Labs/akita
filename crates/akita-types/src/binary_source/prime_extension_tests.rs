@@ -180,3 +180,88 @@ fn extension_prime_reading_columns_match_direct_coordinate_product() {
         assert_ne!(&*factors.rows, &[E::zero(); 4]);
     }
 }
+
+#[test]
+fn extension_response_profiles_match_flat_planes_with_cancellation() {
+    use akita_challenges::{Challenges, SparseChallenge};
+    use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as F, Ring, Zero};
+    type E = Ext2<F>;
+    let field = BinaryFieldProfile::P64;
+    let manifest = binary_word_manifest_fixture(field, 2);
+    let source = manifest.descriptor();
+    let points = (0..2)
+        .map(|pass| {
+            let mut point = vec![[2, 3]; 11];
+            // Distinct coefficient points with identical row tensors permit
+            // exact cancellation between the two passes' response weights.
+            point[0][0] += pass;
+            PrimeGroupClaim {
+                point,
+                evaluations: (0..2)
+                    .map(|polynomial| PrimePlaneClaim {
+                        polynomial,
+                        value: [5, 7],
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    let prime =
+        PrimePlaneManifest::with_field_profile(source, Some(PrimeClaims::Extension(points)), field)
+            .unwrap();
+    let plan = BinaryRootWitnessPlan::for_profile(source, 3, 64, field, false, 8).unwrap();
+    let challenges = Challenges::from_sparse(
+        vec![
+            SparseChallenge {
+                positions: vec![0, 161].into(),
+                coeffs: vec![1, -1].into(),
+            };
+            4
+        ],
+        2,
+        2,
+    )
+    .unwrap();
+    let ext = |n| E::from_base_fn(|i| F::from_u64(n + 3 * i as u64));
+    for cancel in [false, true] {
+        let mut batches = (1..=16).map(ext).collect::<Vec<_>>();
+        if cancel {
+            for plane in 0..4 {
+                batches[2 * (plane + 4)] = -batches[2 * plane];
+            }
+        }
+        for alpha in [E::zero(), E::one(), ext(17)] {
+            let weights = crate::binary_source::prime_weights::prime_plane_relation_weights(
+                source,
+                &prime,
+                plan.repacking(),
+                0,
+                plan.prime_segment().unwrap(),
+                &challenges,
+                alpha,
+                &batches,
+            )
+            .unwrap();
+            let reference = crate::binary_source::root_public::reference::prime_plane_weights(
+                source,
+                &prime,
+                plan.repacking(),
+                0,
+                plan.prime_segment().unwrap(),
+                &challenges,
+                alpha,
+                &batches,
+            )
+            .unwrap()
+            .materialize()
+            .unwrap();
+            for bits in [6, 8, 10] {
+                assert_eq!(
+                    weights.profiles(bits).unwrap().take_dense(),
+                    reference,
+                    "cancel={cancel}, bits={bits}, alpha={alpha:?}"
+                );
+            }
+        }
+    }
+}
