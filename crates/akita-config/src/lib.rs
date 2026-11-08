@@ -58,12 +58,18 @@ macro_rules! impl_catalog_family {
     };
 }
 
+#[cfg(feature = "labinius-trinomial")]
+mod native_setup_requirements;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 #[cfg(test)]
 mod runtime_chunking_tests;
 #[cfg(test)]
 mod schedule_artifact_tests;
+#[cfg(feature = "labinius-trinomial")]
+pub use native_setup_requirements::NativeSetupRequirements;
+#[cfg(feature = "labinius-trinomial")]
+pub use setup_prefix_slots::required_native_setup_prefix_slot_ids_for_row;
 mod setup_prefix_slots;
 mod setup_requirements;
 pub use setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule;

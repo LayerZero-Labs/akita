@@ -26,6 +26,10 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
 ]
 test-support = []
+labinius-trinomial = [
+  "akita-types/labinius-trinomial",
+  "akita-schedules/labinius-trinomial",
+]
 dev-protocol = ["akita-params/dev-protocol"]
 
 [dependencies]

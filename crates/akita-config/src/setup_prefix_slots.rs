@@ -36,6 +36,61 @@ pub fn required_setup_prefix_slot_ids_for_schedule(
     schedule: &FoldSchedule,
     root_layout: &akita_params::OpeningClaimsLayout,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
+    enumerate_setup_prefix_slot_ids(schedule, || {
+        Ok(active_setup_field_len(&schedule.root.params, root_layout)?
+            .max(schedule.root_accumulated_setup_prefix_len))
+    })
+}
+
+/// Research-only prefix inventory for an exactly resolved native row.
+/// The first edge uses grouped geometry; every later edge uses the ordinary audit.
+#[cfg(feature = "labinius-trinomial")]
+pub fn required_native_setup_prefix_slot_ids_for_row(
+    row: &akita_schedules::ResolvedScheduleRow,
+    capacity: &akita_types::binary_source::GroupedPrefixCapacity,
+) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
+    let schedule = row.schedule();
+    let successor = schedule.recursive_folds.first().ok_or_else(|| {
+        AkitaError::InvalidSetup("native setup requires a first successor".into())
+    })?;
+    let repacking = capacity.plan().repacking();
+    let last = repacking.segments().len().checked_sub(1).ok_or_else(|| {
+        AkitaError::InvalidSetup("native setup requires a nonempty grouped plan".into())
+    })?;
+    let physical_cells = repacking.segment_range(last)?.end;
+    if !row.is_native_root()
+        || successor.params.own_group().profile != *capacity.successor()
+        || successor
+            .params
+            .setup_prefix()
+            .and_then(|prefix| prefix.slot_id())
+            .as_ref()
+            != Some(capacity.first())
+        || schedule.root.output_witness_len != physical_cells
+        || successor.input_witness_len != physical_cells
+    {
+        return Err(AkitaError::InvalidSetup(
+            "native row disagrees with grouped capacity binding".into(),
+        ));
+    }
+    if schedule.recursive_folds.iter().skip(1).any(|fold| {
+        fold.params
+            .setup_prefix()
+            .and_then(|prefix| prefix.slot_id())
+            .as_ref()
+            == Some(capacity.first())
+    }) {
+        return Err(AkitaError::InvalidSetup(
+            "ordinary suffix aliases the native setup prefix".into(),
+        ));
+    }
+    enumerate_setup_prefix_slot_ids(schedule, || Ok(capacity.first().natural_len))
+}
+
+fn enumerate_setup_prefix_slot_ids(
+    schedule: &FoldSchedule,
+    first_natural_len: impl Fn() -> Result<usize, AkitaError>,
+) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
     schedule.validate_structure()?;
 
     let mut ids = BTreeSet::new();
@@ -47,8 +102,8 @@ pub fn required_setup_prefix_slot_ids_for_schedule(
         let Some(slot_id) = successor_prefix else {
             continue;
         };
-        let (params, opening_layout) = if producer_index == 0 {
-            (&schedule.root.params, root_layout.clone())
+        let natural_len = if producer_index == 0 {
+            first_natural_len()?
         } else {
             let producer = &schedule.recursive_folds[producer_index - 1];
             let incoming_len = producer
@@ -56,17 +111,9 @@ pub fn required_setup_prefix_slot_ids_for_schedule(
                 .setup_prefix()
                 .as_ref()
                 .map(|slot| slot.setup_natural_len.expect("setup prefix group"));
-            (
-                &producer.params,
-                suffix_opening_layout(producer.input_witness_len, incoming_len)?,
-            )
+            let opening_layout = suffix_opening_layout(producer.input_witness_len, incoming_len)?;
+            active_setup_field_len(&producer.params, &opening_layout)?
         };
-        let natural_len =
-            active_setup_field_len(params, &opening_layout)?.max(if producer_index == 0 {
-                schedule.root_accumulated_setup_prefix_len
-            } else {
-                0
-            });
         let n_prefix = padded_setup_prefix_len(natural_len);
         let commitment_id = slot_id.slot_id().expect("setup prefix group");
         setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;

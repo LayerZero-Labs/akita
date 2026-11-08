@@ -48,7 +48,7 @@ impl SetupCapacityScan {
 /// Matrix capacity and exact prefix commitments required at one capacity bound,
 /// for setups over the field `F`.
 ///
-/// Requirements are only produced by [`SetupRequirements::from_catalog`] and
+/// Requirements are produced by validated catalog scans and
 /// [`SetupRequirements::union`], so every value carries validated capacity
 /// metadata, a non-empty matrix envelope, and a strictly increasing set of
 /// prefix slot ids. Requirements computed from several catalogs over the same
@@ -113,6 +113,34 @@ impl<F> SetupRequirements<F> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<Self, AkitaError> {
+        Self::from_catalog_with_prefixes(
+            catalog,
+            max_num_vars,
+            max_num_batched_polys,
+            |row| {
+                let ids = if Cfg::recursive_setup_planning() {
+                    crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
+                        row.schedule(),
+                        &row.profiles().opening_layout()?,
+                    )?
+                } else {
+                    Vec::new()
+                };
+                Ok((ids, 0))
+            },
+        )
+    }
+
+    /// Shared validated catalog scan; the selected prefix contract supplies its
+    /// exact inventory and any additional source commitment footprint.
+    pub(crate) fn from_catalog_with_prefixes<Cfg: CommitmentConfig<Field = F>>(
+        catalog: &crate::TrustedScheduleCatalog<Cfg>,
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        mut prefixes: impl FnMut(
+            &akita_schedules::ResolvedScheduleRow,
+        ) -> Result<(Vec<SetupPrefixSlotId>, usize), AkitaError>,
+    ) -> Result<Self, AkitaError> {
         catalog.validate_complete()?;
         validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
 
@@ -133,14 +161,9 @@ impl<F> SetupRequirements<F> {
         }
         for row in catalog.rows_within_setup_capacity(max_num_vars, max_num_batched_polys)? {
             scan.observe_schedule(row.schedule())?;
-            if Cfg::recursive_setup_planning() {
-                prefix_slot_ids.extend(
-                    crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
-                        row.schedule(),
-                        &row.profiles().opening_layout()?,
-                    )?,
-                );
-            }
+            let (ids, source_capacity) = prefixes(row)?;
+            prefix_slot_ids.extend(ids);
+            scan.observe(source_capacity);
         }
         Ok(Self {
             max_num_vars,

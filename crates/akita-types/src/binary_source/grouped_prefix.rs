@@ -1,27 +1,21 @@
 //! Capacity-bound concatenation of existing typed setup streams.
 
 use akita_algebra::{CanonicalEncoding, Field};
-use akita_error::{checked, AkitaError};
-use akita_params::{
-    commit_only_setup_field_elements, setup_prefix_slot_field_elements, GroupCommitPhaseParams,
-    SetupPrefixSlotId, SisModulusProfileId,
-};
+use akita_error::AkitaError;
+use akita_params::{GroupCommitPhaseParams, SetupPrefixSlotId, SisModulusProfileId};
 use akita_serialization::{AkitaSerialize, Valid};
 use std::ops::Range;
 
-use super::{BinaryCommittedGroupManifest, BinaryTypedPrefix, GroupedNativeRootPlan};
+use super::{
+    BinaryCommittedGroupManifest, BinaryTypedPrefix, GroupedNativeRootPlan, GroupedPrefixCapacity,
+};
 use crate::root_repacking::RootCoefficientRepacking;
 use crate::{AkitaSetupDescriptor, AkitaVerifierSetup};
 
 /// One immutable setup/capacity binding. No opening admission is represented.
 #[derive(Clone, Debug)]
 pub struct GroupedTypedPrefix {
-    plan: GroupedNativeRootPlan,
-    parts: Vec<(Range<usize>, BinaryTypedPrefix)>,
-    natural_len: usize,
-    successor: GroupCommitPhaseParams,
-    outgoing: RootCoefficientRepacking,
-    first: SetupPrefixSlotId,
+    capacity: GroupedPrefixCapacity,
     setup: AkitaSetupDescriptor,
     identity: Vec<u8>,
 }
@@ -35,101 +29,33 @@ impl GroupedTypedPrefix {
         first: SetupPrefixSlotId,
         setup: AkitaSetupDescriptor,
     ) -> Result<Self, AkitaError> {
-        successor.validate_frozen_precommit(64)?;
+        let capacity = GroupedPrefixCapacity::new(plan, successor, first)?;
+        Self::bind_capacity(capacity, setup)
+    }
+
+    /// Bind validated capacity to the final descriptor without recompiling streams.
+    pub fn bind_capacity(
+        capacity: GroupedPrefixCapacity,
+        setup: AkitaSetupDescriptor,
+    ) -> Result<Self, AkitaError> {
         setup.check().map_err(|_| AkitaError::InvalidProof)?;
-        first.check().map_err(|_| AkitaError::InvalidProof)?;
-        for profile in [&successor, &first.commitment_profile] {
-            if [
-                profile.inner.matrix.sis_modulus_profile(),
-                profile.outer.matrix.sis_modulus_profile(),
-            ]
-            .iter()
-            .any(|&field| field != SisModulusProfileId::Q64Offset59)
-            {
-                return Err(AkitaError::InvalidInput(
-                    "grouped successor field mismatch".into(),
-                ));
-            }
-        }
-        let outgoing = checked::pow2(successor.group.num_vars()).ok_or(AkitaError::InvalidProof)?;
-        if successor.group.num_polynomials() != 1
-            || successor.inner.digits.log_basis != 3
-            || successor.inner.digits.num_digits != 1
-            || successor.outer.digits.num_digits
-                != akita_params::sis::compute_num_digits_field_width(
-                    64,
-                    successor.outer.digits.log_basis,
-                )
-            || successor.inner.matrix.ring_dimension()
-                != plan.repacking().destination_ring_dimension()
-            || outgoing < plan.repacking().domain_len()
-        {
-            return Err(AkitaError::InvalidInput(
-                "grouped successor capacity mismatch".into(),
-            ));
-        }
-        let last = plan
-            .repacking()
-            .segments()
-            .len()
-            .checked_sub(1)
-            .ok_or(AkitaError::InvalidProof)?;
-        let physical_cells = plan.repacking().segment_range(last)?.end;
-        let committed_cells = checked::product([
-            successor.blocks.live_ring_elements_per_claim,
-            successor.inner.matrix.ring_dimension(),
-        ])
-        .ok_or(AkitaError::InvalidProof)?;
-        if committed_cells < physical_cells {
-            return Err(AkitaError::InvalidInput(
-                "short grouped successor witness".into(),
-            ));
-        }
-        let outgoing = plan.repacking().clone().with_domain_len(outgoing)?;
-        let mut parts = Vec::new();
-        parts
-            .try_reserve_exact(plan.binary().len())
-            .map_err(|_| AkitaError::InvalidProof)?;
-        let mut natural_len = 0;
-        for binary in plan.binary() {
-            let typed = BinaryTypedPrefix::from_plan(&binary.source().manifest, binary.local())?;
-            let range =
-                checked::range(natural_len, typed.natural_len).ok_or(AkitaError::InvalidProof)?;
-            natural_len = range.end;
-            parts.push((range, typed));
-        }
-        if first.natural_len != natural_len {
-            return Err(AkitaError::InvalidInput(
-                "grouped prefix capacity mismatch".into(),
-            ));
-        }
-        let mut required = setup_prefix_slot_field_elements(&first)?;
-        for profile in std::iter::once(&successor)
-            .chain(plan.binary().iter().map(|binary| &binary.source().carrier))
-            .chain(
-                plan.ordinary()
-                    .into_iter()
-                    .flat_map(|batch| batch.plans().iter().map(|plan| plan.profile())),
-            )
-        {
-            required = required.max(commit_only_setup_field_elements(
-                &profile.inner.matrix,
-                &profile.outer.matrix,
-                profile.outer_slice_count,
-            )?);
-        }
+        let required = capacity.matrix_capacity().num_field_elements;
         if setup.num_field_elements < required {
             return Err(AkitaError::InvalidInput(
                 "grouped setup capacity mismatch".into(),
             ));
         }
+        let plan = &capacity.plan;
+        let successor = &capacity.successor;
+        let first = &capacity.first;
+        let parts = &capacity.parts;
         let mut identity = b"akita/grouped-root/typed-prefix/p64/v1".to_vec();
         plan.identity()
             .to_vec()
             .serialize_compressed(&mut identity)
             .map_err(|_| AkitaError::InvalidProof)?;
         identity.extend(BinaryCommittedGroupManifest::carrier_profile_identity(
-            &successor,
+            successor,
         )?);
         first
             .serialize_compressed(&mut identity)
@@ -143,7 +69,7 @@ impl GroupedTypedPrefix {
                 .serialize_compressed(&mut identity)
                 .map_err(|_| AkitaError::InvalidProof)?;
             typed
-                .identity(&binary.source().manifest, &first)?
+                .identity(&binary.source().manifest, first)?
                 .serialize_compressed(&mut identity)
                 .map_err(|_| AkitaError::InvalidProof)?;
         }
@@ -151,39 +77,34 @@ impl GroupedTypedPrefix {
             .map_err(|_| AkitaError::InvalidProof)?
             .to_vec();
         Ok(Self {
-            plan: plan.clone(),
-            parts,
-            natural_len,
-            successor,
-            outgoing,
-            first,
+            capacity,
             setup,
             identity,
         })
     }
 
     pub fn plan(&self) -> &GroupedNativeRootPlan {
-        &self.plan
+        &self.capacity.plan
     }
 
     pub fn parts(&self) -> &[(Range<usize>, BinaryTypedPrefix)] {
-        &self.parts
+        &self.capacity.parts
     }
 
     pub fn natural_len(&self) -> usize {
-        self.natural_len
+        self.capacity.natural_len
     }
 
     pub fn successor(&self) -> &GroupCommitPhaseParams {
-        &self.successor
+        &self.capacity.successor
     }
 
     pub fn outgoing(&self) -> &RootCoefficientRepacking {
-        &self.outgoing
+        &self.capacity.outgoing
     }
 
     pub fn first(&self) -> &SetupPrefixSlotId {
-        &self.first
+        &self.capacity.first
     }
 
     pub fn setup(&self) -> &AkitaSetupDescriptor {
@@ -196,7 +117,7 @@ impl GroupedTypedPrefix {
 
     /// Reject substitution of sources, claims, signed profiles or their order.
     pub fn validate_plan(&self, plan: &GroupedNativeRootPlan) -> Result<(), AkitaError> {
-        if plan.identity() != self.plan.identity() {
+        if plan.identity() != self.capacity.plan.identity() {
             return Err(AkitaError::InvalidInput(
                 "grouped prefix plan mismatch".into(),
             ));
@@ -211,13 +132,13 @@ impl GroupedTypedPrefix {
                 "grouped setup field mismatch".into(),
             ));
         }
-        let len = self.first.n_prefix()?;
+        let len = self.capacity.first.n_prefix()?;
         let mut coefficients = Vec::new();
         coefficients
             .try_reserve_exact(len)
             .map_err(|_| AkitaError::InvalidProof)?;
         coefficients.resize(len, F::zero());
-        for ((range, typed), binary) in self.parts.iter().zip(self.plan.binary()) {
+        for ((range, typed), binary) in self.capacity.parts.iter().zip(self.capacity.plan.binary()) {
             let local = typed.setup_coefficients(
                 &self.setup.setup_seed.seed,
                 &binary.source().manifest,
@@ -242,8 +163,8 @@ impl GroupedTypedPrefix {
     ) -> Result<(), AkitaError> {
         if akita_params::field_modulus::<F>()? != SisModulusProfileId::Q64Offset59.modulus()
             || setup.expanded().descriptor() != &self.setup
-            || setup.prefix_context(&self.first) != Some(self.identity())
-            || setup.prefix_slots().get(&self.first).is_none()
+            || setup.prefix_context(&self.capacity.first) != Some(self.identity())
+            || setup.prefix_slots().get(&self.capacity.first).is_none()
         {
             return Err(AkitaError::InvalidInput(
                 "foreign grouped prefix context".into(),

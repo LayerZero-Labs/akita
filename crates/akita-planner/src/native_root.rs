@@ -338,3 +338,7 @@ mod tests {
         .is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "native_setup_tests.rs"]
+mod setup_tests;
