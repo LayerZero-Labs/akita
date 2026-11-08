@@ -243,7 +243,8 @@ more than two levels:
   32:1) is short at level 0;
 - the recursive headline shape 36:1 passes at both levels. Its root one-hot
   thresholds, 564 per attempt and 1469 one-shot, both fit the scheduled four
-  base-8 digits (positive reach 1755).
+  base-8 digits (positive reach 1755). At k = 3 its level 2 is one digit
+  short, because the clear row caps it (W2-d).
 
 So ZK rows come from the planner, never from a clear row.
 
@@ -312,11 +313,22 @@ fold (Q5, answered).
   5,879 one shot at k = 3, under the K = 16 source chunk). No test
   asserts the total ZK bound: it would be arithmetic on the paper's
   constants, and the paper gives no value for Q_tot (Q6).
-- **W2-d.** At every masked level of the clear 36:1 row (levels 0, 1 and 2
-  at k = 3), re-pricing that row's fixed geometry with the one-shot digit
-  ranges keeps each level's A rank, as paper §6.2 states. If it does not,
-  the test fails. This does not compare against the ZK row, which the
-  planner plans separately with its own geometry and ranks.
+- **W2-d.** At the masked levels of the clear 36:1 row, re-pricing that
+  row's fixed geometry with the one-shot digit ranges keeps the A rank at
+  levels 0 and 1, as paper §6.2 states, and raises it from 6 to 7 at
+  level 2. The clear row sizes level 2 with the planner's modeled ℓ∞ cap
+  (3 digits): a per-attempt cap, accepted with probability only ≥ 1/40
+  and taken from a moment model of a typical witness. A masked level
+  never takes it (§2.3): a filter that reads the witness can bias the
+  public challenges in a witness-dependent way, and this construction
+  bounds that leakage by negligible rejection for every witness, which a
+  per-attempt cap from a typical-witness model does not give. The one-shot digits
+  there (4) equal the clear derivation without the cap, so the extra rank
+  is the cost of dropping the cap, not of the one-shot target. The tests
+  pin which levels the row caps and each level's extra rank (0, 0, 1),
+  and that the one-shot digits ignore a per-attempt cap. They do not
+  compare against the ZK row, which the planner plans separately with its
+  own geometry and ranks (its level-2 A also has rank 7).
 
 ### 2.5 One-shot responses under #255's operator-norm families
 
@@ -2154,6 +2166,10 @@ rows are now `ν = 23` (single-group end-to-end statement), `ν = 25`
 14:1 catalog row gives `ν = 24`. The masked level 2 runs the
 quotient relation at `d = 64`; the residual stays at `d = 128` (§5.5.3).
 The 36:1 headline's level 1 consumes level 0's setup.
+
+**A ranks.** The masked level 2 of the 36:1 headline costs one A rank over
+the clear row (7 against 6; W2-d). Paper §6.2's claim that the masked
+levels keep the clear ranks holds at levels 0 and 1 only.
 
 **Not done.** The paper's δ_LHL slice count and knowledge-error ledger at
 k = 3 are not recomputed here.
