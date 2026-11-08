@@ -133,18 +133,21 @@ impl BinaryRootPublic {
             ));
         }
         let batch_count = checked::sum([
-            plan.coefficient_batch_count()?,
-            if claim.is_some() { 2 } else { 0 },
-            checked::product([2, prime.claim().map_or(0, |claim| claim.evaluations.len())])
-                .ok_or(AkitaError::InvalidProof)?,
-            manifest.b_rows(),
-            manifest
-                .d_label(claim.is_some(), prime.planes().len())?
-                .rank as usize,
+            plan.row_counts(
+                manifest.b_rows(),
+                manifest
+                    .d_label(claim.is_some(), prime.planes().len())?
+                    .rank as usize,
+            )?
+            .total()?,
             ordinary
                 .as_ref()
                 .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
-            negative_binary_addresses.len(),
+            ordinary
+                .as_ref()
+                .map(OrdinaryNativeRootPlan::negative_binary_count)
+                .transpose()?
+                .unwrap_or(0),
         ])
         .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
@@ -165,28 +168,24 @@ impl BinaryRootPublic {
 
     /// Seven P128 projections or the P64 coefficient coordinates, then word
     /// parity/value, B/D, ordinary rows, negative bits and two batches per prime
-    /// plane. No row
+    /// claim. No row
     /// reads a padding address, and none constrains one.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
 
     /// Batch ranges: terminal, B, D, ordinary rows, negative bits, prime rows.
-    fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
-        let terminal = checked::range(
-            self.plan.coefficient_batch_count()?,
-            if self.claim.is_some() { 2 } else { 0 },
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-        let b =
-            checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let d = checked::range(
-            b.end,
+    pub(super) fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
+        let counts = self.plan.row_counts(
+            self.manifest.b_rows(),
             self.manifest
                 .d_label(self.claim.is_some(), self.prime.planes().len())?
                 .rank as usize,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
+        )?;
+        let terminal =
+            checked::range(counts.coefficients, counts.word).ok_or(AkitaError::InvalidProof)?;
+        let b = checked::range(terminal.end, counts.b).ok_or(AkitaError::InvalidProof)?;
+        let d = checked::range(b.end, counts.d).ok_or(AkitaError::InvalidProof)?;
         let ordinary_rows = checked::range(
             d.end,
             self.ordinary
@@ -196,17 +195,11 @@ impl BinaryRootPublic {
         .ok_or(AkitaError::InvalidProof)?;
         let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
             .ok_or(AkitaError::InvalidProof)?;
-        let prime_rows = checked::range(
-            negative_bits.end,
-            checked::product([
-                2,
-                self.prime
-                    .claim()
-                    .map_or(0, |claim| claim.evaluations.len()),
-            ])
-            .ok_or(AkitaError::InvalidProof)?,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
+        let prime_rows =
+            checked::range(negative_bits.end, counts.prime).ok_or(AkitaError::InvalidProof)?;
+        if prime_rows.end != self.batch_count {
+            return Err(AkitaError::InvalidProof);
+        }
         Ok([terminal, b, d, ordinary_rows, negative_bits, prime_rows])
     }
 

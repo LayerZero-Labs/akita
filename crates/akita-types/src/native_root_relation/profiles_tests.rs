@@ -1,4 +1,4 @@
-use crate::binary_source::{root_weight_fixtures, RootFixtureField as F};
+use crate::binary_source::{root_weight_scenarios, RootFixtureField as F};
 use akita_algebra::poly::fold_evals_in_place;
 use jolt_algebra::Ring;
 
@@ -6,7 +6,8 @@ use jolt_algebra::Ring;
 /// through the per-address fallback, folds like the materialized table.
 #[test]
 fn profiles_fold_like_the_materialized_table() {
-    for fixture in root_weight_fixtures() {
+    for scenario in root_weight_scenarios() {
+        let fixture = scenario.compile_stage2();
         let dense = fixture.weights.materialize().unwrap();
         let num_vars = dense.len().trailing_zeros() as usize;
         for block_bits in [0, 3, 8, 10].into_iter().filter(|&bits| bits <= num_vars) {
@@ -41,9 +42,13 @@ fn profiles_fold_like_the_materialized_table() {
 
 #[test]
 fn profiles_reject_blocks_wider_than_the_table() {
-    let fixture = root_weight_fixtures().swap_remove(0);
-    let num_vars = fixture.weights.table_len().trailing_zeros() as usize;
-    assert!(fixture.weights.profiles(num_vars + 1).is_err());
+    let weights = crate::native_root_relation::NativeRootWeights::<F>::new(
+        8,
+        vec![(0, F::from_u64(1))],
+        F::from_u64(0),
+    )
+    .unwrap();
+    assert!(weights.profiles(4).is_err());
 }
 
 /// Lane runs fill the same table as per-address terms, across several

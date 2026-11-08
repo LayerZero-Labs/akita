@@ -216,6 +216,22 @@ impl OrdinaryNativeRootPlan {
         self.linear_batch_count
     }
 
+    /// Number of natural negative-bit addresses, without materializing them.
+    pub fn negative_binary_count(&self) -> Result<usize, AkitaError> {
+        self.segments
+            .iter()
+            .skip(2)
+            .try_fold(0usize, |count, shape| {
+                checked::product([
+                    shape.elements,
+                    shape.digits,
+                    shape.geometry.polynomial_modulus_dimension(),
+                ])
+                .and_then(|n| checked::sum([count, n]))
+                .ok_or(AkitaError::InvalidProof)
+            })
+    }
+
     fn validate_repacking(&self, repacking: &RootCoefficientRepacking) -> Result<(), AkitaError> {
         let range = checked::range(self.first_segment, self.segments.len())
             .ok_or(AkitaError::InvalidProof)?;

@@ -1,6 +1,109 @@
 use super::*;
 
 #[test]
+fn indexed_binary_group_work_prices_exact_thresholds() {
+    for (coordinates, bits, max_bytes) in [
+        (1, 0, 0),
+        (256, 0, 0),
+        (257, 1, 2),
+        (1024, 2, 2),
+        (1_048_576, 12, 3),
+    ] {
+        let work = GrindingRun::binary_group_challenge_work(0, 63, coordinates).unwrap();
+        assert_eq!(work.kind(), GrindingQueryKind::FoldChallengeWork);
+        assert_eq!(work.binary_group(), Some(63));
+        assert_eq!(work.challenge_set_bits(), 136);
+        assert_eq!(work.loss_factor(), coordinates);
+        assert_eq!(work.grind_bits(), bits);
+        assert_eq!(work.nonce_max_bytes().unwrap(), max_bytes);
+        // Dividing the specified inequality by 2^128 is exact. This checks
+        // minimality independently of the implementation's multiword engine.
+        assert!(u128::from(coordinates) <= 1u128 << (8 + bits));
+        if bits != 0 {
+            assert!(u128::from(coordinates) > 1u128 << (7 + bits));
+        } else {
+            assert_eq!(work.nonce_bits(), 0);
+        }
+    }
+}
+
+#[test]
+fn indexed_group_plan_digest_binds_presence_order_group_and_price() {
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let response = GrindingRun::binary_group_response(0, 0).unwrap();
+    let work = GrindingRun::binary_group_challenge_work(0, 0, 256).unwrap();
+    let plan = GrindingPlan::new(vec![response, work], order).unwrap();
+    let digest = plan.digest().unwrap();
+    for runs in [
+        vec![response],
+        vec![work, response],
+        vec![
+            GrindingRun::binary_group_response(0, 1).unwrap(),
+            GrindingRun::binary_group_challenge_work(0, 1, 256).unwrap(),
+        ],
+        vec![
+            response,
+            GrindingRun::binary_group_challenge_work(0, 0, 257).unwrap(),
+        ],
+        vec![
+            GrindingRun::fold_response(0),
+            GrindingRun::fold_challenge_work(0, 256, 136).unwrap(),
+        ],
+    ] {
+        assert_ne!(
+            GrindingPlan::new(runs, order).unwrap().digest().unwrap(),
+            digest
+        );
+    }
+    let mut response_bytes = Vec::new();
+    response.append_canonical_bytes(&mut response_bytes);
+    let mut work_bytes = Vec::new();
+    work.append_canonical_bytes(&mut work_bytes);
+    assert_ne!(response_bytes[0], work_bytes[0]);
+    assert_eq!(GrindingRun::fold_response(0).binary_group(), None);
+    assert_eq!(
+        GrindingRun::fold_challenge_work(0, 256, 136)
+            .unwrap()
+            .binary_group(),
+        None
+    );
+}
+
+#[test]
+fn indexed_binary_group_runs_reject_caps_sentinels_and_wrong_kinds() {
+    for (level, group) in [(0, 64), (0, u32::MAX), (u32::MAX, 0)] {
+        assert!(matches!(
+            GrindingRun::binary_group_response(level, group),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(
+            GrindingRun::binary_group_challenge_work(level, group, 256),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+    for coordinates in [0, 1_048_577, u64::MAX] {
+        assert!(matches!(
+            GrindingRun::binary_group_challenge_work(0, 0, coordinates),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+    let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
+    let mut wrong_kind = GrindingRun::fold_challenge_group(0, 0, 1).unwrap();
+    wrong_kind.binary_group = Some(0);
+    let mut wrong_family = GrindingRun::fold_challenge_work(0, 1, 137).unwrap();
+    wrong_family.binary_group = Some(0);
+    let mut underpriced = GrindingRun::binary_group_challenge_work(0, 0, 257).unwrap();
+    underpriced.grind_bits = 0;
+    underpriced.nonce_bits = 0;
+    for invalid in [wrong_kind, wrong_family, underpriced] {
+        assert!(matches!(
+            GrindingPlan::new(vec![invalid], order),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+}
+
+#[test]
 fn full_capacity_prices_exact_loss_bits() {
     let order = ChallengeFieldOrder::from_full_capacity(128).unwrap();
     for (loss, expected) in [(1, 0), (2, 1), (3, 2), (4, 2), (5, 3), (u64::MAX, 64)] {

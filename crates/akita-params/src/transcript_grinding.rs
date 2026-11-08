@@ -429,6 +429,8 @@ pub enum FoldResponseSearch {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GrindingRun {
     site: GrindingSite,
+    /// An indexed binary group occurrence; absent in every legacy schedule.
+    binary_group: Option<u32>,
     loss_factor: u64,
     grind_bits: u8,
     nonce_bits: u8,
@@ -439,6 +441,12 @@ pub struct GrindingRun {
 }
 
 impl GrindingRun {
+    /// Binary group occurrence of an indexed response or column-work site.
+    #[must_use]
+    pub const fn binary_group(self) -> Option<u32> {
+        self.binary_group
+    }
+
     /// Logical replay site.
     #[must_use]
     pub const fn site(self) -> GrindingSite {
@@ -507,6 +515,7 @@ impl GrindingRun {
         let grind_bits = challenge_order.grind_bits(loss_factor)?;
         Ok(Self {
             site,
+            binary_group: None,
             loss_factor,
             grind_bits,
             nonce_bits: pow_nonce_bits(grind_bits)?,
@@ -527,6 +536,7 @@ impl GrindingRun {
             ChallengeFieldOrder::from_full_capacity(challenge_set_bits)?.grind_bits(challenges)?;
         Ok(Self {
             site: GrindingSite::FoldChallengeWork { level },
+            binary_group: None,
             loss_factor: challenges,
             grind_bits,
             nonce_bits: pow_nonce_bits(grind_bits)?,
@@ -540,6 +550,7 @@ impl GrindingRun {
     pub const fn fold_response(level: u32) -> Self {
         Self {
             site: GrindingSite::FoldResponse { level },
+            binary_group: None,
             loss_factor: 0,
             grind_bits: 0,
             nonce_bits: FOLD_RESPONSE_NONCE_BITS,
@@ -561,6 +572,36 @@ impl GrindingRun {
         }
     }
 
+    /// Construct one group-local response search in the indexed binary profile.
+    pub fn binary_group_response(level: u32, group: u32) -> Result<Self, AkitaError> {
+        let run = Self {
+            binary_group: Some(group),
+            ..Self::fold_response(level)
+        };
+        run.validate()?;
+        Ok(run)
+    }
+
+    /// Price one binary group's column coordinates against the guaranteed
+    /// `2^136` support family, using the exact multiword work comparison.
+    pub fn binary_group_challenge_work(
+        level: u32,
+        group: u32,
+        coordinates: u64,
+    ) -> Result<Self, AkitaError> {
+        if coordinates > 1_048_576 {
+            return Err(AkitaError::InvalidSetup(
+                "binary column coordinate count exceeds the resource cap".into(),
+            ));
+        }
+        let run = Self {
+            binary_group: Some(group),
+            ..Self::fold_challenge_work(level, coordinates, 136)?
+        };
+        run.validate()?;
+        Ok(run)
+    }
+
     /// Construct one zero-width group message run covering its challenges.
     pub fn fold_challenge_group(
         level: u32,
@@ -569,6 +610,7 @@ impl GrindingRun {
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             site: GrindingSite::FoldChallengeGroup { level, group },
+            binary_group: None,
             loss_factor: 0,
             grind_bits: 0,
             nonce_bits: 0,
@@ -590,6 +632,20 @@ impl GrindingRun {
 
     fn validate(self) -> Result<(), AkitaError> {
         self.site.validate()?;
+        if let Some(group) = self.binary_group {
+            if group >= 64
+                || !matches!(
+                    self.kind(),
+                    GrindingQueryKind::FoldResponse | GrindingQueryKind::FoldChallengeWork
+                )
+                || (self.kind() == GrindingQueryKind::FoldChallengeWork
+                    && (self.challenge_set_bits != 136 || self.loss_factor > 1_048_576))
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "invalid indexed binary group grinding run".into(),
+                ));
+            }
+        }
         let work_set_bits = match self.kind() {
             GrindingQueryKind::FoldChallengeWork => self.challenge_set_bits != 0,
             _ => self.challenge_set_bits == 0,
@@ -643,7 +699,17 @@ impl GrindingRun {
     }
 
     fn append_canonical_bytes(self, out: &mut Vec<u8>) {
-        self.site.append_canonical_bytes(out);
+        if let Some(group) = self.binary_group {
+            // New discriminators keep every legacy site's encoding unchanged.
+            out.push(match self.kind() {
+                GrindingQueryKind::FoldResponse => 17,
+                _ => 18,
+            });
+            push_u32(out, self.site.level());
+            push_u32(out, group);
+        } else {
+            self.site.append_canonical_bytes(out);
+        }
         out.extend_from_slice(&self.loss_factor.to_le_bytes());
         out.push(self.grind_bits);
         out.push(self.nonce_bits);

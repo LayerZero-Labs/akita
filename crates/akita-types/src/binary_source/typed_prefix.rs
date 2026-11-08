@@ -82,7 +82,7 @@ impl DigitSegment {
 
     /// Root address of slot `t` of column `j` of period `q`, if a digit is there.
     #[cfg(any(test, feature = "test-support"))]
-    fn address(&self, q: usize, j: usize, t: usize) -> Option<usize> {
+    fn address(&self, start: usize, q: usize, j: usize, t: usize) -> Option<usize> {
         let local = checked::mul_add(j, SLOTS, t)?.checked_sub(self.offset % SLOTS)?;
         let degree = self.lanes.degree();
         let (p, coefficient) = (local / degree, local % degree);
@@ -90,7 +90,7 @@ impl DigitSegment {
             return None;
         }
         let lane = checked::mul_add(q, self.period, p).filter(|&lane| lane < self.lane_count())?;
-        checked::mul_add(lane, self.lanes.stride(), self.lanes.start())
+        checked::mul_add(lane, self.lanes.stride(), start)
             .and_then(|base| checked::sum([base, coefficient]))
     }
 }
@@ -373,7 +373,29 @@ impl BinaryTypedPrefix {
 
     /// Accept a selected prefix domain that holds every typed cell.
     pub fn validate_prefix(&self, prefix_len: usize) -> Result<(), AkitaError> {
-        if !prefix_len.is_power_of_two() || prefix_len < self.domain_len {
+        // Only the two reported lengths are public. Recover their canonical
+        // values from the immutable packing before a setup scan or allocation.
+        let mut natural_len = self.a.natural_len;
+        for piece in &self.pieces {
+            let region = self
+                .regions
+                .get(piece.region)
+                .ok_or(AkitaError::InvalidProof)?;
+            let size = checked::pow2(piece.size_bits()).ok_or(AkitaError::InvalidProof)?;
+            let last = checked::sum([piece.base, size - 1])
+                .and_then(|local| region.deposit(local))
+                .and_then(|cell| cell.checked_add(1))
+                .ok_or(AkitaError::InvalidProof)?;
+            natural_len = natural_len.max(last);
+        }
+        let domain_len = checked::ceil_log2(natural_len)
+            .and_then(checked::pow2)
+            .ok_or(AkitaError::InvalidProof)?;
+        if self.natural_len != natural_len
+            || self.domain_len != domain_len
+            || !prefix_len.is_power_of_two()
+            || prefix_len < self.domain_len
+        {
             return Err(AkitaError::InvalidInput(
                 "typed prefix exceeds the selected prefix domain".into(),
             ));
@@ -529,7 +551,6 @@ impl BinaryTypedPrefix {
     ) -> Result<Vec<E>, AkitaError> {
         self.validate_prefix(prefix_len)?;
         self.validate_batches(batches)?;
-        let (index, coefficient) = a.factors()?;
         let mut weights = Vec::new();
         weights.try_reserve_exact(prefix_len).map_err(|_| {
             AkitaError::InvalidInput("typed prefix weight allocation failed".into())
@@ -538,13 +559,18 @@ impl BinaryTypedPrefix {
         let a_cells = weights
             .get_mut(..self.a.natural_len)
             .ok_or(AkitaError::InvalidProof)?;
-        cfg_chunks_mut!(a_cells, self.a.row_stride)
-            .zip(index)
-            .for_each(|(cells, row)| {
-                for (cell, &value) in cells.iter_mut().zip(&coefficient) {
-                    *cell = row * value;
-                }
-            });
+        for (index, coefficient) in a.factor_terms()? {
+            if coefficient.len() != self.a.row_stride || index.len() < self.a.rows {
+                return Err(AkitaError::InvalidProof);
+            }
+            cfg_chunks_mut!(a_cells, self.a.row_stride)
+                .zip(index)
+                .for_each(|(cells, row)| {
+                    for (cell, &value) in cells.iter_mut().zip(&coefficient) {
+                        *cell += row * value;
+                    }
+                });
+        }
         let eq = crate::native_root_relation::RootEq::new(root_point)?;
         let kernel = ResidueKernelPoint::new(alpha, SLOTS)?;
         let cells = weights
@@ -558,7 +584,7 @@ impl BinaryTypedPrefix {
                 };
                 let mut equality = [E::zero(); SLOTS];
                 for (t, value) in equality.iter_mut().enumerate() {
-                    if let Some(address) = segment.address(q, j, t) {
+                    if let Some(address) = segment.address(segment.lanes.start(), q, j, t) {
                         *value = eq.high(address)?
                             * *eq
                                 .low()
@@ -872,3 +898,7 @@ pub use weights::TypedPrefixWeights;
 #[cfg(test)]
 #[path = "typed_prefix_tests.rs"]
 mod tests;
+
+#[path = "typed_prefix_translation.rs"]
+mod translation;
+pub use translation::BinaryPrefixTranslation;

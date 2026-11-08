@@ -117,6 +117,11 @@ impl RootCoefficientRepacking {
         self.domain_len
     }
 
+    /// Physical cells occupied by segments, before final domain padding.
+    pub const fn live_len(&self) -> usize {
+        self.live_len
+    }
+
     /// Segment range including each coordinate plane's virtual tail.
     pub fn segment_range(&self, segment: usize) -> Result<Range<usize>, AkitaError> {
         self.ranges.get(segment).cloned().ok_or_else(|| {

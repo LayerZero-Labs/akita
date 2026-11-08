@@ -54,6 +54,27 @@ use std::sync::Arc;
 
 type F = Prime128Offset275;
 
+/// A narrow test-only hook around the actual fold sampler. Capture the first
+/// squeezed seed rather than inferring binding from later relation rejection.
+struct FirstSqueeze<D> {
+    inner: D,
+    first: Option<Vec<u8>>,
+}
+
+impl<D: akita_challenges::FoldDraw> akita_challenges::FoldDraw for FirstSqueeze<D> {
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        let first = &mut self.first;
+        self.inner.draw_message(len, |message| {
+            first.get_or_insert_with(|| message.to_vec());
+            decode(message)
+        })
+    }
+}
+
 /// Existing ordinary suffix catalog, explicitly selected only by this test.
 /// The small binary source's rank-three A and rank-two B have no security claim.
 #[derive(Clone)]
@@ -561,6 +582,7 @@ fn run_fixture(
         &mut route,
     )
     .unwrap();
+    projection::assert_driver_order("prover");
     akita_transcript::finish_proof_ranges(&prover);
     let stage3_ranges = akita_transcript::thread_proof_ranges();
     akita_transcript::clear_thread_events();
@@ -673,6 +695,7 @@ fn run_fixture(
         ),
         "the no-A-read guard must reject an actual matrix accessor call"
     );
+    akita_transcript::clear_thread_events();
     let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &proof);
     replay.public_message(&BytesMsg(b"application-prefix"));
     let pending = verifier
@@ -686,6 +709,8 @@ fn run_fixture(
     replay.public_message(&BytesMsg(b"application-suffix"));
     assert_eq!(replay.verifier_message::<[u8; 32]>(), continuation);
     pending.check_eof(replay).unwrap();
+    projection::assert_driver_order("verifier");
+    akita_transcript::clear_thread_events();
     drop(no_a_reads);
 
     let rejects = |bytes: &[u8], claim: &BinaryWordClaim, point: &[F], value: F| {

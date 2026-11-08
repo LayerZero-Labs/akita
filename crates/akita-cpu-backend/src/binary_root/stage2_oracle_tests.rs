@@ -1,7 +1,7 @@
 //! Stage 2 on block profiles against Stage 2 on the materialized root table.
 
 use super::*;
-use akita_types::binary_source::{root_weight_fixtures, RootFixtureField as E};
+use akita_types::binary_source::{root_weight_scenarios, RootFixtureField as E};
 use jolt_algebra::{One, Zero};
 
 /// `eq(point, x)` for every address `x`, with bit `i` of `x` against `point[i]`.
@@ -17,7 +17,8 @@ fn equality_table<E: Field>(point: &[E]) -> Vec<E> {
 
 #[test]
 fn profiled_root_stage2_matches_the_dense_table_round_by_round() {
-    for fixture in root_weight_fixtures() {
+    for scenario in root_weight_scenarios() {
+        let fixture = scenario.compile_stage2();
         let dense = fixture.weights.materialize().unwrap();
         let domain_len = dense.len();
         let num_vars = domain_len.trailing_zeros() as usize;

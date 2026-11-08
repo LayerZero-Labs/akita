@@ -1,6 +1,6 @@
-//! Small compiled binary root relations for prover differential tests.
+//! Shared binary root inputs and stage-specific prover fixtures.
 
-use akita_challenges::{Challenges, SparseChallenge};
+use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::sis::{
     sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
@@ -15,7 +15,7 @@ use jolt_algebra::{Prime128Offset275, Ring};
 use super::{
     BinaryAOperand, BinaryAProduct, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic,
     BinarySourceDescriptor, BinaryTerminalClaim, BinaryTypedPrefix, PrimeGroupClaim,
-    PrimePlaneClaim, PrimePlaneManifest, TypedPrefixWeights,
+    PrimePlaneClaim, PrimePlaneManifest, TypedPrefixWeights, BINARY_PROJECTION_COUNT,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -31,8 +31,6 @@ pub struct RootWeightFixture {
     /// Live witness prefix: the natural end of the repacked digits plus any
     /// extra zero rings.
     pub logical_len: usize,
-    /// Stage 3 on the typed setup prefix at a fixed root point.
-    pub stage3: Stage3Fixture,
 }
 
 /// The typed setup table, its dense Stage 3 weight and the same weight in
@@ -45,19 +43,20 @@ pub struct Stage3Fixture {
 
 /// Root shape parameters, as in the structured-weight differential tests.
 #[derive(Clone, Copy, Debug)]
-struct Shape {
-    word_width: usize,
-    carriers: usize,
-    columns: usize,
-    owners: usize,
-    word_claim: bool,
-    prime_planes: usize,
-    extra_rings: usize,
-    mixed: bool,
+pub(crate) struct Shape {
+    pub(crate) word_width: usize,
+    pub(crate) carriers: usize,
+    pub(crate) columns: usize,
+    pub(crate) owners: usize,
+    pub(crate) word_claim: bool,
+    pub(crate) prime_planes: usize,
+    pub(crate) extra_rings: usize,
+    pub(crate) mixed: bool,
 }
 
 /// SplitMix64: deterministic public inputs without a test-only RNG dependency.
-struct Stream(u64);
+#[derive(Clone)]
+pub(crate) struct Stream(u64);
 
 impl Stream {
     fn next(&mut self) -> u64 {
@@ -76,7 +75,7 @@ impl Stream {
         ((u128::from(self.next()) << 64) | u128::from(self.next())) >> 1
     }
 
-    fn field(&mut self) -> RootFixtureField {
+    pub(crate) fn field(&mut self) -> RootFixtureField {
         RootFixtureField::from_u128(self.u127())
     }
 
@@ -229,6 +228,7 @@ fn public(
     let natural_end = build(1 << 22)
         .and_then(|public| public.plan().repacking().natural_end())
         .expect("fixture natural end");
+    assert!(build(natural_end - 1).is_err());
     let logical_len = natural_end + shape.extra_rings * 64;
     let payload_len = manifest.b_rows() * manifest.b_ring_dimension();
     (
@@ -239,130 +239,178 @@ fn public(
     )
 }
 
-fn compile(shape: Shape, seed: u64) -> RootWeightFixture {
-    let mut stream = Stream(seed);
-    let (public, manifest, logical_len, payload_len) = public(shape, &mut stream);
-    let descriptor = public.plan().descriptor().clone();
-    let index = descriptor.index_map();
-    let owners = descriptor.polynomials().len();
-    let columns = index.columns();
-    let challenges = Challenges::from_sparse(
-        (0..columns * owners)
-            .map(|_| {
-                let mut positions = Vec::new();
-                while positions.len() < 46 {
-                    let position = stream.below(162) as u32;
-                    if !positions.contains(&position) {
-                        positions.push(position);
-                    }
-                }
-                positions.sort_unstable();
-                SparseChallenge {
-                    positions: positions.into(),
-                    coeffs: (0..46)
-                        .map(|_| if stream.next() & 1 == 0 { 1i8 } else { -1 })
-                        .collect::<Vec<_>>()
-                        .into(),
-                }
-            })
-            .collect(),
-        columns,
-        owners,
-    )
-    .expect("fixture challenges");
-    let alpha = stream.field();
-    let batches = (0..public.batch_count())
-        .map(|_| stream.field())
-        .collect::<Vec<_>>();
-    let rho = (0..owners * public.plan().rank())
-        .map(|_| std::array::from_fn(|_| stream.field()))
-        .collect::<Vec<[RootFixtureField; 648]>>();
-    let projected: [i128; 7] = std::array::from_fn(|_| i128::from(stream.next() as i64));
-    let commitment = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
-    let d_payload = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
-    let ordinary = binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
-    let ordinary_point = (0..ordinary.group.num_vars())
-        .map(|_| stream.field())
-        .collect::<Vec<_>>();
-    let ordinary_payload = (0..ordinary
-        .outer_compression_plan()
-        .expect("fixture compression plan")
-        .terminal_coefficients())
-        .map(|_| stream.field())
-        .collect::<Vec<_>>();
-    let ordinary_claim = shape
-        .mixed
-        .then(|| (&ordinary_point[..], stream.field(), &ordinary_payload[..]));
-    let a_rows = index.padded_carriers() / (4 * columns);
-    let matrix = (0..public.plan().rank())
-        .map(|_| {
-            (0..a_rows)
+/// Raw public inputs shared by the independent root compilers and fixtures.
+/// Creating a scenario compiles neither Stage 2 nor Stage 3 weights.
+pub struct RootWeightScenario {
+    pub name: String,
+    pub(crate) public: BinaryRootPublic,
+    pub(crate) manifest: BinaryCommittedGroupManifest,
+    pub(crate) logical_len: usize,
+    pub(crate) challenges: Challenges,
+    pub(crate) alpha: RootFixtureField,
+    pub(crate) batches: Vec<RootFixtureField>,
+    pub(crate) rho: Vec<[RootFixtureField; 648]>,
+    pub(crate) projected: [i128; BINARY_PROJECTION_COUNT],
+    pub(crate) commitment: Vec<RootFixtureField>,
+    pub(crate) d_payload: Vec<RootFixtureField>,
+    pub(crate) ordinary_claim: Option<(
+        Vec<RootFixtureField>,
+        RootFixtureField,
+        Vec<RootFixtureField>,
+    )>,
+    pub(crate) matrix: Vec<Vec<[i128; 648]>>,
+    pub(crate) stream: Stream,
+}
+
+impl RootWeightScenario {
+    pub(crate) fn new(shape: Shape, seed: u64) -> Self {
+        let mut stream = Stream(seed);
+        let (public, manifest, logical_len, payload_len) = public(shape, &mut stream);
+        let descriptor = public.plan().descriptor().clone();
+        let index = descriptor.index_map();
+        let owners = descriptor.polynomials().len();
+        let columns = index.columns();
+        let weight = FoldChallengeDistribution::BinaryRoot.weight();
+        let challenges = Challenges::from_sparse(
+            (0..columns * owners)
                 .map(|_| {
-                    std::array::from_fn(|_| i128::from(stream.below(2 * 7_126_704 + 1)) - 7_126_704)
+                    let mut positions = Vec::new();
+                    while positions.len() < weight {
+                        let position = stream.below(162) as u32;
+                        if !positions.contains(&position) {
+                            positions.push(position);
+                        }
+                    }
+                    positions.sort_unstable();
+                    SparseChallenge {
+                        positions: positions.into(),
+                        coeffs: (0..weight)
+                            .map(|_| if stream.next() & 1 == 0 { 1i8 } else { -1 })
+                            .collect::<Vec<_>>()
+                            .into(),
+                    }
                 })
-                .collect()
-        })
-        .collect::<Vec<Vec<[i128; 648]>>>();
-    let operand = BinaryAOperand::new::<RootFixtureField>(&matrix);
-    let (weights, negative_binary_weights) = public
-        .relation(
-            &challenges,
-            alpha,
-            &batches,
-            &rho,
-            &projected,
-            &commitment,
-            &d_payload,
-            ordinary_claim,
-            Some(operand),
+                .collect(),
+            columns,
+            owners,
         )
-        .expect("fixture relation");
-    let stage3 = stage3(&public, &manifest, &rho, &mut stream);
-    RootWeightFixture {
-        name: format!("{shape:?}"),
-        weights,
-        negative_binary_weights,
-        logical_len,
-        stage3,
-    }
-}
-
-fn stage3(
-    public: &BinaryRootPublic,
-    manifest: &BinaryCommittedGroupManifest,
-    rho: &[[RootFixtureField; 648]],
-    stream: &mut Stream,
-) -> Stage3Fixture {
-    let plan = public.plan();
-    let typed = BinaryTypedPrefix::from_plan(manifest, plan).expect("fixture typed prefix");
-    let prefix_len = typed.domain_len;
-    let root_point = (0..plan.repacking().domain_len().trailing_zeros())
-        .map(|_| stream.field())
-        .collect::<Vec<_>>();
-    let alpha = stream.field();
-    let batches = [0, 1].map(|_| {
-        (0..manifest.b_rows())
+        .expect("fixture challenges");
+        let alpha = stream.field();
+        let batches = (0..public.batch_count())
             .map(|_| stream.field())
-            .collect::<Vec<_>>()
-    });
-    let batches = [batches[0].as_slice(), batches[1].as_slice()];
-    let a = BinaryAProduct::new(plan, rho, &root_point, prefix_len).expect("fixture A product");
-    Stage3Fixture {
-        setup: typed
-            .setup_coefficients(&SETUP_SEED, manifest, prefix_len)
-            .expect("fixture typed setup"),
-        weights: typed
-            .prover_weights(&a, &root_point, alpha, batches, prefix_len)
-            .expect("fixture dense weights"),
-        blocks: typed
-            .prover_weight_blocks(&a, &root_point, alpha, batches, prefix_len)
-            .expect("fixture weight blocks"),
+            .collect::<Vec<_>>();
+        let rho = (0..owners * public.plan().rank())
+            .map(|_| std::array::from_fn(|_| stream.field()))
+            .collect::<Vec<[RootFixtureField; 648]>>();
+        let projected: [i128; BINARY_PROJECTION_COUNT] =
+            std::array::from_fn(|_| i128::from(stream.next() as i64));
+        let commitment = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
+        let d_payload = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
+        let ordinary = binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
+        let ordinary_point = (0..ordinary.group.num_vars())
+            .map(|_| stream.field())
+            .collect::<Vec<_>>();
+        let ordinary_payload = (0..ordinary
+            .outer_compression_plan()
+            .expect("fixture compression plan")
+            .terminal_coefficients())
+            .map(|_| stream.field())
+            .collect::<Vec<_>>();
+        let ordinary_claim = shape
+            .mixed
+            .then(|| (ordinary_point, stream.field(), ordinary_payload));
+        let a_rows = index.padded_carriers() / (4 * columns);
+        let matrix = (0..public.plan().rank())
+            .map(|_| {
+                (0..a_rows)
+                    .map(|_| {
+                        std::array::from_fn(|_| {
+                            i128::from(stream.below(2 * 7_126_704 + 1)) - 7_126_704
+                        })
+                    })
+                    .collect()
+            })
+            .collect::<Vec<Vec<[i128; 648]>>>();
+        Self {
+            name: format!("{shape:?}"),
+            public,
+            manifest,
+            logical_len,
+            challenges,
+            alpha,
+            batches,
+            rho,
+            projected,
+            commitment,
+            d_payload,
+            ordinary_claim,
+            matrix,
+            stream,
+        }
+    }
+
+    /// Compile only the Stage 2 root relation, including its A operand.
+    pub fn compile_stage2(&self) -> RootWeightFixture {
+        let (weights, negative_binary_weights) = self
+            .public
+            .relation(
+                &self.challenges,
+                self.alpha,
+                &self.batches,
+                &self.rho,
+                &self.projected,
+                &self.commitment,
+                &self.d_payload,
+                self.ordinary_claim
+                    .as_ref()
+                    .map(|(point, value, payload)| (point.as_slice(), *value, payload.as_slice())),
+                Some(BinaryAOperand::new::<RootFixtureField>(&self.matrix)),
+            )
+            .expect("fixture relation");
+        RootWeightFixture {
+            name: self.name.clone(),
+            weights,
+            negative_binary_weights,
+            logical_len: self.logical_len,
+        }
+    }
+
+    /// Compile only the typed-prefix Stage 3 setup and weights.
+    pub fn compile_stage3(&self) -> Stage3Fixture {
+        let mut stream = self.stream.clone();
+        let plan = self.public.plan();
+        let manifest = &self.manifest;
+        let typed = BinaryTypedPrefix::from_plan(manifest, plan).expect("fixture typed prefix");
+        let prefix_len = typed.domain_len;
+        let root_point = (0..plan.repacking().domain_len().trailing_zeros())
+            .map(|_| stream.field())
+            .collect::<Vec<_>>();
+        let alpha = stream.field();
+        let batches = [0, 1].map(|_| {
+            (0..manifest.b_rows())
+                .map(|_| stream.field())
+                .collect::<Vec<_>>()
+        });
+        let batches = [batches[0].as_slice(), batches[1].as_slice()];
+        let a = BinaryAProduct::new(plan, &self.rho, &root_point, prefix_len)
+            .expect("fixture A product");
+        Stage3Fixture {
+            setup: typed
+                .setup_coefficients(&SETUP_SEED, manifest, prefix_len)
+                .expect("fixture typed setup"),
+            weights: typed
+                .prover_weights(&a, &root_point, alpha, batches, prefix_len)
+                .expect("fixture dense weights"),
+            blocks: typed
+                .prover_weight_blocks(&a, &root_point, alpha, batches, prefix_len)
+                .expect("fixture weight blocks"),
+        }
     }
 }
 
-/// Compiled roots covering up to five owners, prime planes, extra zero rings
+/// Raw input scenarios covering up to five owners, prime planes, extra zero rings
 /// and the mixed ordinary group.
-pub fn root_weight_fixtures() -> Vec<RootWeightFixture> {
+pub fn root_weight_scenarios() -> impl Iterator<Item = RootWeightScenario> {
     let base = Shape {
         word_width: 128,
         carriers: 8,
@@ -413,9 +461,8 @@ pub fn root_weight_fixtures() -> Vec<RootWeightFixture> {
     .zip(1u64..)
     .map(|(mut shape, seed)| {
         shape.owners = shape.owners.max(shape.prime_planes);
-        compile(shape, seed)
+        RootWeightScenario::new(shape, seed)
     })
-    .collect()
 }
 
 /// Small word-root manifest with the selected base profile. Larger owner counts

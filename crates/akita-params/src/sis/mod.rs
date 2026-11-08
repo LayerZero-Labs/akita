@@ -30,6 +30,8 @@ pub mod decomposition_digits;
 pub mod fold_linf_cap;
 mod generated_l2_sis_table;
 mod generated_sis_table;
+#[cfg(all(test, feature = "labinius-sis"))]
+pub(crate) use generated_sis_table::sis_max_widths as generated_sis_max_widths;
 pub mod honest_fold_policy;
 mod l2_table;
 #[cfg(feature = "labinius-sis")]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::binary_source::root_public::reference::residual_envelope;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, CANONICAL_IMAGE_WINDOW};
 use akita_challenges::{Challenges, SparseChallenge};
 use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
@@ -23,15 +24,32 @@ fn five_segments_share_addresses_when_scheduled_domain_grows() {
     let plan =
         BinaryRootWitnessPlan::for_profile(&descriptor, 2, 256, BinaryFieldProfile::P128, true, 0)
             .unwrap();
-    assert_eq!(plan.repacking().domain_len(), 65536);
+    let index = descriptor.index_map();
+    let rows = index.padded_carriers() / index.columns() / 4;
     assert_eq!(
         plan.repacking()
             .segments()
             .iter()
             .map(|shape| (shape.elements, shape.digits))
             .collect::<Vec<_>>(),
-        vec![(1, 4), (4, 8), (2, 1), (1, 9), (1, 6)]
+        vec![
+            (descriptor.polynomials().len() * rows, 4),
+            (
+                descriptor.polynomials().len() * index.columns() * plan.rank(),
+                8
+            ),
+            (descriptor.polynomials().len() * index.columns(), 1),
+            (descriptor.polynomials().len(), BINARY_PARITY_CARRY_DIGITS),
+            (descriptor.polynomials().len(), BINARY_VALUE_CARRY_DIGITS),
+        ]
     );
+    let live = plan
+        .repacking()
+        .segments()
+        .iter()
+        .map(|shape| shape.elements * shape.digits * shape.geometry.physical_coefficient_width())
+        .sum::<usize>();
+    assert_eq!(plan.repacking().domain_len(), live.next_power_of_two());
     let larger = plan.clone().with_domain_len(131072).unwrap();
     for segment in 0..5 {
         assert_eq!(
@@ -120,41 +138,30 @@ fn direct_weights_join_a_and_terminal_carries_but_not_extended_padding() {
 }
 
 #[test]
-fn p64_quotient_bounds_pin_minimal_depth_and_full_accepted_lift() {
+fn p64_quotient_bounds_derive_minimal_depth_and_full_accepted_lift() {
     use crate::binary_source::{BinaryQuotientBounds, BINARY_SOURCE_Q};
     use akita_params::binary_setup::{BinaryFieldProfile, BINARY_SETUP_P64};
-    use akita_params::sis::checked_balanced_digit_representable_bounds;
-    for (m, c, l, h, depth, bound, lift) in [
-        (
-            1,
-            2,
-            16_211_309_718_240,
-            1_137_363,
-            8,
-            9_586_980,
-            152_858_456_733_060,
-        ),
-        (
-            8192,
-            256,
-            132_788_824_280_985_600,
-            9_316_285_267,
-            12,
-            39_268_272_420,
-            692_495_571_806_665_380,
-        ),
-    ] {
+    let reach = |digits: usize, digit: u128| {
+        (0..digits)
+            .map(|i| digit * 8u128.pow(i as u32))
+            .sum::<u128>()
+    };
+    for (m, c) in [(1, 2), (8192, 256)] {
+        let l = residual_envelope(m, c);
+        let h = l / u128::from(BINARY_SOURCE_Q);
+        let depth = (1..).find(|&d| reach(d, 3) >= h).unwrap();
+        let bound = reach(depth, 4);
+        let lift = l + u128::from(BINARY_SOURCE_Q) * bound;
         let bounds = BinaryQuotientBounds::new(m, c).unwrap();
         assert_eq!(bounds.residual_bound, l);
         assert_eq!(bounds.quotient_floor, h);
         assert_eq!(bounds.digits, depth);
+        assert_eq!(bounds.positive_reach, reach(depth, 3));
         assert_eq!(bounds.quotient_bound, bound);
         assert_eq!(bounds.no_wrap_bound, lift);
-        assert_eq!(lift, l + u128::from(BINARY_SOURCE_Q) * bound);
         assert!(lift < u128::from(BINARY_SETUP_P64));
-        let (_, too_short) = checked_balanced_digit_representable_bounds(3, depth - 1);
-        assert!(too_short.unwrap() < h);
-        assert!(bounds.positive_reach >= h);
+        assert!(reach(depth - 1, 3) < h);
+        assert!(reach(depth, 3) >= h);
         // Owner count does not enter the coefficientwise lift or the y cap.
         for owners in [1, 2, 4096] {
             let selected =
@@ -205,7 +212,12 @@ fn descriptor_geometry(m: usize, columns: usize, owners: usize) -> BinarySourceD
 #[test]
 fn p64_quotients_are_last_and_preserve_existing_natural_addresses() {
     use akita_params::binary_setup::BinaryFieldProfile;
-    for (m, columns, depth, old_live) in [(1, 2, 8, 57_600), (8192, 256, 12, 39_915_264)] {
+    for (m, columns) in [(1, 2), (8192, 256)] {
+        let required =
+            residual_envelope(m, columns) / u128::from(crate::binary_source::BINARY_SOURCE_Q);
+        let depth = (1..)
+            .find(|&d| (0..d).map(|i| 3 * 8u128.pow(i)).sum::<u128>() >= required)
+            .unwrap() as usize;
         for owners in [1, 2, 4096] {
             let descriptor = descriptor_geometry(m, columns, owners);
             for (word, planes) in [(true, 0), (false, 2), (true, 2)] {
@@ -226,7 +238,11 @@ fn p64_quotients_are_last_and_preserve_existing_natural_addresses() {
                 assert_eq!(shape.geometry.physical_coefficient_width(), 1024);
                 let range = plan.repacking().segment_range(segment).unwrap();
                 if word && planes == 0 {
-                    assert_eq!(range.start, old_live * owners);
+                    let response = m * 4 * 1024;
+                    let image = columns * 3 * 8 * 1024;
+                    let word = columns * 256;
+                    let carries = (BINARY_PARITY_CARRY_DIGITS + BINARY_VALUE_CARRY_DIGITS) * 256;
+                    assert_eq!(range.start, (response + image + word + carries) * owners);
                 }
                 assert_eq!(range.len(), 3 * owners * depth * 1024);
                 assert_eq!(plan.coefficient_batch_count().unwrap(), 1944 * owners);
@@ -276,85 +292,32 @@ fn p64_quotients_are_last_and_preserve_existing_natural_addresses() {
     .unwrap();
     assert_eq!(legacy.field_profile(), BinaryFieldProfile::P128);
     assert_eq!(legacy.quotient_segment(), None);
-    assert_eq!(legacy.projection_bounds().projection_count(), 7);
-    assert_eq!(legacy.coefficient_batch_count().unwrap(), 7);
-    assert_eq!(legacy.repacking().domain_len(), 65_536);
     assert_eq!(
-        (0..5)
-            .map(|segment| legacy.repacking().segment_range(segment).unwrap())
-            .collect::<Vec<_>>(),
-        vec![
-            0..4096,
-            4096..53_248,
-            53_248..53_760,
-            53_760..56_064,
-            56_064..57_600
-        ]
+        legacy.projection_bounds().projection_count(),
+        crate::binary_source::BINARY_PROJECTION_COUNT
     );
     assert_eq!(
-        legacy.projection_bounds().residual_bound(),
-        16_211_309_718_240
+        legacy.coefficient_batch_count().unwrap(),
+        crate::binary_source::BINARY_PROJECTION_COUNT
     );
+    let mut offset = 0;
+    for (segment, shape) in legacy.repacking().segments().iter().enumerate() {
+        let length = shape.elements * shape.digits * shape.geometry.physical_coefficient_width();
+        assert_eq!(
+            legacy.repacking().segment_range(segment).unwrap(),
+            offset..offset + length
+        );
+        offset += length;
+    }
+    assert_eq!(legacy.repacking().domain_len(), offset.next_power_of_two());
+    let residual = residual_envelope(1, 2);
+    assert_eq!(legacy.projection_bounds().residual_bound(), residual);
     assert_eq!(
         legacy.projection_bounds().projection_bound(),
-        449_193_104_205_686_897_172_480
+        u128::from(crate::binary_source::BINARY_SOURCE_Q - 1)
+            * (legacy.rank() * 648) as u128
+            * residual
     );
-}
-
-fn carrier_profile(
-    field: akita_params::binary_setup::BinaryFieldProfile,
-) -> akita_params::GroupCommitPhaseParams {
-    use akita_params::sis::{
-        sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams,
-        SisMatrixRole, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
-    };
-    use akita_params::{
-        BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits,
-        GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
-    };
-    let (modulus, digits) = match field {
-        BinaryFieldProfile::P128 => (SisModulusProfileId::Q128Offset275, 43),
-        akita_params::binary_setup::BinaryFieldProfile::P64 => {
-            (SisModulusProfileId::Q64Offset59, 22)
-        }
-    };
-    let key = |role, degree| {
-        sis_table_key_for_linf_bound(
-            DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            modulus,
-            role,
-            degree,
-            8,
-        )
-        .unwrap()
-    };
-    let inner =
-        InnerCommitMatrixParams::try_new_with_min_rank(key(SisMatrixRole::Inner, 128), 2).unwrap();
-    let geometry = CommitmentSliceGeometry::try_new(
-        CommitmentSliceCount::ONE,
-        4,
-        1,
-        inner.output_rank(),
-        digits,
-        128,
-        64,
-    )
-    .unwrap();
-    let outer = OuterCommitMatrixParams::try_new_with_min_rank(
-        key(SisMatrixRole::Outer, 64),
-        geometry.physical_input_width(),
-    )
-    .unwrap();
-    GroupCommitPhaseParams {
-        version: GroupCommitPhaseParams::VERSION,
-        group: PolynomialGroupLayout::singleton(10),
-        blocks: BlockGeometry::new(8, 2, 4),
-        outer_slice_count: CommitmentSliceCount::ONE,
-        randomness_columns: 0,
-        inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
-        outer: RoleParams::new(GadgetDigits::new(3, digits), outer),
-    }
 }
 
 #[test]
@@ -374,7 +337,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
         setup_seed: [41; 32].into(),
     };
     for field_profile in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
-        let carrier = carrier_profile(field_profile);
+        let carrier = crate::binary_source::binary_ordinary_profile_fixture(field_profile);
         let ordinary_carrier = carrier;
         let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
         let profiles =
