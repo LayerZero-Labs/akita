@@ -80,7 +80,11 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
                 GroupContext::explicit(&carrier)
             } else {
                 assert!(matches!(
-                    backend.commit(scheme.schedules(), &source, GroupContext::explicit(&carrier)),
+                    backend.commit(
+                        scheme.schedules(),
+                        &source,
+                        GroupContext::explicit(&carrier)
+                    ),
                     Err(AkitaError::InvalidInput(_))
                 ));
                 GroupContext::explicit_with_precommitted_groups(&carrier, &precommitteds)
