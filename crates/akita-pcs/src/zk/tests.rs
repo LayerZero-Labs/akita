@@ -4,6 +4,7 @@
 //! batched weights against `H` contracted column by column through the
 //! statement's own row maps.
 
+use super::rounds::{FusedKernel, SplitB};
 use super::rows::{batch_rows, BatchWeights};
 use super::*;
 use akita_config::policy_of;
@@ -24,9 +25,10 @@ use jolt_crypto::lattice::derive_public_matrix_prefix;
 use jolt_zk::whiteout::test_support::{CheckingResponseProver, SyntheticSigma};
 use jolt_zk::whiteout::{ResponseProver, ResponseSegment, ResponseWitness};
 use std::sync::{Arc, Mutex};
+use zeroize::Zeroizing;
 
 use akita_params::PackedNegativeBinary;
-use akita_sumcheck::multilinear_eval;
+use akita_sumcheck::{multilinear_eval, SumcheckKernel};
 use jolt_zk::whiteout::{CompressedImage, CompressedTarget};
 use rand::RngCore;
 
@@ -1039,4 +1041,151 @@ fn padding_term_matches_its_dense_weights() {
             "{len}"
         );
     }
+}
+
+/// Runs [`FusedKernel`] on the synthetic statement's `A` and `B` against the
+/// dense definition `Σ_x A(x)E(x) + B(x)E(x)(E(x) + 1)`, for random digits
+/// that are zero from a live length on.
+struct FusedOracle<'a> {
+    akita: &'a AkitaResponseProver<Cfg>,
+}
+
+impl<const D: usize> ResponseProver<F, D> for FusedOracle<'_> {
+    type Sponge = TranscriptSponge;
+
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        self.akita
+    }
+
+    fn prove_response(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        _witness: &ResponseWitness,
+        _transcript: &mut ProverChannel,
+    ) -> Result<(), ZkError> {
+        let mut rng = rand::thread_rng();
+        let shape = ResponseShape::new(statement.layout().unwrap().len()).unwrap();
+        let padded = shape.padded_len();
+        let chains = self.akita.verifier().chains(statement).unwrap();
+        let alpha = F::random(&mut rng);
+        let product_vars = ceil_log2(statement.row_shape().products.max(1));
+        let product_point: Vec<F> = (0..product_vars).map(|_| F::random(&mut rng)).collect();
+        let eta: Vec<F> = (0..row_variables(statement, &chains).unwrap())
+            .map(|_| F::random(&mut rng))
+            .collect();
+        let weights = RowWeights::new(statement, &eta, &product_point, &chains).unwrap();
+        let padding = PaddingTerm {
+            point: (0..shape.num_vars).map(|_| F::random(&mut rng)).collect(),
+        };
+        let claims = ProductClaims {
+            target: F::random(&mut rng),
+            x: F::random(&mut rng),
+            y: F::random(&mut rng),
+        };
+        let support = chains.support(padded).unwrap();
+        let tau: Vec<F> = (0..shape.num_vars).map(|_| F::random(&mut rng)).collect();
+        let (gamma, zeta) = (F::random(&mut rng), F::random(&mut rng));
+        let mut binary = vec![false; padded];
+        for interval in support.intervals() {
+            binary[interval.clone()].fill(true);
+        }
+        let eq_tau = EqPolynomial::evals(&tau).unwrap();
+        let b_dense: Vec<F> = eq_tau
+            .iter()
+            .zip(&binary)
+            .map(|(eq, &bin)| (gamma + if bin { zeta } else { F::zero() }) * *eq)
+            .collect();
+        let a_dense = dense(
+            &batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains)
+                .unwrap()
+                .a,
+        );
+        assert!(shape.len < padded && padded > 4 * 4096);
+
+        for live in [
+            shape.len,
+            shape.len + 1,
+            padded,
+            padded - 1,
+            1,
+            4096 * 2 + 1,
+            4096 * 3 - 8,
+        ] {
+            let digits: Vec<i8> = (0..padded)
+                .map(|j| {
+                    if j < live {
+                        (rng.next_u32() % 16) as i8 - 8
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            let fold = |table: &mut Vec<F>, r: F| {
+                *table = table
+                    .chunks_exact(2)
+                    .map(|pair| pair[0] + r * (pair[1] - pair[0]))
+                    .collect();
+            };
+            let (mut a, mut b) = (a_dense.clone(), b_dense.clone());
+            let mut e: Vec<F> = digits.iter().map(|&d| F::from_i64(i64::from(d))).collect();
+            let term = |a: F, b: F, e: F| a * e + b * e * (e + F::one());
+            let mut claim: F = (0..padded).map(|j| term(a[j], b[j], e[j])).sum();
+            let batch =
+                batch_rows(statement, shape, alpha, &weights, &padding, claims, &chains).unwrap();
+            let mut kernel = FusedKernel::new(
+                batch.a,
+                SplitB::new(&tau, gamma, zeta, support.intervals()),
+                Zeroizing::new(digits),
+                live,
+                claim,
+            )
+            .unwrap();
+            for round in 0..shape.num_vars {
+                let polynomial = kernel.round_polynomial(round, claim).unwrap();
+                for t in 0..4u64 {
+                    let at = F::from_u64(t);
+                    let line = |table: &[F], i: usize| {
+                        table[2 * i] + at * (table[2 * i + 1] - table[2 * i])
+                    };
+                    let expected: F = (0..a.len() / 2)
+                        .map(|i| term(line(&a, i), line(&b, i), line(&e, i)))
+                        .sum();
+                    assert_eq!(
+                        polynomial.evaluate(at),
+                        expected,
+                        "live {live} round {round} t {t}"
+                    );
+                }
+                let r = F::random(&mut rng);
+                claim = polynomial.evaluate(r);
+                kernel.bind_challenge(round, r).unwrap();
+                fold(&mut a, r);
+                fold(&mut b, r);
+                fold(&mut e, r);
+            }
+            assert_eq!(kernel.e_first(), Some(e[0]), "live {live}");
+        }
+        Ok(())
+    }
+
+    fn verify_response(
+        &self,
+        _statement: &ResponseStatement<'_, F, D>,
+        _transcript: &mut VerifierChannel<'_>,
+    ) -> Result<(), ZkError> {
+        Ok(())
+    }
+}
+
+/// The fused sumcheck's rounds equal the dense definition's however far the
+/// committed digits reach: at `e`'s end, one past it (a cheating prover's
+/// padding), the whole table, and lengths inside, at and off chunk and pair
+/// boundaries.
+#[test]
+fn fused_rounds_match_the_dense_sum_at_every_live_length() {
+    on_big_stack(|| {
+        let sigma = SyntheticSigma::<64>::new(11, 1);
+        let akita = akita_for(sigma.response_len(&CompressionShape::<Cfg>::default()));
+        sigma.prove(&FusedOracle { akita: &akita }, 12).unwrap();
+    });
 }

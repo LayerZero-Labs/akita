@@ -180,14 +180,24 @@ impl<F: Field + Fold + Send> SumcheckKernel<F> for ProductKernel<F> {
 /// ([`fold_in_place`]); no table is allocated after it, and the buffer,
 /// which holds `E`, is wiped when freed.
 ///
-/// `E` is constant time in `e`: every read is at a public index, the
-/// digits enter `F` through [`lift_ct`], which does not branch on their
-/// sign, and every fold and summand is field arithmetic. The chunk scratch
-/// that holds `E` is a [`SecretTable`] too.
+/// `E` is zero past the committed digits (the padding to `2^ν`), where the
+/// summand vanishes whatever `A` and `B` are, so the dense sums and `E`'s
+/// folds stop at `E`'s live length ([`Self::live`]); `A` is still folded
+/// in full, since a pair that straddles the boundary reads `A`'s entry
+/// past it.
+///
+/// `E` is constant time in `e`: every read is at a public index (the live
+/// length is the committed length, which the statement's layout fixes),
+/// the digits enter `F` through [`lift_ct`], which does not branch on
+/// their sign, and every fold and summand is field arithmetic. The chunk
+/// scratch that holds `E` is a [`SecretTable`] too.
 pub(crate) struct FusedKernel {
     tables: FusedTables,
     /// The length of `A`, and of `E`, bound in the challenges so far.
     len: usize,
+    /// The committed digits' count, bound in the challenges so far: `E` is
+    /// zero from it on.
+    live: usize,
     b: SplitB<F>,
     claim: F,
 }
@@ -199,7 +209,8 @@ enum FusedTables {
         digits: Zeroizing<Vec<i8>>,
         bound: Vec<F>,
     },
-    /// `A` in `[0, len)` and `E` in `[half, half + len)`.
+    /// `A` in `[0, len)` and `E` in `[half, half + len)`, `E` held exactly
+    /// on its first [`FusedKernel::held_e`] entries.
     Held { tables: SecretTable<F>, half: usize },
 }
 
@@ -412,6 +423,18 @@ impl ChunkScratch {
         let len = self.a.len() >> bound.len();
         Ok((&self.a[..len], &self.e[..len]))
     }
+
+    /// [`Self::stream`]'s `A` alone, for a chunk where `E` is zero.
+    fn stream_a(
+        &mut self,
+        weights: &BatchWeights,
+        bound: &[F],
+        start: usize,
+    ) -> Result<&[F], AkitaError> {
+        weights.fill(start, &mut self.a)?;
+        fold_through(&mut self.a, bound);
+        Ok(&self.a[..self.a.len() >> bound.len()])
+    }
 }
 
 /// `f(scratch, chunk)` summed over `chunks` chunks, each task with its own
@@ -438,19 +461,22 @@ fn chunk_sums(
 impl FusedKernel {
     /// The kernel of the row weights `a`, `B` and `e`'s committed digits,
     /// one per weight, claiming the sum `claim`.
+    /// `E` is zero from `live` on.
     pub(crate) fn new(
         a: BatchWeights,
         b: SplitB<F>,
         digits: Zeroizing<Vec<i8>>,
+        live: usize,
         claim: F,
     ) -> Result<Self, AkitaError> {
-        if digits.len() != a.len() || !a.len().is_power_of_two() {
+        if digits.len() != a.len() || !a.len().is_power_of_two() || live > a.len() {
             return Err(AkitaError::Internal(
                 "the fused sumcheck's tables differ in length".into(),
             ));
         }
         Ok(Self {
             len: a.len(),
+            live,
             tables: FusedTables::Streamed {
                 a,
                 digits,
@@ -508,16 +534,23 @@ impl FusedKernel {
         Ok(sums)
     }
 
+    /// The entries of `E` the held tables hold exactly: every pair that
+    /// reaches a live entry. Past them `E` is zero, and the buffer stale.
+    fn held_e(&self) -> usize {
+        (2 * self.live.div_ceil(2)).min(self.len)
+    }
+
     /// The round's dense sums while streaming: chunk by chunk over the
-    /// unbound tables.
+    /// unbound tables that reach a live entry.
     fn streamed_sums(
         round: &RoundB,
         weights: &BatchWeights,
         digits: &[i8],
         bound: &[F],
+        live: usize,
     ) -> Result<[F; 4], AkitaError> {
         let chunk = STREAM_CHUNK.min(weights.len());
-        chunk_sums(weights.len() / chunk, chunk, |scratch, index| {
+        chunk_sums(live.div_ceil(chunk), chunk, |scratch, index| {
             let start = index * chunk;
             let (a, e) = scratch.stream(weights, digits, bound, start)?;
             Ok(round.sums((start >> bound.len()) / 2, a, e))
@@ -525,11 +558,13 @@ impl FusedKernel {
     }
 
     /// `A` and `E` bound in `bound`, written into one buffer: `A` in its
-    /// lower half, `E` in its upper half.
+    /// lower half, `E` in its upper half. `E`'s chunks past `live` stay
+    /// zero.
     fn hold(
         weights: &BatchWeights,
         digits: &[i8],
         bound: &[F],
+        live: usize,
     ) -> Result<(SecretTable<F>, usize), AkitaError> {
         let chunk = STREAM_CHUNK.min(weights.len());
         let (half, out) = (weights.len() >> bound.len(), chunk >> bound.len());
@@ -537,9 +572,14 @@ impl FusedKernel {
         let (a, e) = tables.0.split_at_mut(half);
         let write = |scratch: &mut ChunkScratch,
                      (index, (a_out, e_out)): (usize, (&mut [F], &mut [F]))| {
-            let (a, e) = scratch.stream(weights, digits, bound, index * chunk)?;
-            a_out.copy_from_slice(a);
-            e_out.copy_from_slice(e);
+            let start = index * chunk;
+            if start < live {
+                let (a, e) = scratch.stream(weights, digits, bound, start)?;
+                a_out.copy_from_slice(a);
+                e_out.copy_from_slice(e);
+            } else {
+                a_out.copy_from_slice(scratch.stream_a(weights, bound, start)?);
+            }
             Ok::<(), AkitaError>(())
         };
         #[cfg(feature = "parallel")]
@@ -582,9 +622,10 @@ impl SumcheckKernel<F> for FusedKernel {
         claim: F,
     ) -> Result<UnivariatePoly<F>, AkitaError> {
         let round = RoundB::new(&self.b);
+        let held_e = self.held_e();
         let (dense, sparse) = match &self.tables {
             FusedTables::Streamed { a, digits, bound } => (
-                Self::streamed_sums(&round, a, digits, bound)?,
+                Self::streamed_sums(&round, a, digits, bound, self.live << bound.len())?,
                 self.sparse_evaluations(|pair| {
                     let mut values = [F::zero(); 2 << STREAMED_ROUNDS];
                     let width = 2 << bound.len();
@@ -596,14 +637,14 @@ impl SumcheckKernel<F> for FusedKernel {
                 })?,
             ),
             FusedTables::Held { tables, half } => {
-                let a = &tables[..self.len];
-                let e = &tables[*half..*half + self.len];
+                let a = &tables[..held_e];
+                let e = &tables[*half..*half + held_e];
                 let chunk = STREAM_CHUNK.min(self.len);
                 let dense = cfg_fold_reduce!(
-                    0..self.len / chunk,
+                    0..held_e.div_ceil(chunk),
                     || [F::zero(); 4],
                     |sums: [F; 4], index: usize| {
-                        let range = index * chunk..(index + 1) * chunk;
+                        let range = index * chunk..((index + 1) * chunk).min(held_e);
                         add_sums(
                             sums,
                             round.sums(range.start / 2, &a[range.clone()], &e[range]),
@@ -614,7 +655,10 @@ impl SumcheckKernel<F> for FusedKernel {
                 (
                     dense,
                     self.sparse_evaluations(|pair| {
-                        Ok((e[2 * pair], e[2 * pair + 1] - e[2 * pair]))
+                        Ok(match (e.get(2 * pair), e.get(2 * pair + 1)) {
+                            (Some(&low), Some(&high)) => (low, high - low),
+                            _ => (F::zero(), F::zero()),
+                        })
                     })?,
                 )
             }
@@ -625,20 +669,32 @@ impl SumcheckKernel<F> for FusedKernel {
 
     fn bind_challenge(&mut self, _round: usize, challenge: F) -> Result<(), AkitaError> {
         let len = self.len;
+        let held_e = self.held_e();
+        let live = self.live.div_ceil(2);
         match &mut self.tables {
             FusedTables::Streamed { a, digits, bound } => {
+                // `live` rounded up to whole bound blocks: every chunk it
+                // reaches holds a live entry.
+                let unbound = self.live << bound.len();
                 bound.push(challenge);
                 if bound.len() == STREAMED_ROUNDS {
-                    let (tables, half) = Self::hold(a, digits, bound)?;
+                    let (tables, half) = Self::hold(a, digits, bound, unbound)?;
                     self.tables = FusedTables::Held { tables, half };
                 }
             }
             FusedTables::Held { tables, half } => {
                 fold_in_place(&mut tables.0[..len], challenge);
-                fold_in_place(&mut tables.0[*half..*half + len], challenge);
+                let e = &mut tables.0[*half..*half + len];
+                fold_in_place(&mut e[..held_e], challenge);
+                // The pair that straddles the new live length reads its
+                // high entry, zero in `E` but stale in the buffer.
+                if live < len.div_ceil(2) {
+                    e[live] = F::zero();
+                }
             }
         }
         self.len = len.div_ceil(2);
+        self.live = live;
         let b = &mut self.b;
         let tau = b.point.first().copied().unwrap_or_default();
         b.scale *= (F::one() - tau) * (F::one() - challenge) + tau * challenge;

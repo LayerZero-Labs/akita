@@ -123,11 +123,15 @@ where
         if committed.len() > shape.padded_len() {
             return Err(WhiteoutError::ResponseRejected("response length").into());
         }
+        // Every digit from `live` on is the padding's zero.
+        let live = committed.len();
         committed.resize(shape.padded_len(), 0);
 
         // 1. Commit to e. The backend keeps the digits as `i8` until the
-        // opening, read in constant time (`SignedBlockPoly`).
-        let poly = SignedBlockPoly::i8(committed.to_vec(), shape.num_vars).map_err(zk_error)?;
+        // opening, read in constant time (`SignedBlockPoly`), and skips the
+        // zero extension past `live`.
+        let poly =
+            SignedBlockPoly::i8(committed[..live].to_vec(), shape.num_vars).map_err(zk_error)?;
         let source = self.backend.import_source(vec![poly]).map_err(zk_error)?;
         let output = self
             .backend
@@ -226,6 +230,7 @@ where
             batch.a,
             SplitB::new(&range.point, gamma, zeta, support.intervals()),
             committed,
+            live,
             claim,
         )
         .map_err(zk_error)?;
