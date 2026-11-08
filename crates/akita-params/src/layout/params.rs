@@ -124,23 +124,23 @@ pub struct CommittedGroupParams {
     /// Hiding-randomness ring columns appended to the shared D matrix after
     /// every group's opening segment.
     ///
-    /// Extension seam: outer hiding randomness columns, zero width on main (akita#120). No
-    /// schedule format carries it, so every decoded or planned schedule has
-    /// width 0 and the D matrix width is exactly the opening columns.
-    #[serde(skip)]
+    /// Extension seam: Whiteout outer hiding randomness (akita#120). Zero in
+    /// every clear schedule, where it is not serialized. The D matrix width in
+    /// the descriptor bytes binds it.
+    #[serde(default)]
     pub open_randomness_columns: usize,
 }
 
-/// Text formats omit the multi-chunk fields when they are unset, so
-/// single-chunk JSON catalog rows keep their bytes. Binary formats such as
-/// postcard carry no field names and cannot skip a field the decoder still
-/// reads, so they always carry both.
+/// Text formats omit the multi-chunk fields and the hiding-randomness width
+/// when they are unset, so single-chunk clear JSON catalog rows keep their
+/// bytes. Binary formats such as postcard carry no field names and cannot skip
+/// a field the decoder still reads, so they always carry all three.
 impl serde::Serialize for CommittedGroupParams {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
 
         let omit_unset = serializer.is_human_readable();
-        let mut state = serializer.serialize_struct("CommittedGroupParams", 8)?;
+        let mut state = serializer.serialize_struct("CommittedGroupParams", 9)?;
         state.serialize_field("groups", &self.groups)?;
         state.serialize_field("open_matrix", &self.open_matrix)?;
         state.serialize_field("payload_mode", &self.payload_mode)?;
@@ -156,6 +156,11 @@ impl serde::Serialize for CommittedGroupParams {
             state.skip_field("witness_chunk_ends")?;
         } else {
             state.serialize_field("witness_chunk_ends", &self.witness_chunk_ends)?;
+        }
+        if omit_unset && crate::schedule::is_zero_width(&self.open_randomness_columns) {
+            state.skip_field("open_randomness_columns")?;
+        } else {
+            state.serialize_field("open_randomness_columns", &self.open_randomness_columns)?;
         }
         state.end()
     }

@@ -56,10 +56,10 @@ fn profile(bits: u32, slots: usize, slices: CommitmentSliceCount) -> GroupCommit
     .unwrap();
     let profile = GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
+        randomness_columns: 0,
         group: PolynomialGroupLayout::new(7, slots),
         blocks: BlockGeometry::new(2, 1, 2),
         outer_slice_count: slices,
-        randomness_columns: 0,
         inner: RoleParams::new(GadgetDigits::new(3, inner_digits), a),
         outer: RoleParams::new(GadgetDigits::new(3, outer_digits), b),
     };
@@ -121,6 +121,7 @@ fn fixture(profile: GroupCommitPhaseParams, bits: u32) -> Fixture {
         .execute_full_via_outer_image(
             &backend,
             profile,
+            None,
             &source.storage.commitment_sources(),
             None,
         )

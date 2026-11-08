@@ -55,7 +55,7 @@ pub use akita_error::AkitaError;
 pub use akita_cpu_backend::custom_source;
 pub use akita_cpu_backend::{
     AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
-    OneHotPoly, SourceHandle,
+    HidingRandomness, OneHotPoly, SourceHandle,
 };
 pub use akita_params::{BasisMode, OpeningClaimsLayout, PrecommittedGroupProfiles};
 pub use akita_prover::{

@@ -6,7 +6,6 @@ use crate::commitment::{
     CommitmentExecutionPlan, CommitmentExecutor, CommitmentStatePolicy, PortableCommitmentHandle,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
-use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_params::sis::CommittedSourceContract;
@@ -21,6 +20,7 @@ use akita_types::AkitaExpandedSetup;
 use akita_types::{Commitment, CommittedGroup, FpExtEncoding};
 #[cfg(test)]
 use jolt_algebra::checked;
+use jolt_algebra::ring::cyclotomic::decompose_centering_threshold;
 use jolt_algebra::{CanonicalEncoding, Field};
 #[cfg(test)]
 use jolt_algebra::{Ring, Unreduced};
@@ -101,6 +101,10 @@ impl<'a> GroupContext<'a> {
     /// The profile fully determines the A/B commitment. Any opening schedule the
     /// caller intends to use later — including a grouped root over precommitted
     /// groups — is validated where the opening consumes it, not at commit time.
+    ///
+    /// A profile with hiding randomness commits with fresh randomness from the
+    /// backend's hiding source, drawn from the open alphabet of the masked
+    /// root, the only opening that consumes an explicitly committed group.
     #[must_use]
     pub const fn explicit(profile: &'a GroupCommitPhaseParams) -> Self {
         Self {
@@ -360,13 +364,16 @@ where
 }
 
 /// Resolve the frozen commit params of one root commitment and admit its
-/// sources, returning the producer contract that admitted them.
+/// sources, returning the alphabet of any hiding randomness (the open
+/// alphabet of the scheduled root opening, the masked one for a hiding
+/// explicit profile, none for a clear explicit profile) and the producer
+/// contract that admitted them.
 pub(crate) fn resolve_commit_params<Cfg, P>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     schedules: &TrustedScheduleCatalog<Cfg>,
     context: GroupContext<'_>,
-) -> Result<(GroupCommitPhaseParams, CommittedSourceContract), AkitaError>
+) -> Result<(GroupCommitPhaseParams, Option<u32>, CommittedSourceContract), AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding,
@@ -378,7 +385,7 @@ where
     // The frozen commit params fully determine the A/B commitment. D/opening
     // geometry and source encoding are validated where the opening schedule
     // consumes them, so the commit path works from the commit params alone.
-    let commit_params: GroupCommitPhaseParams =
+    let (commit_params, randomness_log_basis): (GroupCommitPhaseParams, Option<u32>) =
         if let GroupParameterSource::Explicit(commit_params) = context.parameter_source {
             if commit_params.group != polynomial_group_layout {
                 return Err(AkitaError::InvalidSetup(
@@ -386,7 +393,15 @@ where
                         .into(),
                 ));
             }
-            *commit_params
+            // A hiding explicit profile is admissible only as a group of the
+            // masked root, a precommitted group or the root's own: a clear
+            // catalog rejects any randomness, and every other level's groups
+            // are committed by the opening itself, not here. The masked root
+            // opens every group at base 8, so that is the alphabet its
+            // randomness is drawn from.
+            let randomness_log_basis = (commit_params.randomness_columns != 0)
+                .then_some(akita_params::zk::MASKED_LOG_BASIS);
+            (*commit_params, randomness_log_basis)
         } else {
             let key = ScheduleLookupKey {
                 root_accumulated_setup_prefix_len: 0,
@@ -394,6 +409,16 @@ where
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };
             let scheduled_row = schedules.resolve_key(&key)?;
+            // Defense in depth at the first sampling point: a zero-knowledge
+            // row samples hiding randomness below, so recheck it in release
+            // builds first. Catalog admission already ran the same check.
+            if scheduled_row.schedule().zk.is_some() {
+                akita_params::zk::ZkOpeningSchedule::admit(
+                    scheduled_row.schedule(),
+                    Cfg::committed_source_contract()?,
+                    Cfg::EXT_DEGREE,
+                )?;
+            }
 
             // A final group with precommitted groups consumes the row's whole
             // schedule. A standalone group is admitted on its own A/B footprint.
@@ -408,7 +433,18 @@ where
                 )?;
             }
 
-            scheduled_row.profiles().final_group
+            (
+                scheduled_row.profiles().final_group,
+                Some(
+                    scheduled_row
+                        .schedule()
+                        .root
+                        .params
+                        .own_group()
+                        .opening
+                        .log_basis_open,
+                ),
+            )
         };
 
     // The commit params fully determine the A/B commitment, so this is the
@@ -434,7 +470,7 @@ where
         contract,
     )?;
 
-    Ok((commit_params, contract))
+    Ok((commit_params, randomness_log_basis, contract))
 }
 
 /// Commit one homogeneous polynomial group in its complete parameter context.
@@ -464,7 +500,8 @@ where
     SP: CommitmentStatePolicy<Cfg::Field>,
 {
     executor.validate_setup(expanded)?;
-    let (commit_params, _) = resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
+    let (commit_params, _, _) =
+        resolve_commit_params::<Cfg, P>(polys, expanded, schedules, context)?;
     let execution_plan = CommitmentExecutionPlan::for_root(&commit_params)?;
     let source_refs: Vec<&dyn CommitmentSource<Cfg::Field>> = polys
         .iter()

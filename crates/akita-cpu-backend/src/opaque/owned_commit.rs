@@ -2,11 +2,12 @@
 use super::owned::{CommitOutput, CommitmentHandle, CommittedSource, SourceHandle};
 use super::owned_kind::SourceGroupKind;
 use crate::commitment::{AcceptedReach, CommitmentExecutor, GroupContext, PortableStatePolicy};
+use crate::hiding::{HidingRandomness, HidingRng};
 use crate::opaque::CpuBackend;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_types::FpExtEncoding;
+use akita_types::{Commitment, FpExtEncoding};
 use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
@@ -59,8 +60,19 @@ where
             Vec::new(),
             PortableStatePolicy,
         )?;
-        let (recomputed, retained) =
-            executor.execute_full_via_outer_image(self, committed.parameters, &sources, None)?;
+        if committed.parameters.randomness_columns != 0 {
+            // Recomputing would draw fresh randomness, never the original.
+            return Err(AkitaError::UnsupportedSchedule(
+                "hiding commitments cannot be imported".into(),
+            ));
+        }
+        let (recomputed, retained) = executor.execute_full_via_outer_image(
+            self,
+            committed.parameters,
+            None,
+            &sources,
+            None,
+        )?;
         if *recomputed.commitment() != committed.public
             || &retained != committed.ordinary_retained()?
         {
@@ -116,13 +128,66 @@ where
     where
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
     {
+        self.commit_drawing(family, source, context, self.hiding_rng.clone())
+    }
+
+    /// Rebuild a hiding commitment from its source and the
+    /// [`HidingRandomness`] it was made with, under the same `family` and
+    /// `context` as [`commit`](Self::commit).
+    ///
+    /// Succeeds only when the rebuilt commitment equals `expected`, so this
+    /// both checks a commitment against (source, randomness) and returns a
+    /// handle that opens it. It never yields a commitment other than
+    /// `expected` under `randomness` (see [`HidingRandomness`]).
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] when the randomness does not fit the
+    /// profile (another length, a digit outside its alphabet, or a clear
+    /// profile), or when the rebuilt commitment differs from `expected`;
+    /// and [`commit`](Self::commit)'s errors.
+    pub fn recommit_hiding<Cfg>(
+        &self,
+        family: &TrustedScheduleCatalog<Cfg>,
+        source: &SourceHandle<F, E>,
+        context: GroupContext<'_>,
+        randomness: &HidingRandomness,
+        expected: &Commitment<F>,
+    ) -> Result<CommitOutput<F, E>, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
+        let replay = Arc::new(HidingRng::replay(randomness));
+        let output = self.commit_drawing(family, source, context, Arc::clone(&replay))?;
+        replay.ensure_replayed()?;
+        // The commitment's identity is its wire form, the coefficients: a
+        // decoded commitment carries no ring dimension.
+        if output.committed_group.commitment().rows().coeffs() != expected.rows().coeffs() {
+            return Err(AkitaError::InvalidInput(
+                "the source and hiding randomness do not open the expected commitment".into(),
+            ));
+        }
+        Ok(output)
+    }
+
+    /// [`commit`](Self::commit), drawing B hiding randomness from `hiding_rng`.
+    fn commit_drawing<Cfg>(
+        &self,
+        family: &TrustedScheduleCatalog<Cfg>,
+        source: &SourceHandle<F, E>,
+        context: GroupContext<'_>,
+        hiding_rng: Arc<HidingRng>,
+    ) -> Result<CommitOutput<F, E>, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         if source.owner != self.owner_id() {
             return Err(AkitaError::InvalidInput(
                 "source belongs to another backend".into(),
             ));
         }
         match source.storage.group_kind() {
-            SourceGroupKind::Ordinary => self.commit_ordinary(family, source, context),
+            SourceGroupKind::Ordinary => self.commit_ordinary(family, source, context, hiding_rng),
             #[cfg(feature = "labinius-trinomial")]
             SourceGroupKind::Binary => {
                 super::binary_source::commit_binary_source(self, family, source, context)
@@ -135,6 +200,7 @@ where
         family: &TrustedScheduleCatalog<Cfg>,
         source: &SourceHandle<F, E>,
         context: GroupContext<'_>,
+        hiding_rng: Arc<HidingRng>,
     ) -> Result<CommitOutput<F, E>, AkitaError>
     where
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
@@ -146,15 +212,17 @@ where
             &prepared.expanded,
             Vec::new(),
             PortableStatePolicy,
-        )?;
+        )?
+        .with_hiding_rng(hiding_rng);
         let sources = source.storage.commitment_sources();
         executor.validate_setup(&prepared.expanded)?;
-        let (profile, producer_contract) = crate::commitment::resolve_commit_params::<Cfg, _>(
-            &sources,
-            &prepared.expanded,
-            family,
-            context,
-        )?;
+        let (profile, randomness_log_basis, producer_contract) =
+            crate::commitment::resolve_commit_params::<Cfg, _>(
+                &sources,
+                &prepared.expanded,
+                family,
+                context,
+            )?;
         let (negative_abs, positive) = producer_contract.accepted_bounds(
             profile.inner.digits.log_basis,
             profile.inner.digits.num_digits,
@@ -171,8 +239,13 @@ where
             negative_abs,
             positive,
         };
-        let (committed_group, prover_state) =
-            executor.execute_full_via_outer_image(self, profile, &sources, Some(accepted))?;
+        let (committed_group, prover_state) = executor.execute_full_via_outer_image(
+            self,
+            profile,
+            randomness_log_basis,
+            &sources,
+            Some(accepted),
+        )?;
         let private_handle = CommitmentHandle {
             owner: source.owner,
             committed: Arc::new(CommittedSource {

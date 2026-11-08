@@ -305,3 +305,58 @@ fn executor_rejects_same_shape_rebinding_and_foreign_state_owners() {
         AkitaError::Internal(message) if message.contains("different prepared implementation")
     ));
 }
+
+#[test]
+fn cpu_executor_split_path_keeps_inner_resident_and_returns_checked_u() {
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q64Offset59,
+        64,
+        2,
+        1,
+        1,
+        1,
+        FoldChallengeDistribution::pm1_only(1),
+    )
+    .with_decomp(4, 8, 1, 2, 2)
+    .unwrap();
+    let plan = CommitmentExecutionPlan::for_root(&params.own_group().profile).unwrap();
+    let compression_capacity = plan
+        .compression()
+        .unwrap()
+        .maps()
+        .iter()
+        .map(|map| map.input_width() * map.ring_dimension())
+        .max()
+        .unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        9,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: compression_capacity.max(4 * 64),
+        },
+    )
+    .unwrap();
+    let backend = CpuBackend::<F, F>::for_arithmetic_tests();
+    let prepared = backend.prepare_setup(&setup).unwrap();
+    let executor = CommitmentExecutor::cpu(
+        &backend,
+        &prepared,
+        setup.expanded.as_ref(),
+        vec![PolynomialType::Dense(DenseType::Coefficients)],
+        ResidentStatePolicy,
+    )
+    .unwrap();
+    let poly = DensePoly::from_field_evals(9, vec![F::from_u64(1); 512]).unwrap();
+    let sources: [&dyn CommitmentSource<F>; 1] = [&poly];
+    let output = executor
+        .execute_uncompressed_stages(&plan, &sources, None)
+        .unwrap();
+    let uncompressed = plan.uncompressed().unwrap();
+
+    assert_eq!(output.u().ring_dim(), uncompressed.outer().ring_dimension());
+    assert_eq!(
+        output.u().coeff_len(),
+        uncompressed.outer().output_coefficient_len().unwrap()
+    );
+    assert_eq!(output.image().binding().inner_plan(), uncompressed.inner());
+}

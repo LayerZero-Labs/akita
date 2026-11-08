@@ -43,6 +43,7 @@ pub(crate) fn ordinary_preimage(
         .execute_full_via_outer_image(
             &backend,
             profile,
+            None,
             &source.storage.commitment_sources(),
             None,
         )

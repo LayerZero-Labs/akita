@@ -103,9 +103,12 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
+ "rand_core",
  "rayon",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
