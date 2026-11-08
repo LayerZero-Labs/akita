@@ -87,7 +87,59 @@ impl FoldSchedule {
             "terminal fold A".to_string(),
             &self.terminal.inner.matrix,
         ));
+        self.append_sigma_binding_occurrences(&mut occurrences)?;
         Ok(occurrences)
+    }
+
+    /// The residual commitment of a zero-knowledge schedule as the
+    /// Σ-protocol opens it: `A_a` and `[B_a | B′_a]` at the Σ collision
+    /// radius (`specs/whiteout-akita.md` §5.1), beside their honest
+    /// occurrences above.
+    #[cfg(feature = "zk")]
+    fn append_sigma_binding_occurrences(
+        &self,
+        occurrences: &mut Vec<ScheduleSisOccurrence>,
+    ) -> Result<(), AkitaError> {
+        let Some(zk) = self.zk else {
+            return Ok(());
+        };
+        let residual = self
+            .recursive_folds
+            .get(zk.cut_level() as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("the cut has no successor level".into()))?
+            .params
+            .own_group();
+        let bound = ScheduleSisBound::Linf(crate::sis::sigma_binding::sigma_binding_radius());
+        occurrences.push(ScheduleSisOccurrence {
+            bound,
+            ..inner_occurrence(
+                "residual A_a at the Σ radius".to_string(),
+                &residual.profile.inner.matrix,
+            )
+        });
+        occurrences.push(ScheduleSisOccurrence {
+            bound,
+            ..outer_occurrence(
+                "residual [B_a | B′_a] at the Σ radius".to_string(),
+                &residual.profile.outer.matrix,
+            )
+        });
+        Ok(())
+    }
+
+    /// Without the `zk` feature a zero-knowledge schedule's Σ occurrences
+    /// cannot be priced.
+    #[cfg(not(feature = "zk"))]
+    fn append_sigma_binding_occurrences(
+        &self,
+        _occurrences: &mut Vec<ScheduleSisOccurrence>,
+    ) -> Result<(), AkitaError> {
+        match self.zk {
+            None => Ok(()),
+            Some(_) => Err(AkitaError::UnsupportedSchedule(
+                "a zero-knowledge schedule's Σ-binding occurrences need the zk feature".into(),
+            )),
+        }
     }
 }
 

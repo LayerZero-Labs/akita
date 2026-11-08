@@ -23,7 +23,11 @@ use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId, ScheduleLookupKey};
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{
+    admission_of, policy_of, CommitmentConfig, RecursiveCommitmentConfig, ZkCommitmentConfig,
+};
+use akita_params::zk::{ZkOpeningSchedule, ZK_CUT_LEVEL};
+use akita_schedules::ScheduleAdmission;
 
 struct ScalarPreplan {
     source: TypeId,
@@ -76,16 +80,24 @@ impl GenerationPreplans {
         preplanned
             .result
             .get_or_init(|| {
+                let key = ScheduleLookupKey::single(key);
+                let source = Cfg::committed_source_contract()?;
+                let policy = policy_of::<Cfg>(chunking);
                 // Preplans run before row materialization, so they always
                 // record their search work for the row that reuses them.
                 let (planned, diagnostics) = crate::diagnostics::capture(true, || {
-                    find_schedule(
-                        &ScheduleLookupKey::single(key),
-                        Cfg::committed_source_contract()?,
-                        &[],
-                        &policy_of::<Cfg>(chunking),
-                        Cfg::ring_challenge_config,
-                    )
+                    if Cfg::IS_ZK {
+                        crate::find_zk_schedule(
+                            &key,
+                            source,
+                            &[],
+                            &policy,
+                            Cfg::ring_challenge_config,
+                            ZkOpeningSchedule::new(ZK_CUT_LEVEL)?,
+                        )
+                    } else {
+                        find_schedule(&key, source, &[], &policy, Cfg::ring_challenge_config)
+                    }
                 });
                 let planner_cost = diagnostics
                     .map(|diagnostics| diagnostics.planner_cost())
@@ -197,6 +209,26 @@ const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
     (50, 1),
 ];
 
+/// The zero-knowledge dense row: the hiding precommit producer of
+/// [`fp128_onehot_recursive_zk_grouped_requests`] and the single-group masked
+/// prefix's row (`specs/whiteout-akita.md` §7).
+const FP128_DENSE_ZK_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(14)];
+
+/// The headline zero-knowledge row (`specs/whiteout-akita.md` §7): 36:1.
+/// Its cut level is direct: the zero-knowledge search never offloads into
+/// the cut level (§5.3).
+const FP128_ONEHOT_RECURSIVE_ZK_KEYS: &[PolynomialGroupLayout] = onehot_keys![(36, 1)];
+
+/// Response schedules of Whiteout's response proof (`specs/whiteout-akita.md`
+/// §6.1), one per `e` length `2^ν`: `ν = 23` for the single-group
+/// end-to-end statement, `ν = 25` for the multi-group one and `ν = 26` for
+/// the headline.
+const FP128_RESPONSE_DIGITS_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(23),
+    PolynomialGroupLayout::singleton(25),
+    PolynomialGroupLayout::singleton(26),
+];
+
 const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     onehot_keys![(16, 1), (29, 1), (32, 1)];
 
@@ -305,6 +337,8 @@ pub struct GeneratedFamily {
     pub ring_challenge_config: fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     /// Build one caller requested canonical precommit producer record.
     pub explicit_precommitted_group: ExplicitPrecommittedGroupGenerator,
+    /// Which rows the family's catalog admits.
+    pub admission: fn() -> Result<ScheduleAdmission, AkitaError>,
 }
 
 impl GeneratedFamily {
@@ -408,6 +442,24 @@ fn fp128_onehot_multichunk_w2r2_grouped_requests(
     Ok(vec![GroupedGenerationRequest::new(
         group,
         vec![PrecommittedProducer::from_config::<Cfg>(precommitted)?],
+    )])
+}
+
+/// The multi-group zero-knowledge row (`specs/whiteout-akita.md` §3.4): a
+/// 31:1 one-hot root beside one dense 14:1 group precommitted under the
+/// hiding profile of `fp128_dense_zk`, as Jolt commits untrusted advice. Its
+/// cut level is direct, as the headline's (§5.3).
+fn fp128_onehot_recursive_zk_grouped_requests(
+    preplans: &GenerationPreplans,
+    chunking: ChunkedWitnessCfg,
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    type Pre = ZkCommitmentConfig<fp128::Dense>;
+    let pre_group = PolynomialGroupLayout::new(14, 1);
+    let precommitted =
+        planned_profile_without_precommitted_groups::<Pre>(preplans, pre_group, chunking)?;
+    Ok(vec![GroupedGenerationRequest::new(
+        PolynomialGroupLayout::new(31, 1),
+        vec![PrecommittedProducer::from_config::<Pre>(precommitted)?],
     )])
 }
 
@@ -618,6 +670,7 @@ macro_rules! family_row {
             explicit_precommitted_group: |preplans, group, chunking| {
                 explicit_precommitted_group::<$base_cfg>(preplans, group, chunking)
             },
+            admission: admission_of::<$cfg>,
         }
     };
     ($keys:expr, $cfg:ty, $group_keys:expr, $chunking:expr) => {
@@ -632,6 +685,7 @@ macro_rules! family_row {
             explicit_precommitted_group: |preplans, group, chunking| {
                 explicit_precommitted_group::<$cfg>(preplans, group, chunking)
             },
+            admission: admission_of::<$cfg>,
         }
     };
 }
@@ -659,6 +713,7 @@ pub fn empty_emit_spec(
         preplanned: Vec::new(),
         output_path: output_dir.join(format!("{}.aks", family.family_name())),
         ring_challenge_config: family.ring_challenge_config,
+        admission: (family.admission)()?,
     })
 }
 
@@ -691,6 +746,26 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
 /// here; both the artifact emitter and the drift guard pick it up
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
+    family_row!(
+        FP128_DENSE_ZK_KEYS,
+        ZkCommitmentConfig<fp128::Dense>,
+        no_grouped_requests,
+        ChunkedWitnessCfg::default_non_chunked()
+    ),
+    family_row!(
+        recursive,
+        FP128_ONEHOT_RECURSIVE_ZK_KEYS,
+        ZkCommitmentConfig<RecursiveCommitmentConfig<fp128::OneHot>>,
+        ZkCommitmentConfig<fp128::Dense>,
+        fp128_onehot_recursive_zk_grouped_requests,
+        ChunkedWitnessCfg::default_non_chunked()
+    ),
+    family_row!(
+        FP128_RESPONSE_DIGITS_KEYS,
+        fp128::ResponseDigits,
+        no_grouped_requests,
+        ChunkedWitnessCfg::default_non_chunked()
+    ),
     family_row!(
         FP128_ONEHOT_KEYS,
         fp128::OneHot,

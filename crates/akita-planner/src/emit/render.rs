@@ -51,11 +51,12 @@ fn render_family_artifact(
             ))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let catalog = akita_schedules::ValidatedScheduleCatalog::try_new(
+    let catalog = akita_schedules::ValidatedScheduleCatalog::try_new_admitting(
         spec.family_name,
         rows,
         &spec.policy,
         spec.ring_challenge_config,
+        spec.admission,
     )
     .map_err(|error| format!("{}: build artifact: {error}", spec.family_name))?;
     ArtifactOutput::from_catalog(spec.output_path.clone(), &catalog)

@@ -599,14 +599,20 @@ fn serialize_artifact_schedule<S: Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     let accumulated = schedule.root_accumulated_setup_prefix_len;
-    let mut fields =
-        serializer.serialize_struct("FoldSchedule", 3 + usize::from(accumulated != 0))?;
+    let mut fields = serializer.serialize_struct(
+        "FoldSchedule",
+        3 + usize::from(accumulated != 0) + usize::from(schedule.zk.is_some()),
+    )?;
     if accumulated != 0 {
         fields.serialize_field("root_accumulated_setup_prefix_len", &accumulated)?;
     }
     fields.serialize_field("root", &schedule.root)?;
     fields.serialize_field("recursive_folds", &schedule.recursive_folds)?;
     fields.serialize_field("terminal", &schedule.terminal)?;
+    // A clear row omits the cut, so clear JSON rows keep main's bytes.
+    if let Some(zk) = &schedule.zk {
+        fields.serialize_field("zk", zk)?;
+    }
     fields.end()
 }
 
