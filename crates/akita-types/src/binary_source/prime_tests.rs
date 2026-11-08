@@ -602,7 +602,10 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
             &setup,
             1 << 17,
             64,
-            Some(binary_ordinary_profile_fixture(BinaryFieldProfile::P128, None))
+            Some(binary_ordinary_profile_fixture(
+                BinaryFieldProfile::P128,
+                None
+            ))
         ),
         Err(AkitaError::InvalidSetup(_))
     ));

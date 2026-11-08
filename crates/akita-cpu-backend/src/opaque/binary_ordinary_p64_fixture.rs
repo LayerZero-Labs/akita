@@ -173,15 +173,15 @@ fn p64_four_signed_ordinary_groups_match_actual_commitments() {
     let claims = sources
         .iter()
         .zip(&inputs)
-        .map(|((profile, width), (_, point, evaluations, payload))| {
-            OrdinaryNativeRootClaim {
+        .map(
+            |((profile, width), (_, point, evaluations, payload))| OrdinaryNativeRootClaim {
                 profile,
                 width: *width,
                 point,
                 evaluations,
                 payload,
-            }
-        })
+            },
+        )
         .collect::<Vec<_>>();
     let setup = akita_types::AkitaSetupDescriptor {
         max_num_vars: 10,

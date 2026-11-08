@@ -103,7 +103,10 @@ pub fn binary_ordinary_profile_fixture(
             .unwrap()
             .decomposition(modulus)
             .unwrap();
-        (akita_params::sis::num_digits_inner(decomposition, true), slots)
+        (
+            akita_params::sis::num_digits_inner(decomposition, true),
+            slots,
+        )
     });
     let key = |role, degree| {
         sis_table_key_for_linf_bound(
