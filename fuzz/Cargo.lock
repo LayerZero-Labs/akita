@@ -219,6 +219,7 @@ dependencies = [
  "akita-types",
  "jolt-algebra",
  "jolt-poly",
+ "jolt-transcript",
  "tracing",
 ]
 
@@ -318,6 +319,7 @@ dependencies = [
  "akita-types",
  "jolt-algebra",
  "jolt-poly",
+ "jolt-sumcheck",
  "jolt-transcript",
  "rayon",
  "tracing",
@@ -773,6 +775,19 @@ dependencies = [
  "num-traits",
  "rand_core",
  "rayon",
+ "serde",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-sumcheck"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
+dependencies = [
+ "jolt-field",
+ "jolt-poly",
+ "jolt-transcript",
  "serde",
  "thiserror",
  "tracing",

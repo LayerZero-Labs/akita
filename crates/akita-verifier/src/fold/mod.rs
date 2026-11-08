@@ -12,6 +12,8 @@ mod admission;
 #[cfg(feature = "labinius-trinomial")]
 mod binary_root;
 mod challenges;
+#[cfg(feature = "zk")]
+mod masked_prefix;
 mod ordinary_root;
 #[cfg(feature = "labinius-trinomial")]
 mod prime_readings;
@@ -242,7 +244,7 @@ where
             )
         })
         .transpose()?;
-    let stage2 = validate_stage2_replay::<F, E, G>(
+    let stage2 = validate_stage2_replay(
         grinding,
         setup,
         stage1,
@@ -280,8 +282,11 @@ where
                     "native successor payload disagrees with the level grammar".into(),
                 ));
             }
+            // Public in both modes: at a zero-knowledge opening's cut the
+            // payload is cm(u_a), hidden by u_a's own randomness.
+            let payload_len = grinding.successor_payload_len(prepared.level, coefficient_count)?;
             let mut payload =
-                akita_transcript::extension_slots::<F, _>(grinding.state_mut(), coefficient_count)?;
+                akita_transcript::extension_slots::<F, _>(grinding.state_mut(), payload_len)?;
             akita_transcript::exchange_public_field_group::<F, _>(
                 grinding.state_mut(),
                 akita_types::FoldSite::NextWitnessPayload {

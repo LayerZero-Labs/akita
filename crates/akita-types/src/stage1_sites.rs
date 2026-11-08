@@ -5,6 +5,7 @@ use akita_error::AkitaError;
 use akita_transcript::{PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_STAGE1};
 use core::slice;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::PadSlots;
 
 const ROLE_CHILD_CLAIMS: u32 = 1;
 const ROLE_RANGE_IMAGE: u32 = 2;
@@ -41,22 +42,24 @@ where
 }
 
 /// Exchange the final range-image evaluation after leaf sumcheck challenges.
+/// It returns the value and the pad slots it took, which are empty in the
+/// clear.
 pub fn stage1_range_image<F, E, G>(
     grinding: &mut G,
     level: u32,
     stage: u32,
     mut evaluation: E,
-) -> Result<E, AkitaError>
+) -> Result<(E, PadSlots), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    grinding.state_mut().exchange_private_extension_group(
+    let slots = grinding.state_mut().exchange_private_extension_group(
         stage1_site(level, stage, ROLE_RANGE_IMAGE),
         slice::from_mut(&mut evaluation),
     )?;
-    Ok(evaluation)
+    Ok((evaluation, slots))
 }
 
 #[cfg(all(test, feature = "prover"))]
@@ -106,7 +109,9 @@ mod tests {
             .unwrap();
         assert_eq!(verifier_gamma, prover_gamma);
         assert_eq!(
-            stage1_range_image::<F, E, _>(&mut verifier, level, stage + 1, E::zero()).unwrap(),
+            stage1_range_image::<F, E, _>(&mut verifier, level, stage + 1, E::zero())
+                .unwrap()
+                .0,
             range_image
         );
         verifier.finish().unwrap().check_eof(state).unwrap();

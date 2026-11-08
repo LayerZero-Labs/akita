@@ -5,6 +5,7 @@ use akita_error::AkitaError;
 use akita_transcript::{PrivateProofChannel, ProtocolSiteId, SITE_FAMILY_STAGE2};
 use core::slice;
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
+use jolt_transcript::PadSlots;
 
 fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
     ProtocolSiteId {
@@ -19,21 +20,23 @@ fn witness_evaluation_site(level: u32) -> ProtocolSiteId {
 ///
 /// The prover emits `evaluation`; the verifier passes a placeholder and gets
 /// the received value back.
+/// It returns the value and the pad slots it took, which are empty in the
+/// clear.
 pub fn stage2_w_eval<F, E, G>(
     grinding: &mut G,
     level: u32,
     mut evaluation: E,
-) -> Result<E, AkitaError>
+) -> Result<(E, PadSlots), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
     G: GrindingReplay<State: PrivateProofChannel<F>>,
 {
-    grinding.state_mut().exchange_private_extension_group(
+    let slots = grinding.state_mut().exchange_private_extension_group(
         witness_evaluation_site(level),
         slice::from_mut(&mut evaluation),
     )?;
-    Ok(evaluation)
+    Ok((evaluation, slots))
 }
 
 #[cfg(all(test, feature = "prover"))]
@@ -65,7 +68,9 @@ mod tests {
         let mut state = new_verifier_channel(b"native-stage2", &proof);
         let mut verifier = VerifierGrinding::new(&mut state, &plan);
         assert_eq!(
-            stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero()).unwrap(),
+            stage2_w_eval::<F, E, _>(&mut verifier, 7, E::zero())
+                .unwrap()
+                .0,
             evaluation
         );
         verifier.finish().unwrap().check_eof(state).unwrap();

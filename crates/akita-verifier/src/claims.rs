@@ -1,25 +1,24 @@
 //! How a fold verifier holds the claims that depend on the witness.
 //!
-//! The fold verifier is written once over [`ClaimReplay`]. The clear verifier,
-//! [`VerifierGrinding`] on a [`VerifierChannel`], holds each claim as a field
-//! value and checks it on the spot.
-//!
-//! Extension seam: zero knowledge (akita#120). A masked verifier holds each
-//! witness-dependent claim as a form over its pads instead, and replays the
-//! same fold verifier through its own [`ClaimReplay`].
+//! The clear verifier holds each as a field value and checks it on the spot.
+//! The masked verifier of a zero-knowledge opening (`specs/whiteout-akita.md`
+//! §4.3) holds each as an affine form over the pads, records the stage checks
+//! on them, and lowers those checks into residual rows once the auxiliary
+//! block has arrived. Both run the same fold verifier, written once over
+//! [`ClaimReplay`], and both evaluate each check through the one formula in
+//! `akita-types` (`check_range_leaf`, `check_stage2_oracle`).
 
 use akita_error::AkitaError;
-use akita_transcript::FIELD_DIGEST_BYTES;
 use akita_transcript::{ChallengeCodec, PrivateProofChannel, ProtocolSiteId, VerifierChannel};
 use akita_types::{
     check_range_leaf, check_stage2_oracle, FoldResponseReplay, GrindingReplay,
     GrindingSumcheckVerifier, RangeLeaf, Stage2OracleWeights, VerifierGrinding,
-    VerifierGrindingChannel,
+    VerifierGrindingChannel, FIELD_DIGEST_BYTES,
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_transcript::{ClaimMismatch, ClearDomain};
 
-/// How a single-instance sumcheck's rounds go on the wire: the two drivers.
+/// How a single-instance sumcheck's rounds go on the wire: v8's two drivers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SumcheckFormat<E> {
     /// `[c0, c2, …, c_degree]` per round, the linear coefficient omitted.
@@ -48,7 +47,8 @@ where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
 {
-    /// A witness-dependent claim: a field value in the clear verifier.
+    /// A witness-dependent claim: a value in the clear, an affine form over
+    /// the pads when masked.
     type Claim: Clone + Send + Sync;
 
     /// The public constant `value`.
@@ -65,39 +65,58 @@ where
     ///
     /// # Errors
     ///
-    /// A replay that does not support the path.
+    /// A masked replay returns [`AkitaError::UnsupportedSchedule`]; admission
+    /// (`ZkOpeningSchedule::admit`) already rejects these paths at masked
+    /// levels.
     fn clear_path(value: E) -> Result<Self::Claim, AkitaError>;
 
-    /// Runs `replay`, a path only the clear verifier admits (the binary
-    /// root), on the clear grinding replay.
-    ///
-    /// # Errors
-    ///
-    /// `replay`'s error.
-    #[cfg(feature = "labinius-trinomial")]
-    fn clear_replay<R>(
-        &mut self,
-        replay: impl FnOnce(&mut VerifierGrinding<'_, '_>) -> Result<R, AkitaError>,
-    ) -> Result<R, AkitaError>;
-
-    /// The values of claims a clear-only path consumes: Stage-1 product
-    /// stages, the physical ℓ2 norm, extension-field opening claims.
+    /// The values of claims a clear-only path consumes (extension-field
+    /// opening claims).
     ///
     /// # Errors
     ///
     /// As [`clear_path`](Self::clear_path).
     fn clear_values(claims: &[Self::Claim]) -> Result<Vec<E>, AkitaError>;
 
-    /// Receives the digest of a terminal `t` state's last block
-    /// ([`akita_transcript::receive_field_digest`]).
+    /// The coefficients fold `level` sends for its successor commitment,
+    /// an image of `image_len` coefficients: the image itself, except at a
+    /// zero-knowledge opening's cut, which sends u_a compressed
+    /// (`specs/whiteout-akita.md` §5.4).
     ///
     /// # Errors
     ///
-    /// The transcript's error.
+    /// A masked replay's [`AkitaError::InvalidSetup`] if the cut's image
+    /// differs from the residual commitment's.
+    fn successor_payload_len(&self, level: u32, image_len: usize) -> Result<usize, AkitaError>;
+
+    /// Runs `replay`, a path only the clear verifier admits (the binary
+    /// root), on the clear grinding replay.
+    ///
+    /// # Errors
+    ///
+    /// `replay`'s error; a masked replay returns
+    /// [`AkitaError::UnsupportedSchedule`].
+    #[cfg(feature = "labinius-trinomial")]
+    fn clear_replay<R>(
+        &mut self,
+        replay: impl FnOnce(&mut VerifierGrinding<'_, '_>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError>;
+
+    /// Receives the digest of a terminal `t` state's last block
+    /// (`akita_types::receive_field_digest`).
+    ///
+    /// # Errors
+    ///
+    /// The transcript's error; a masked replay, which never reaches the
+    /// terminal, returns [`AkitaError::UnsupportedSchedule`].
     fn receive_field_digest(
         &mut self,
         site: ProtocolSiteId,
     ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError>;
+
+    /// Records fold `level`'s EvaluationBatch coefficients, one per opening.
+    #[cfg(feature = "test-support")]
+    fn record_batch_coefficients(&mut self, _level: u32, _coefficients: &[E]) {}
 
     /// Binds a fold level's openings at its `Openings` site
     /// (`akita_types::bind_fold_openings`).
@@ -168,7 +187,7 @@ where
     ///
     /// # Errors
     ///
-    /// [`AkitaError::InvalidProof`] if the check fails.
+    /// [`AkitaError::InvalidProof`] if the clear check fails.
     fn check_range_leaf(
         &mut self,
         leaf: RangeLeaf<E>,
@@ -180,7 +199,7 @@ where
     ///
     /// # Errors
     ///
-    /// [`AkitaError::InvalidProof`] if the check fails.
+    /// [`AkitaError::InvalidProof`] if the clear check fails.
     fn check_stage2_oracle(
         &mut self,
         weights: Stage2OracleWeights<E>,
@@ -213,6 +232,14 @@ where
         Ok(value)
     }
 
+    fn clear_values(claims: &[E]) -> Result<Vec<E>, AkitaError> {
+        Ok(claims.to_vec())
+    }
+
+    fn successor_payload_len(&self, _: u32, image_len: usize) -> Result<usize, AkitaError> {
+        Ok(image_len)
+    }
+
     #[cfg(feature = "labinius-trinomial")]
     fn clear_replay<R>(
         &mut self,
@@ -221,15 +248,11 @@ where
         replay(self)
     }
 
-    fn clear_values(claims: &[E]) -> Result<Vec<E>, AkitaError> {
-        Ok(claims.to_vec())
-    }
-
     fn receive_field_digest(
         &mut self,
         site: ProtocolSiteId,
     ) -> Result<[u8; FIELD_DIGEST_BYTES], AkitaError> {
-        akita_transcript::receive_field_digest(self.state_mut(), site)
+        akita_types::receive_field_digest(self.state_mut(), site)
     }
 
     fn bind_openings(
@@ -264,11 +287,11 @@ where
     }
 
     fn range_image(&mut self, level: u32, stage: u32) -> Result<E, AkitaError> {
-        akita_types::stage1_range_image::<F, E, _>(self, level, stage, E::zero())
+        Ok(akita_types::stage1_range_image::<F, E, _>(self, level, stage, E::zero())?.0)
     }
 
     fn witness_eval(&mut self, level: u32) -> Result<E, AkitaError> {
-        akita_types::stage2_w_eval::<F, E, _>(self, level, E::zero())
+        Ok(akita_types::stage2_w_eval::<F, E, _>(self, level, E::zero())?.0)
     }
 
     fn check_equal(&mut self, lhs: &E, rhs: &E) -> Result<(), AkitaError> {
@@ -300,7 +323,9 @@ where
     }
 }
 
-/// Replays one sumcheck whose rounds arrive clear on `grinding`'s channel.
+/// Replays one sumcheck whose rounds arrive clear on `grinding`'s channel:
+/// every sumcheck of the clear verifier, and the public ones of the masked
+/// verifier.
 pub(crate) fn clear_sumcheck<'proof, F, E, G>(
     grinding: &mut G,
     protocol: akita_params::SumcheckProtocol,

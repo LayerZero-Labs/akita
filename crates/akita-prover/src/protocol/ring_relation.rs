@@ -156,7 +156,6 @@ impl RingRelationProver {
         commitment_ring_dimension: usize,
     ) -> Result<PreparedRingRelationOutput<F, PointF, B::WitnessHandle>, AkitaError>
     where
-        C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
         F: Field
             + CanonicalEncoding
             + akita_serialization::AkitaSerialize
@@ -168,6 +167,7 @@ impl RingRelationProver {
             + ChallengeCodec
             + jolt_algebra::ExtField<F>
             + akita_serialization::AkitaSerialize,
+        C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
         B: crate::backend::ProverBackend<F, PointF>,
     {
         let consumer = opening_ctx.backend();
@@ -256,7 +256,8 @@ impl RingRelationProver {
                     .into(),
             ));
         }
-        // The opening payload is public in both modes.
+        // The payload is public in both modes: in zero-knowledge mode its own
+        // commitment randomness hides it, not pads.
         akita_transcript::send_field_group(
             grinding.state_mut().clear_state(),
             akita_types::FoldSite::OpeningPayload {

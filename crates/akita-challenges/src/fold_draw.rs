@@ -320,8 +320,8 @@ impl FoldDraw for ProverFoldDraw<'_> {
     }
 }
 
-/// One group-local fold draw against the live verifier channel, or a channel
-/// over it: fold challenges are public, so any channel draws them the same.
+/// One group-local fold draw against the live verifier channel, clear or
+/// masked: fold challenges are public in both modes.
 pub struct VerifierFoldDraw<'a, S> {
     state: &'a mut S,
     level: u32,
