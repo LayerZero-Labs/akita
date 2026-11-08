@@ -16,20 +16,20 @@ path = "src/main.rs"
 
 [dependencies]
 guest = { package = "akita-inline-parity-guest", path = "../guest" }
-jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", default-features = false, features = [
+jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
   "host",
 ] }
 # Pinned with `guest-std` so `#[jolt::provable]` builds the guest in std mode
 # without pulling ZeroOS musl into the host build (see `../../host/Cargo.toml`).
-jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", features = [
+jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", features = [
   "guest-std",
 ] }
 # Linked for their `inventory` registrations: Jolt expands an inline
 # instruction only when its crate's `host` feature is in the host binary.
-jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", features = [
+jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", features = [
   "host",
 ] }
-jolt-program = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "e2e955d41579bc4728c1102e4667fbb5159b03bc", features = [
+jolt-program = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", features = [
   "image",
 ] }
 akita-algebra = { path = "../../../../crates/akita-algebra" }

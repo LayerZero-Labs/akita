@@ -1084,7 +1084,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-algebra"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "bytemuck",
  "cc",
@@ -1099,7 +1099,7 @@ dependencies = [
 [[package]]
 name = "jolt-crypto"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "jolt-algebra",
  "jolt-poly",
@@ -1117,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "jolt-algebra",
 ]
@@ -1125,12 +1125,12 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-ntt"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 
 [[package]]
 name = "jolt-metal"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "bytemuck",
  "jolt-field",
@@ -1143,7 +1143,7 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "jolt-field",
  "jolt-utils",
@@ -1158,7 +1158,7 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "blake2",
  "getrandom 0.4.3",
@@ -1171,7 +1171,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=e2e955d41579bc4728c1102e4667fbb5159b03bc#e2e955d41579bc4728c1102e4667fbb5159b03bc"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "num-traits",
 ]
