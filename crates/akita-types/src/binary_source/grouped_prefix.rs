@@ -106,9 +106,11 @@ impl GroupedTypedPrefix {
         let mut required = setup_prefix_slot_field_elements(&first)?;
         for profile in std::iter::once(&successor)
             .chain(plan.binary().iter().map(|binary| &binary.source().carrier))
-            .chain(plan.ordinary().into_iter().flat_map(|batch| {
-                batch.plans().iter().map(|plan| plan.profile())
-            }))
+            .chain(
+                plan.ordinary()
+                    .into_iter()
+                    .flat_map(|batch| batch.plans().iter().map(|plan| plan.profile())),
+            )
         {
             required = required.max(commit_only_setup_field_elements(
                 &profile.inner.matrix,
@@ -136,7 +138,8 @@ impl GroupedTypedPrefix {
             .serialize_compressed(&mut identity)
             .map_err(|_| AkitaError::InvalidProof)?;
         for ((range, typed), binary) in parts.iter().zip(plan.binary()) {
-            range.start
+            range
+                .start
                 .serialize_compressed(&mut identity)
                 .map_err(|_| AkitaError::InvalidProof)?;
             typed
@@ -223,7 +226,11 @@ impl GroupedTypedPrefix {
             coefficients
                 .get_mut(range.clone())
                 .ok_or(AkitaError::InvalidProof)?
-                .copy_from_slice(local.get(..typed.natural_len).ok_or(AkitaError::InvalidProof)?);
+                .copy_from_slice(
+                    local
+                        .get(..typed.natural_len)
+                        .ok_or(AkitaError::InvalidProof)?,
+                );
         }
         Ok(coefficients)
     }

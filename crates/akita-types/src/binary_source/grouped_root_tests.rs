@@ -30,7 +30,12 @@ fn staged_four_group_p64_capacity_binding() {
             let common = group.first_segment() + local;
             assert_eq!(&plan.repacking().segments()[common], shape);
             assert_eq!(
-                group.local().repacking().segment_range(local).unwrap().start
+                group
+                    .local()
+                    .repacking()
+                    .segment_range(local)
+                    .unwrap()
+                    .start
                     + group.coefficient_offset(),
                 plan.repacking().segment_range(common).unwrap().start,
             );
@@ -38,11 +43,7 @@ fn staged_four_group_p64_capacity_binding() {
         next_segment += group.local().repacking().segments().len();
     }
     let batch = plan.ordinary().unwrap();
-    for (group, (bits, slots)) in batch
-        .plans()
-        .iter()
-        .zip([(2, 3), (9, 3), (18, 5), (33, 1)])
-    {
+    for (group, (bits, slots)) in batch.plans().iter().zip([(2, 3), (9, 3), (18, 5), (33, 1)]) {
         assert_eq!(group.first_segment(), next_segment);
         assert_eq!(group.source_width().unwrap().bits(), bits);
         assert_eq!(group.profile().group.num_polynomials(), slots);
@@ -101,7 +102,10 @@ fn grouped_rejects_omitted_segment() {
         let mut segments = plan.repacking().segments().to_vec();
         segments.remove(omitted);
         let supplied = RootCoefficientRepacking::new(segments, 128).unwrap();
-        assert!(plan.validate_layout(&supplied).is_err(), "omitted {omitted}");
+        assert!(
+            plan.validate_layout(&supplied).is_err(),
+            "omitted {omitted}"
+        );
     }
 }
 
@@ -160,13 +164,10 @@ fn grouped_rejects_short_successor() {
     let typed = grouped_binding_fixture(&plan);
     let short = binary[0].carrier;
     short.validate_frozen_precommit(64).unwrap();
-    assert!(GroupedTypedPrefix::new(
-        &plan,
-        short,
-        typed.first().clone(),
-        typed.setup().clone(),
-    )
-    .is_err());
+    assert!(
+        GroupedTypedPrefix::new(&plan, short, typed.first().clone(), typed.setup().clone(),)
+            .is_err()
+    );
 }
 
 #[test]
@@ -176,13 +177,9 @@ fn grouped_rejects_short_prefix() {
     let typed = grouped_binding_fixture(&plan);
     let mut short = typed.first().clone();
     short.natural_len -= 1;
-    assert!(GroupedTypedPrefix::new(
-        &plan,
-        *typed.successor(),
-        short,
-        typed.setup().clone(),
-    )
-    .is_err());
+    assert!(
+        GroupedTypedPrefix::new(&plan, *typed.successor(), short, typed.setup().clone(),).is_err()
+    );
 }
 
 #[test]
@@ -192,13 +189,9 @@ fn grouped_rejects_short_setup() {
     let typed = grouped_binding_fixture(&plan);
     let mut short = typed.setup().clone();
     short.num_field_elements = 1;
-    assert!(GroupedTypedPrefix::new(
-        &plan,
-        *typed.successor(),
-        typed.first().clone(),
-        short,
-    )
-    .is_err());
+    assert!(
+        GroupedTypedPrefix::new(&plan, *typed.successor(), typed.first().clone(), short,).is_err()
+    );
 }
 
 #[test]

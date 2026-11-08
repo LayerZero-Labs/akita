@@ -25,13 +25,9 @@ pub fn grouped_sources_fixture() -> (
         .enumerate()
         .map(|(group, width)| {
             let index = BinaryIndexMap::new(width, 8, 8, 2).unwrap();
-            let profiles = BinaryCommittedGroupManifest::profiles_for_field(
-                &index,
-                1,
-                group as u64,
-                field,
-            )
-            .unwrap();
+            let profiles =
+                BinaryCommittedGroupManifest::profiles_for_field(&index, 1, group as u64, field)
+                    .unwrap();
             let descriptor =
                 BinarySourceDescriptor::new(index, vec![[group as u8; 32]], profiles).unwrap();
             let manifest = BinaryCommittedGroupManifest::with_field_profile(
@@ -139,9 +135,11 @@ pub fn grouped_binding_fixture(plan: &GroupedNativeRootPlan) -> GroupedTypedPref
     let mut required = akita_params::setup_prefix_slot_field_elements(&first).unwrap();
     for p in std::iter::once(&successor)
         .chain(plan.binary().iter().map(|binary| &binary.source().carrier))
-        .chain(plan.ordinary().into_iter().flat_map(|batch| {
-            batch.plans().iter().map(|plan| plan.profile())
-        }))
+        .chain(
+            plan.ordinary()
+                .into_iter()
+                .flat_map(|batch| batch.plans().iter().map(|plan| plan.profile())),
+        )
     {
         required = required.max(
             akita_params::commit_only_setup_field_elements(

@@ -78,7 +78,8 @@ impl GroupedNativeRootPlan {
             .map_err(|_| AkitaError::InvalidProof)?;
         let mut segments = Vec::new();
         let mut identity = b"akita/grouped-root/p64/capacity/v1".to_vec();
-        binary.len()
+        binary
+            .len()
             .serialize_compressed(&mut identity)
             .map_err(|_| AkitaError::InvalidProof)?;
         for source in binary {
@@ -132,7 +133,8 @@ impl GroupedNativeRootPlan {
                 coefficient_offset: 0,
             });
         }
-        ordinary.len()
+        ordinary
+            .len()
             .serialize_compressed(&mut identity)
             .map_err(|_| AkitaError::InvalidProof)?;
         let ordinary_batch = if ordinary.is_empty() {

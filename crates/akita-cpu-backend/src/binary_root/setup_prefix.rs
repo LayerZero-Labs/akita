@@ -141,13 +141,10 @@ where
             .get(typed.first())
             .ok_or(AkitaError::InvalidProof)?
             .public;
-        let verifier = Self::authenticate_typed_prefix(
-            ordinary,
-            typed.first(),
-            supplied,
-            expected,
-            || Ok(typed.identity().to_vec()),
-        )?;
+        let verifier =
+            Self::authenticate_typed_prefix(ordinary, typed.first(), supplied, expected, || {
+                Ok(typed.identity().to_vec())
+            })?;
         typed.validate_verifier_setup(&verifier)?;
         Ok(verifier)
     }

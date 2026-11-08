@@ -1,4 +1,4 @@
-use super::{Ext2, F, Ring, Zero};
+use super::{Ext2, Ring, Zero, F};
 use crate::CpuBackend;
 use akita_types::binary_source::{
     grouped_binding_fixture, grouped_sources_fixture, GroupedNativeRootPlan, GroupedTypedPrefix,
@@ -14,9 +14,8 @@ type E = Ext2<F>;
 fn setup(typed: &GroupedTypedPrefix) -> (CpuBackend<F, E>, AkitaVerifierSetup<F>) {
     let descriptor = typed.setup().clone();
     let matrix = derive_public_matrix_prefix(descriptor.num_field_elements, &descriptor.setup_seed);
-    let expanded = Arc::new(
-        AkitaExpandedSetup::from_verified_parts(descriptor.clone(), matrix).unwrap(),
-    );
+    let expanded =
+        Arc::new(AkitaExpandedSetup::from_verified_parts(descriptor.clone(), matrix).unwrap());
     let backend = CpuBackend::new(expanded.clone()).unwrap();
     let verifier = AkitaVerifierSetup::from_parts(
         expanded,
@@ -42,7 +41,9 @@ fn grouped_prefix_preparation_authenticates_all_streams() {
             .unwrap();
         assert_eq!(&coefficients[range.clone()], &expected[..local.natural_len]);
     }
-    assert!(coefficients[typed.natural_len()..].iter().all(|x| x.is_zero()));
+    assert!(coefficients[typed.natural_len()..]
+        .iter()
+        .all(|x| x.is_zero()));
     let (backend, ordinary_setup) = setup(&typed);
     let registry = backend.prepare_grouped_typed_prefixes(&typed, &[]).unwrap();
     let public = &registry.get(typed.first()).unwrap().public;
@@ -50,7 +51,10 @@ fn grouped_prefix_preparation_authenticates_all_streams() {
         .prepare_grouped_typed_verifier_setup(&ordinary_setup, &typed, public)
         .unwrap();
     typed.validate_verifier_setup(&verifier).unwrap();
-    assert_eq!(verifier.prefix_context(typed.first()), Some(typed.identity()));
+    assert_eq!(
+        verifier.prefix_context(typed.first()),
+        Some(typed.identity())
+    );
     assert!(ordinary_setup.prefix_context(typed.first()).is_none());
     assert!(verifier.ensure_no_prefix_contexts().is_err());
     assert!(backend

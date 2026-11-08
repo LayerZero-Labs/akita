@@ -78,7 +78,9 @@ mod tests {
     #[test]
     fn grouped_rejects_missing_sis_entry() {
         let error = validate_d_capacity(usize::MAX, 20).unwrap_err();
-        assert!(error.to_string().contains("binary digit width exceeds admitted ranks"));
+        assert!(error
+            .to_string()
+            .contains("binary digit width exceeds admitted ranks"));
         assert!(validate_d_capacity(1, 0).is_err());
         validate_d_capacity(1, 1).unwrap();
     }
@@ -96,17 +98,15 @@ mod tests {
             typed.first().n_prefix().unwrap()
         );
         assert_eq!(price.outgoing_domain_len, typed.outgoing().domain_len());
-        assert_eq!(price.outgoing_ring_elements * 128, price.outgoing_domain_len);
+        assert_eq!(
+            price.outgoing_ring_elements * 128,
+            price.outgoing_domain_len
+        );
         assert!(price.outgoing_physical_cells <= price.outgoing_domain_len);
         for (source, actual) in binary.iter().zip(&price.binary) {
-            let singleton = price_binary_root_planes(
-                &source.manifest,
-                source.word,
-                &source.prime,
-                128,
-                None,
-            )
-            .unwrap();
+            let singleton =
+                price_binary_root_planes(&source.manifest, source.word, &source.prime, 128, None)
+                    .unwrap();
             assert_eq!(*actual, singleton);
             assert_eq!(actual.d_table_min_rank, Some(actual.d_rank));
             assert_eq!(actual.planes, 4);
