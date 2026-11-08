@@ -184,7 +184,9 @@ mod binary_source_tests {
             assert_digit_rank::<Open>(manifest.d_label(true, planes).unwrap(), d_width);
             assert!(manifest.d_label(false, 0).is_err());
             let maximum = field.extension_degree() * field.maximum_prime_points() * owners;
-            assert!(manifest.d_label(true, maximum + field.extension_degree()).is_err());
+            assert!(manifest
+                .d_label(true, maximum + field.extension_degree())
+                .is_err());
             assert!(manifest.d_label(true, 2 * owners - 1).is_err());
         }
     }
