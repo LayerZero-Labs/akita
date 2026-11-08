@@ -664,11 +664,8 @@ mod tests {
                     )
                     .unwrap();
                 assert_eq!(structured.claim(), flat.claim(), "{label}");
-                assert_eq!(
-                    structured.terms().is_empty(),
-                    profile.inner.digits.num_digits == 1,
-                    "{label}"
-                );
+                // Source evaluations stay structured for every digit count.
+                assert!(structured.terms().is_empty(), "{label}");
                 let mut dense = vec![F::zero(); repacking.domain_len()];
                 for &(address, weight) in flat.terms() {
                     dense[address] += weight;

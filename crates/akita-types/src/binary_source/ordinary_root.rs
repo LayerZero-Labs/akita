@@ -275,8 +275,8 @@ impl OrdinaryNativeRootPlan {
     /// kernels in every owner and block, a B row the same kernels in every
     /// slice of one width, a recomposition the same coefficients at every bit,
     /// and a signed-bound row the same powers at every source element. The
-    /// weights keep each pattern once as `TranslatedLanes`, and each
-    /// single-digit slot evaluation as an offset equality. The verifier
+    /// weights keep each pattern once as `TranslatedLanes`, and each slot
+    /// evaluation as a source-evaluation family over its digit lanes. The verifier
     /// evaluates them at the Stage 2 point without one term per table address;
     /// the prover materializes the same field elements.
     #[allow(clippy::too_many_arguments)]
