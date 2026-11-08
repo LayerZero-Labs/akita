@@ -1,8 +1,8 @@
 //! Golden commitment and proof digests for clear-mode catalog rows.
 //!
-//! Behavior-preserving changes, and `dev` with no extension selected
-//! (`docs/branches.md`, rules 1 and 2), must keep `main`'s commitment and
-//! proof bytes. This test pins those bytes for a few
+//! `dev` must produce the same commitment and proof bytes as `main` for every
+//! existing configuration when no extension is selected
+//! (`docs/branches.md`, rules 1 and 2). This test pins those bytes for a few
 //! cheap catalog rows: a two-level one-hot schedule, five-level dense and
 //! one-hot schedules, a precommitted multi-group root, and an
 //! extension-field opening. Each line records the row, the Blake2b-256 digest
@@ -16,10 +16,11 @@
 //!
 //! ```text
 //! cargo nextest run -p akita-pcs --test golden_proof_digests
+//! cargo nextest run -p akita-pcs --test golden_proof_digests --features dev-protocol
 //! ```
 //!
-//! and copy the `actual` table from the failure message into
-//! `CURRENT_PROTOCOL`.
+//! and copy the `actual` table from each failure message into
+//! `CURRENT_PROTOCOL` or `DEV_PROTOCOL` respectively.
 
 #![allow(missing_docs)]
 
@@ -31,7 +32,8 @@ use akita_serialization::AkitaSerialize;
 use common::*;
 use jolt_algebra::{ExtField, Ring};
 
-/// Digests under the current protocol (v8).
+/// Digests under the current protocol: Akita main's (v8) bytes for the
+/// same rows, which a clear dev build must reproduce.
 const CURRENT_PROTOCOL: &[&str] = &[
     "fp128_onehot final=12:1 commitments=d693010878a84b6562b79d753c7fe74204fb92115741504eecb4d1c5d5080119 proof_len=42621 proof=b08099ce626db5fd4ab1b2866ca8b58eb217c7cdd91dd9292219d4b1be0ecae1",
     "fp128_dense final=14:1 commitments=59e7a284290a49719d282e05945912f5a9e9f0668286b57c0b1cebedc697288e proof_len=68809 proof=27ca568f5387caa58988d8f52128c97f62e84811246cdc8c700cfce2f233215e",
@@ -39,6 +41,10 @@ const CURRENT_PROTOCOL: &[&str] = &[
     "fp128_onehot final=16:1;precommitted=14:1 commitments=c13a992e649895d0ca9eb4a80f718402d0fa669d8665c8556cec8ae4dc40c0a3 proof_len=65545 proof=8419433696032026be18676d53eab4d15422dfc9aebbebee59cd8c3dc271a9bb",
     "fp64_dense final=14:1 commitments=51616667401b02eec741de1070a4f5a6cbd9234a9c515e5ee930c169dfa95053 proof_len=63845 proof=6457f41c3a80ee48f0aaafc306e04e386d6d613e850f4c91a7b0ce837d1809d3",
 ];
+
+/// Digests under the dev protocol (`akita_params::DEV_PROTOCOL`). On v8 the
+/// dev wire format is the current one; only its artifact set differs.
+const DEV_PROTOCOL: &[&str] = CURRENT_PROTOCOL;
 
 const SESSION: &[u8] = b"golden_proof_digests";
 
@@ -236,7 +242,11 @@ fn clear_catalog_rows_keep_their_golden_digests() {
             fp128_onehot_16_precommitted_14(),
             fp64_dense_14(),
         ];
-        let expected = CURRENT_PROTOCOL;
+        let expected = if akita_params::DEV_PROTOCOL {
+            DEV_PROTOCOL
+        } else {
+            CURRENT_PROTOCOL
+        };
         // Each line starts with its row name, up to " commitments=".
         let moved: Vec<&str> = actual
             .iter()
@@ -246,7 +256,8 @@ fn clear_catalog_rows_keep_their_golden_digests() {
             .collect();
         assert!(
             moved.is_empty() && actual.len() == expected.len(),
-            "golden digests moved for {moved:?}; actual:\n{}",
+            "golden digests moved for {moved:?} (DEV_PROTOCOL = {}); actual:\n{}",
+            akita_params::DEV_PROTOCOL,
             actual
                 .iter()
                 .map(|line| format!("    \"{line}\",\n"))

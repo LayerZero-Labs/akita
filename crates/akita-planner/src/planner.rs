@@ -5,8 +5,9 @@ use std::time::Instant;
 use akita_error::AkitaError;
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, CommittedSourceContract, FoldFailureTarget, HonestFoldPolicy,
-    HonestFoldSizingQuery, OpenCommitMatrixParams, SisMatrixRole,
+    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, CommittedSourceContract,
+    FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery, OpenCommitMatrixParams,
+    SisMatrixRole,
 };
 use akita_params::ScheduleLookupKey;
 use akita_params::{
@@ -49,6 +50,7 @@ pub(crate) struct ScheduleSearchOptions<'a> {
     pub(crate) relation_mode_filter: super::schedule_params::RelationModeFilter,
     pub(crate) root_main_constraint: Option<&'a CommittedGroupParams>,
     pub(crate) adaptation_guide: Option<&'a akita_params::FoldSchedule>,
+    pub(crate) zk: Option<super::schedule_params::ZkSearch>,
     pub(crate) root_setup_mode: Option<akita_params::SetupContributionMode>,
     #[cfg(test)]
     pub(crate) query_prefix_count: u64,
@@ -61,6 +63,7 @@ impl ScheduleSearchOptions<'_> {
             relation_mode_filter: super::schedule_params::RelationModeFilter::All,
             root_main_constraint: None,
             adaptation_guide: None,
+            zk: None,
             root_setup_mode: None,
             #[cfg(test)]
             query_prefix_count: 0,
@@ -106,11 +109,36 @@ fn materialize_precommitted_group_for_open_basis(
     opening: PlannerOpeningCandidate,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
+    masking: crate::schedule_params::LevelMasking,
 ) -> Result<Option<GroupOpenPhaseParams>, AkitaError> {
-    let honest_fold_policy = source_contract
-        .class()
-        .honest_fold_policy(source_contract.decomposition().field_bits());
+    let field_bits = source_contract.decomposition().field_bits();
     let ring_dimension = layout.inner.matrix.ring_dimension();
+    let group_claims = layout.group.num_polynomials();
+    // A masked root sizes a precommitted group by the universal balanced
+    // policy on its inner digit alphabet, the bound zero-knowledge admission
+    // recomputes without the producer contract, which no row records.
+    let (honest_fold_policy, witness_norms) = if masking.hiding() {
+        (
+            akita_params::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+                BalancedSignedDigitFoldPolicy::universal(field_bits),
+            ),
+            FoldWitnessNorms::bounded(layout.inner.digits.log_basis, ring_dimension),
+        )
+    } else {
+        (
+            source_contract.class().honest_fold_policy(field_bits),
+            source_contract
+                .source_norms(
+                    layout.inner.digits.log_basis,
+                    layout.inner.digits.num_digits,
+                    ring_dimension,
+                    jolt_algebra::checked::pow2(layout.group.num_vars())
+                        .and_then(|len| len.checked_mul(group_claims))
+                        .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?,
+                )?
+                .fold_witness,
+        )
+    };
     opening.validate_for(
         policy.claim_ext_degree,
         CommitmentRingDims {
@@ -127,7 +155,6 @@ fn materialize_precommitted_group_for_open_basis(
         .checked_mul(ring_dimension)
         .and_then(|count| count.checked_mul(num_chunks))
         .ok_or_else(|| AkitaError::InvalidSetup("precommitted fold width overflow".into()))?;
-    let group_claims = layout.group.num_polynomials();
     let num_digits_fold = honest_fold_policy.num_digits_fold(HonestFoldSizingQuery {
         ring_dimension,
         challenge_dimension: opening.challenge_dimension(ring_dimension),
@@ -139,19 +166,10 @@ fn materialize_precommitted_group_for_open_basis(
 
         num_chunks,
         num_fold_coeffs,
-        witness_norms: source_contract
-            .source_norms(
-                layout.inner.digits.log_basis,
-                layout.inner.digits.num_digits,
-                ring_dimension,
-                jolt_algebra::checked::pow2(layout.group.num_vars())
-                    .and_then(|len| len.checked_mul(group_claims))
-                    .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?,
-            )?
-            .fold_witness,
+        witness_norms,
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
-        failure_target: FoldFailureTarget::PerAttempt,
+        failure_target: masking.failure_target(),
     })?;
     let Some(required_a_bound) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
@@ -183,7 +201,7 @@ fn materialize_precommitted_group_for_open_basis(
     {
         return Ok(None);
     }
-    GroupOpenPhaseParams::admit(
+    let group = GroupOpenPhaseParams::admit(
         *layout,
         num_digits_fold,
         PrecommittedGroupAdmissionPolicy {
@@ -196,8 +214,15 @@ fn materialize_precommitted_group_for_open_basis(
         opening.method(),
         opening.challenge_config(),
         log_basis_open,
-    )
-    .map(Some)
+    )?;
+    // A frozen precommit is committed before planning, so a masked root can
+    // only use one whose hiding randomness admission accepts.
+    if masking.hiding()
+        && group.profile.randomness_columns != akita_params::zk::b_randomness_columns(&group)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(group))
 }
 
 struct MultiGroupRootCandidateCtx<'a> {
@@ -208,6 +233,7 @@ struct MultiGroupRootCandidateCtx<'a> {
     final_num_vars: usize,
     main_num_polys: usize,
     source: crate::InnerBasisSource,
+    masking: crate::schedule_params::LevelMasking,
 }
 
 struct RootFinalGroupCandidateInput<'a> {
@@ -227,6 +253,7 @@ fn precommitted_groups_for_open_basis(
     policy: &PlannerPolicy,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
+    masking: crate::schedule_params::LevelMasking,
 ) -> Result<Option<(Vec<GroupOpenPhaseParams>, usize)>, AkitaError> {
     if class_openings.len() != equivalence_classes.len() {
         return Err(AkitaError::InvalidSetup(
@@ -242,6 +269,7 @@ fn precommitted_groups_for_open_basis(
             opening,
             shared_opening_ring_dimension,
             log_basis_open,
+            masking,
         )?
         else {
             return Ok(None);
@@ -296,6 +324,7 @@ impl PreparedRootProducers {
         opening: PlannerOpeningCandidate,
         precommitted_class_openings: &[PlannerOpeningCandidate],
         candidate_log_basis_open: u32,
+        masking: crate::schedule_params::LevelMasking,
     ) -> Result<Option<Self>, AkitaError> {
         dimensions.validate_role_projection()?;
         opening.validate_for(policy.claim_ext_degree, dimensions)?;
@@ -333,6 +362,7 @@ impl PreparedRootProducers {
             policy,
             shared_opening_ring_dimension,
             candidate_log_basis_open,
+            masking,
         )?
         else {
             return Ok(None);
@@ -352,8 +382,14 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
     guide: Option<crate::schedule_params::CandidateLayoutGuide>,
+    masking: crate::schedule_params::LevelMasking,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
+    // A masked root opens every group at base 8; admission refuses anything
+    // else.
+    if masking.hiding() && candidate_log_basis_open != akita_params::zk::MASKED_LOG_BASIS {
+        return Ok(Vec::new());
+    }
     opening.validate_for(policy.claim_ext_degree, dimensions)?;
     let field_bits = policy.decomposition.field_bits();
     let alpha = dimensions.d_a().trailing_zeros() as usize;
@@ -369,6 +405,7 @@ pub(crate) fn root_level_candidates_for_prepared_producers(
         final_num_vars: key.final_group.num_vars(),
         main_num_polys: key.final_group.num_polynomials(),
         source: crate::schedule_params::root_inner_basis_source(final_source_contract),
+        masking,
     };
     let opening_batch = key.opening_layout()?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
@@ -541,6 +578,7 @@ fn root_final_group_level_params_candidate(
         width_s,
         num_digits_outer,
         modeled_linf_cap: None,
+        masking: ctx.masking,
     })?
     else {
         return Ok(None);
@@ -575,7 +613,16 @@ fn root_final_group_level_params_candidate(
     let d_width = main_d_width
         .checked_add(precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
-    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, d_width)
+    let Some((open_commit_matrix, open_randomness_columns)) =
+        crate::schedule_params::price_with_hiding_randomness(
+            ctx.masking.hiding(),
+            d_width,
+            dimensions.d_d(),
+            policy.sis_modulus_profile,
+            log_basis_open,
+            |width| OpenCommitMatrixParams::try_new_with_min_rank(open_key, width).ok(),
+            OpenCommitMatrixParams::output_rank,
+        )?
     else {
         return Ok(None);
     };
@@ -585,7 +632,7 @@ fn root_final_group_level_params_candidate(
         .copied()
         .chain(std::iter::once(akita_params::GroupOpenPhaseParams {
             profile: akita_params::GroupCommitPhaseParams {
-                randomness_columns: 0,
+                randomness_columns: ab_candidate.outer_randomness_columns,
                 version: akita_params::GroupCommitPhaseParams::VERSION,
                 group: akita_params::PolynomialGroupLayout::new(
                     ctx.final_num_vars,
@@ -616,7 +663,7 @@ fn root_final_group_level_params_candidate(
             setup_natural_len: None,
         }))
         .collect();
-    let params = CommittedGroupParams::try_new(
+    let mut params = CommittedGroupParams::try_new(
         groups,
         open_commit_matrix,
         akita_params::CommitmentPayloadMode::Compressed,
@@ -632,6 +679,7 @@ fn root_final_group_level_params_candidate(
         // schedule-level chunk policy is applied.
         akita_params::ChunkedWitnessCfg::default(),
     )?;
+    params.open_randomness_columns = open_randomness_columns;
 
     Ok(Some(params))
 }
@@ -813,6 +861,120 @@ pub fn find_schedule_for_test_relation_mode(
     )
 }
 
+/// Plan a zero-knowledge schedule masked through `zk`'s cut.
+///
+/// At every masked level the planner sizes each group's fold digits for
+/// [`akita_params::zk::ZkOpeningSchedule::fold_failure_target`] with no
+/// modeled cap, gives the level's witness-carrying B slices and its D image
+/// hiding randomness sized by
+/// [`akita_params::zk::hiding_randomness_columns`], and admits only the ℓ∞
+/// route. A masked level below the cut may consume a setup prefix, which
+/// carries no randomness; the cut level never does, since its prefix would
+/// grow w_k, and with it the Σ-protocol's response, without a price in the
+/// search (`specs/whiteout-akita.md` §5.3). The root may fold
+/// precommitted groups, sized without
+/// their producer contracts; each frozen precommitted profile must already
+/// carry its masked B randomness. The result carries `zk` and passes
+/// [`akita_params::zk::ZkOpeningSchedule::admit`].
+///
+/// The search prices every fold response at the clear nonce width, so it may
+/// rank candidates by up to two nonce bytes per masked level more than the
+/// one-shot plan sends.
+#[cfg(feature = "zk")]
+pub fn find_zk_schedule(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>,
+    zk: akita_params::zk::ZkOpeningSchedule,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_zk_schedule_with(
+        key,
+        final_source_contract,
+        precommitted_source_contracts,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::ZkSearch {
+            schedule: zk,
+            root_offload: super::schedule_params::RootOffload::Priced,
+        },
+    )
+}
+
+/// [`find_zk_schedule`] whose masked level 1 consumes the root's setup as a
+/// setup prefix: the search drops the direct root edge and keeps every
+/// other rule (the offloaded edge must still lower the first direct setup).
+/// Test support only: the result is a legitimate statement (it passes the
+/// same [`akita_params::zk::ZkOpeningSchedule::admit`]), and
+/// [`find_zk_schedule`] plans the same shape from 36 variables, so a test
+/// can prove a masked Stage 3 at an affordable size
+/// (`specs/whiteout-akita.md` §5.3).
+///
+/// # Errors
+///
+/// As [`find_zk_schedule`]; [`AkitaError::UnsupportedSchedule`] when no
+/// admissible row offloads the root.
+#[cfg(all(feature = "zk", feature = "test-support"))]
+pub fn find_zk_schedule_offloading_the_root_for_test(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>,
+    zk: akita_params::zk::ZkOpeningSchedule,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_zk_schedule_with(
+        key,
+        final_source_contract,
+        precommitted_source_contracts,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::ZkSearch {
+            schedule: zk,
+            root_offload: super::schedule_params::RootOffload::Forced,
+        },
+    )
+}
+
+#[cfg(feature = "zk")]
+fn find_zk_schedule_with(
+    key: &ScheduleLookupKey,
+    final_source_contract: CommittedSourceContract,
+    precommitted_source_contracts: &[CommittedSourceContract],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(
+        usize,
+    )
+        -> Result<akita_challenges::FoldChallengeDistribution, AkitaError>,
+    zk: super::schedule_params::ZkSearch,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    let mut planned = find_schedule_in_relation_order(
+        key,
+        final_source_contract,
+        precommitted_source_contracts,
+        policy,
+        ring_challenge_config,
+        ScheduleSearchOptions {
+            zk: Some(zk),
+            ..ScheduleSearchOptions::canonical()
+        },
+    )?;
+    planned.schedule.zk = Some(zk.schedule);
+    akita_params::zk::ZkOpeningSchedule::admit(
+        &planned.schedule,
+        final_source_contract,
+        policy.claim_ext_degree,
+    )?;
+    Ok(planned)
+}
+
 /// Canonical schedule search with an internal traversal-order seam used to
 /// prove that candidate enumeration does not affect selection.
 pub(crate) fn find_schedule_in_relation_order(
@@ -909,6 +1071,7 @@ pub(crate) fn find_schedule_in_relation_order(
             level_zero_is_root: true,
             relation_traversal_order: options.relation_traversal_order,
             relation_mode_filter: options.relation_mode_filter,
+            zk: options.zk,
         };
         let mut memo = ScheduleMemo::new();
         let suffix_started = diagnostics.map(|_| Instant::now());

@@ -45,10 +45,10 @@ pub enum AkitaError {
 
     /// The one-shot fold response at `level` fell outside its digit range.
     ///
-    /// Extension seam: zero knowledge (akita#120). Only a fold-response run with
-    /// `nonce_bits = 0` probes its response once, and `main` schedules none.
-    /// The event has probability at most the fold's one-shot failure target;
-    /// a caller that resamples the prover's randomness may rerun the proof.
+    /// Only a zero-knowledge opening probes a fold response once. The event
+    /// has probability at most the fold's failure target. A rerun can
+    /// succeed only once the opening carries hiding randomness, which it
+    /// then resamples; until then the same inputs fail the same way.
     #[error("Fold response overflowed its digit range at level {level}")]
     FoldOverflow {
         /// Fold level of the rejected response.

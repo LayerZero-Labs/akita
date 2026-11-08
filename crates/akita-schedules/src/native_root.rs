@@ -6,7 +6,7 @@
 
 use crate::artifact::validate_schedule_challenge_hooks;
 use crate::resolve::RootTransitionValidation;
-use crate::{PlannerPolicy, ResolvedScheduleRow, ValidatedScheduleCatalog};
+use crate::{PlannerPolicy, ResolvedScheduleRow, ScheduleAdmission, ValidatedScheduleCatalog};
 use akita_challenges::FoldChallengeDistribution;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupBatchProfile, FoldParams, FoldSchedule, OpeningClaimsLayout};
@@ -68,7 +68,13 @@ impl NativeRootTransition {
         schedule: FoldSchedule,
         policy: &PlannerPolicy,
     ) -> Result<ResolvedScheduleRow, AkitaError> {
-        ResolvedScheduleRow::with_root_transition(profiles, schedule, policy, &self)
+        ResolvedScheduleRow::with_root_transition(
+            profiles,
+            schedule,
+            policy,
+            ScheduleAdmission::Clear,
+            &self,
+        )
     }
 }
 
@@ -170,7 +176,12 @@ impl ValidatedScheduleCatalog {
         for row in &resolved {
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
         }
-        Self::from_resolved_rows(family_name.into(), resolved, policy)
+        Self::from_resolved_rows(
+            family_name.into(),
+            resolved,
+            policy,
+            ScheduleAdmission::Clear,
+        )
     }
 }
 

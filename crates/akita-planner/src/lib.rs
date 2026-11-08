@@ -51,6 +51,10 @@ pub use emit::{
 };
 #[cfg(feature = "test-support")]
 pub use planner::find_schedule_for_test_relation_mode;
+#[cfg(feature = "zk")]
+pub use planner::find_zk_schedule;
+#[cfg(all(feature = "zk", feature = "test-support"))]
+pub use planner::find_zk_schedule_offloading_the_root_for_test;
 pub use planner::{find_adapted_schedule, find_schedule};
 pub use policy::InnerBasisSource;
 pub use root_setup::find_schedule_with_root_setup_mode;

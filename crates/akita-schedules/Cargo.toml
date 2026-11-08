@@ -20,6 +20,8 @@ transcript-keccak = [
   "akita-challenges/transcript-keccak",
   "akita-params/transcript-keccak",
 ]
+# Zero-knowledge catalogs (`ScheduleAdmission::ZeroKnowledge`).
+zk = ["akita-params/zk"]
 # Used only through `#[serde(with = "serde_bytes")]`, which machete cannot see.
 [package.metadata.cargo-machete]
 ignored = ["serde_bytes"]

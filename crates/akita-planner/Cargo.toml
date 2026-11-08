@@ -38,7 +38,8 @@ transcript-keccak = [
   "akita-sis-estimator?/transcript-keccak",
   "akita-types?/transcript-keccak",
 ]
-catalog-gen = ["dep:akita-config"]
+# Generates every family, the zero-knowledge ones included.
+catalog-gen = ["dep:akita-config", "zk", "akita-config/zk"]
 catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
@@ -49,6 +50,9 @@ labinius-trinomial = [
   "akita-schedules/labinius-trinomial",
 ]
 dev-protocol = ["akita-params/dev-protocol"]
+# Plans zero-knowledge schedules (`find_zk_schedule`) and emits their
+# catalogs.
+zk = ["akita-params/zk", "akita-schedules/zk"]
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
@@ -56,6 +60,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
 ] }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false, features = [
   "test-support",
+  "zk",
 ] }
 
 [[bin]]

@@ -405,6 +405,60 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) level_zero_is_root: bool,
     pub(crate) relation_traversal_order: RelationTraversalOrder,
     pub(crate) relation_mode_filter: RelationModeFilter,
+    /// Zero-knowledge cut whose levels are planned masked; `None` plans a
+    /// clear schedule.
+    pub(crate) zk: Option<ZkSearch>,
+}
+
+/// A zero-knowledge search: the cut, and how the root edge treats a setup
+/// prefix.
+#[derive(Clone, Copy)]
+pub(crate) struct ZkSearch {
+    pub(crate) schedule: akita_params::zk::ZkOpeningSchedule,
+    pub(crate) root_offload: RootOffload,
+}
+
+impl ZkSearch {
+    /// Whether the edge from `level` into the next one must offload the
+    /// parent's setup to a setup prefix.
+    pub(crate) fn forces_offload_from(self, level: usize) -> bool {
+        matches!(self.root_offload, RootOffload::Forced) && level == 0
+    }
+
+    /// Whether the edge from `level` into the next one must stay direct: the
+    /// cut level never consumes a setup prefix. A setup prefix there adds the
+    /// parent's response and inner digits to w_k, which the planner's
+    /// objective does not price: they grow the Σ-protocol's private vector
+    /// and with it the response vector `e` (`specs/whiteout-akita.md`
+    /// §5.3).
+    pub(crate) fn forbids_offload_from(self, level: usize) -> bool {
+        level + 1 == self.schedule.cut_level() as usize
+    }
+}
+
+/// Whether the root edge may stay direct.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(feature = "zk"),
+    expect(
+        dead_code,
+        reason = "zero-knowledge searches are planned only under zk"
+    )
+)]
+pub(crate) enum RootOffload {
+    /// The search prices the direct and the offloaded root edge.
+    Priced,
+    /// Test support: the root edge is offloaded only (no direct candidate),
+    /// so a test can prove masked level 1's setup prefix at a size where the
+    /// priced search keeps the root direct.
+    #[cfg_attr(
+        all(feature = "zk", not(feature = "test-support")),
+        expect(
+            dead_code,
+            reason = "constructed only by the test-support planner entry"
+        )
+    )]
+    Forced,
 }
 
 #[derive(Clone, Copy)]
