@@ -146,9 +146,11 @@ struct PhysicalState<E: Field> {
     subclaim_weights: Vec<E>,
 }
 
+/// A Stage 1 digit-range session over a compact digit witness.
+///
 /// Calls rejected for invalid arguments leave the session unchanged.
 /// An internal failure leaves the session unusable.
-pub(crate) struct DigitRangeSession<E: Field> {
+pub struct DigitRangeSession<E: Field> {
     source: CompactDigitSource,
     plan: DigitRangePlan,
     leaf_coeffs: Vec<Vec<E>>,
@@ -632,5 +634,40 @@ impl<E: Field + Ring + Fold + Unreduced> DigitRangeSession<E> {
             ));
         }
         Ok(Stage1FinalClaims::new(self.point, self.claim))
+    }
+}
+
+impl<E: Field + Ring + Fold + Unreduced> akita_prover::DigitRangeSteps<E> for DigitRangeSession<E> {
+    fn round_polynomial(
+        &mut self,
+        step: Stage1Step,
+        round: usize,
+        previous_claim: E,
+    ) -> Result<Stage1RoundPolynomial<E>, AkitaError> {
+        DigitRangeSession::round_polynomial(self, step, round, previous_claim)
+    }
+
+    fn bind_challenge(
+        &mut self,
+        step: Stage1Step,
+        round: usize,
+        challenge: E,
+    ) -> Result<(), AkitaError> {
+        DigitRangeSession::bind_challenge(self, step, round, challenge)
+    }
+
+    fn public_transition(
+        &mut self,
+        step: Stage1Step,
+    ) -> Result<Stage1PublicTransition<E>, AkitaError> {
+        DigitRangeSession::public_transition(self, step)
+    }
+
+    fn bind_batch_challenge(
+        &mut self,
+        transition: Stage1Transition,
+        challenge: E,
+    ) -> Result<(), AkitaError> {
+        DigitRangeSession::bind_batch_challenge(self, transition, challenge)
     }
 }

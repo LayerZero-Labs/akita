@@ -7,9 +7,10 @@ use crate::opaque::CommitInnerPlan;
 use crate::sources::poly::{RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients};
 use akita_error::AkitaError;
 use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
-use jolt_algebra::{CanonicalEncoding, Field};
+use jolt_algebra::{lift_ct, CanonicalEncoding, Field};
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
+use zeroize::Zeroize;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -24,6 +25,11 @@ enum SignedBlockStorage {
 ///
 /// Coefficients follow [`crate::DensePoly::from_field_evals`] order and are
 /// zero-extended from [`Self::len`] to the full Boolean domain.
+///
+/// The values may be a secret witness (Whiteout's response digits,
+/// `specs/whiteout-akita.md` §6.6): they enter the field through
+/// [`lift_ct`], readers do not skip zeros, and owned values are wiped on
+/// drop.
 pub struct SignedBlockPoly {
     storage: SignedBlockStorage,
     len: usize,
@@ -33,16 +39,18 @@ pub struct SignedBlockPoly {
 
 impl SignedBlockPoly {
     /// Own signed eight-bit coefficients, zero-extended past their length.
-    pub fn i8(values: Vec<i8>, num_vars: usize) -> Result<Self, AkitaError> {
-        let blocks = SignedBlocks::i8(&values, num_vars)?;
-        let len = blocks.len();
+    pub fn i8(mut values: Vec<i8>, num_vars: usize) -> Result<Self, AkitaError> {
+        let len = SignedBlocks::i8(&values, num_vars)
+            .map(|blocks| blocks.len())
+            .inspect_err(|_| wipe(&mut values))?;
         Ok(Self::new(SignedBlockStorage::I8(values), len, num_vars))
     }
 
     /// Own signed sixteen-bit coefficients, zero-extended past their length.
-    pub fn i16(values: Vec<i16>, num_vars: usize) -> Result<Self, AkitaError> {
-        let blocks = SignedBlocks::i16(&values, num_vars)?;
-        let len = blocks.len();
+    pub fn i16(mut values: Vec<i16>, num_vars: usize) -> Result<Self, AkitaError> {
+        let len = SignedBlocks::i16(&values, num_vars)
+            .map(|blocks| blocks.len())
+            .inspect_err(|_| wipe(&mut values))?;
         Ok(Self::new(SignedBlockStorage::I16(values), len, num_vars))
     }
 
@@ -114,6 +122,35 @@ impl SignedBlockPoly {
             }
         }
     }
+}
+
+impl Drop for SignedBlockPoly {
+    fn drop(&mut self) {
+        match &mut self.storage {
+            SignedBlockStorage::I8(values) => wipe(values),
+            SignedBlockStorage::I16(values) => wipe(values),
+            SignedBlockStorage::DecodedI8(_) => {}
+        }
+    }
+}
+
+/// Values per task of the wipe on drop.
+const WIPE_CHUNK: usize = 1 << 16;
+
+/// Zeroes `values`' whole capacity, in parallel: a response's digits are
+/// up to `2^26` bytes, and `Zeroize` writes them one at a time.
+fn wipe<V: Copy + Send>(values: &mut Vec<V>) {
+    values.clear();
+    #[cfg(feature = "parallel")]
+    values
+        .spare_capacity_mut()
+        .par_chunks_mut(WIPE_CHUNK)
+        .for_each(|chunk| chunk.zeroize());
+    #[cfg(not(feature = "parallel"))]
+    values
+        .spare_capacity_mut()
+        .chunks_mut(WIPE_CHUNK)
+        .for_each(|chunk| chunk.zeroize());
 }
 
 impl<F: Field> CommitmentSource<F> for SignedBlockPoly {
@@ -240,7 +277,7 @@ const CONVERT_CHUNK: usize = 1 << 14;
 fn convert<F: Field, V: Copy + Into<i64> + Sync>(values: &[V], out: &mut [F]) {
     let chunk = |(out, values): (&mut [F], &[V])| {
         for (dst, &value) in out.iter_mut().zip(values) {
-            *dst = F::from_i64(value.into());
+            *dst = lift_ct(value.into());
         }
     };
     #[cfg(feature = "parallel")]
@@ -253,6 +290,9 @@ fn convert<F: Field, V: Copy + Into<i64> + Sync>(values: &[V], out: &mut [F]) {
         .for_each(chunk);
 }
 
+// WARNING: the returned lifts are not wiped when freed. A secret source
+// (Whiteout's response) must not reach this path; its schedule opens
+// through the signed-block kernels instead.
 impl<F: Field> SourceCoefficients<F> for SignedBlockPoly {
     fn source_coefficients(&self) -> Result<Cow<'_, [F]>, AkitaError> {
         let mut coefficients = vec![F::zero(); 1usize << self.num_vars];
