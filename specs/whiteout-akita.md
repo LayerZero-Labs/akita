@@ -231,11 +231,21 @@ at least the paper's and δ_fold only shrinks.
 The extra digits are applied before `rounded_up_role_a_inf_norm`, so the A
 matrix is re-priced at the enlarged range, as Lemma
 `wo:lem:randomized-base` requires for each schedule. The schedule audit
-recomputes the A bound from `num_digits_fold`. At every masked level of the
+recomputes the A bound from `num_digits_fold`. At the masked levels of the
 clear 36:1 row (levels 0, 1 and 2 at k = 3), re-pricing that row's fixed
-geometry with the one-shot digit ranges keeps each level's A rank, as paper
-§6.2 states. The zero-knowledge row is not part of that comparison: the
-planner plans it separately, with its own geometry and ranks.
+geometry with the one-shot digit ranges keeps the A rank at levels 0 and 1,
+as paper §6.2 states, and raises it from 6 to 7 at level 2. The clear row
+sizes level 2 with the planner's modeled ℓ∞ cap (3 digits): a per-attempt
+cap, accepted with probability only ≥ 1/40 and taken from a moment model of
+a typical witness. A masked level never takes it (modeled caps, above): a
+filter that reads the witness can bias the public challenges in a
+witness-dependent way, and this construction bounds that leakage by
+negligible rejection for every witness, which a per-attempt cap from a
+typical-witness model does not give. The one-shot digits there (4) equal
+the clear derivation without the cap, so the extra rank is the cost of
+dropping the cap, not of the one-shot target. The zero-knowledge row is not
+part of that comparison: the planner plans it separately, with its own
+geometry and ranks (its level-2 A also has rank 7).
 
 ### 2.3 The failure budget
 
@@ -283,7 +293,9 @@ single-group fp128 rows with more than two levels:
   44:1 and 50:1 are short at level 0; 20:4, 32:4 and 36:1 at level 1; only
   16:2 passes;
 - dense: every row (14:1, 15:2, 16:1, 16:2, 17:4, 24:1, 26:1, 28:1, 30:1,
-  32:1) is short at level 0.
+  32:1) is short at level 0;
+- the recursive headline 36:1 passes at levels 0 and 1; at k = 3 its
+  level 2 is one digit short, because the clear row caps it (§2.2).
 
 So zero-knowledge rows always come from the zero-knowledge planner
 (`find_zk_schedule`), never from a clear row.
@@ -1477,6 +1489,10 @@ The smaller residual shrinks the response vector e: its rows are now ν = 23
 The masked level 2 runs the quotient relation at d = 64; the residual stays
 at d = 128 (§5.2). The 36:1 headline's level 1 consumes level 0's setup.
 
+**A ranks.** The masked level 2 of the 36:1 headline costs one A rank over
+the clear row (7 against 6; §2.2). Paper §6.2's claim that the masked
+levels keep the clear ranks holds at levels 0 and 1 only.
+
 **Not done.** The paper's δ_LHL slice count and knowledge-error ledger at
 k = 3 are not recomputed here.
 
@@ -1788,8 +1804,10 @@ Clear invariance: `golden_proof_digests` and the byte-identity dump hold
   one and two witness windows, and the headline root's one-hot thresholds
   are frozen (2,254 per attempt, 5,879 one shot). Re-pricing the clear
   headline row's fixed geometry with the one-shot digit ranges keeps the
-  clear A rank at every masked level
-  (`one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels`).
+  clear A rank at levels 0 and 1 and adds one at level 2, the one level
+  the row caps (`one_shot_sizing_a_ranks_at_the_masked_levels`); a
+  per-attempt cap never lowers the one-shot digits
+  (`one_shot_sizing_ignores_the_per_attempt_cap`).
 - `ZkOpeningSchedule::admit` rejects each violation of §4.1 and §3.4 with its
   own error: an ℓ2 route at a masked level; a precommitted group with no or
   wrong randomness; a setup prefix with randomness; short fold digits in a
