@@ -9,7 +9,7 @@ use akita_params::{CommitmentSliceGeometry, PolynomialGroupLayout};
 #[test]
 fn ordinary_root_accepts_outer_64_and_rejects_valid_outer_128() {
     for field in [BinaryFieldProfile::P64, BinaryFieldProfile::P128] {
-        let mut profile = binary_ordinary_profile_fixture(field);
+        let mut profile = binary_ordinary_profile_fixture(field, None);
         assert_eq!(profile.outer.matrix.ring_dimension(), 64);
         OrdinaryNativeRootPlan::new(profile, 0).unwrap();
 
@@ -55,7 +55,7 @@ fn ordinary_root_accepts_outer_64_and_rejects_valid_outer_128() {
 #[test]
 fn ordinary_root_rejects_valid_two_slot_group() {
     for field in [BinaryFieldProfile::P64, BinaryFieldProfile::P128] {
-        let mut profile = binary_ordinary_profile_fixture(field);
+        let mut profile = binary_ordinary_profile_fixture(field, None);
         profile.group = PolynomialGroupLayout::new(profile.group.num_vars(), 2);
         let geometry = profile.derive_slice_geometry().unwrap();
         profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(

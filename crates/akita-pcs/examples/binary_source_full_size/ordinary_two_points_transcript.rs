@@ -24,7 +24,7 @@ fn single_point_ordinary_and_binary_keep_the_legacy_transcript_bytes() {
     )
     .unwrap();
     let binary = vec![F::one(); manifest.payload_coefficients().unwrap()];
-    let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
+    let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64, None);
     let compression = profile.outer_compression_plan().unwrap();
     let dimension = compression.maps().last().unwrap().ring_dimension();
     let ordinary = vec![F::from_u64(5); compression.terminal_coefficients()];

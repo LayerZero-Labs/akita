@@ -61,7 +61,9 @@ where
             ));
         }
         if let Some(width) = plan.source_width() {
-            if handle.committed.producer_contract != width.producer_contract()? {
+            if handle.committed.producer_contract
+                != width.producer_contract(profile.inner.matrix.sis_modulus_profile())?
+            {
                 return Err(AkitaError::InvalidInput(
                     "ordinary source width differs from its producer contract".into(),
                 ));

@@ -478,8 +478,11 @@ mod tests {
         slices: CommitmentSliceCount,
     ) -> GroupCommitPhaseParams {
         let width = OrdinarySourceWidth::new(bits).unwrap();
-        let inner_digits = num_digits_inner(width.decomposition(), true);
-        let outer_digits = num_digits_open(width.decomposition());
+        let decomposition = width
+            .decomposition(SisModulusProfileId::Q128Offset275)
+            .unwrap();
+        let inner_digits = num_digits_inner(decomposition, true);
+        let outer_digits = num_digits_open(decomposition);
         let key = SisTableKey {
             policy: DEFAULT_SIS_SECURITY_POLICY,
             table_digest: SisTableDigest::CURRENT,
@@ -644,7 +647,7 @@ mod p64_tests {
 
     #[test]
     fn p64_mixed_ordinary_structured_matches_the_flat_reference() {
-        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
+        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64, None);
         let plan = OrdinaryNativeRootPlan::new(profile, 0).unwrap();
         let compression = profile.outer_compression_plan().unwrap();
         assert_eq!(compression.field_bits(), F::MODULUS_BITS as usize);
@@ -750,5 +753,85 @@ mod p64_tests {
             .map(|i| ext(500 + i as usize))
             .collect::<Vec<_>>();
         assert_eq!(structured.evaluate(&r).unwrap(), flat.evaluate(&r).unwrap());
+    }
+
+    #[test]
+    fn p64_signed_ordinary_structured_matches_the_flat_reference() {
+        for (bits, slots) in [(2, 3), (9, 3), (18, 5), (33, 1)] {
+            let signed = Some((bits, slots));
+            let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64, signed);
+            let width = akita_params::ordinary_source::OrdinarySourceWidth::new(bits).unwrap();
+            let mut wrong_depth = profile;
+            wrong_depth.outer.digits.num_digits = 43;
+            assert!(width.validate_profile(&wrong_depth).is_err());
+            let mut mixed_field = profile;
+            mixed_field.outer =
+                binary_ordinary_profile_fixture(BinaryFieldProfile::P128, signed).outer;
+            assert!(width.validate_profile(&mixed_field).is_err());
+            let plan = OrdinaryNativeRootPlan::new_signed(profile, 0, width).unwrap();
+            let compression = profile.outer_compression_plan().unwrap();
+            assert_eq!(compression.field_bits(), 64);
+            assert_eq!(compression.terminal_coefficients(), 32);
+            assert_eq!(
+                plan.segments()[2].geometry.polynomial_modulus_dimension(),
+                64
+            );
+            assert_eq!(
+                plan.segments()[3].geometry.polynomial_modulus_dimension(),
+                32
+            );
+            let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
+            assert_eq!(
+                compression.field_bytes() * compression.terminal_coefficients(),
+                256
+            );
+            let setup = AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+                setup_seed: [41; 32].into(),
+            };
+            let ext = |i: usize| E::from_base_fn(|c| F::from_u64((17 + i * 31 + c * 43) as u64));
+            let point = (0..profile.group.num_vars()).map(ext).collect::<Vec<_>>();
+            let payload = (0..compression.terminal_coefficients())
+                .map(ext)
+                .collect::<Vec<_>>();
+            let evaluations = (0..profile.group.num_polynomials())
+                .map(|slot| ext(300 + slot))
+                .collect::<Vec<_>>();
+            let batches = (0..plan.linear_batch_count()).map(ext).collect::<Vec<_>>();
+            let structured = plan
+                .linear_weights(
+                    &repacking,
+                    &setup,
+                    &point,
+                    &evaluations,
+                    &payload,
+                    ext(400),
+                    &batches,
+                )
+                .unwrap();
+            let flat = plan
+                .reference_linear_weights(
+                    &repacking,
+                    &setup,
+                    &point,
+                    &evaluations,
+                    &payload,
+                    ext(400),
+                    &batches,
+                )
+                .unwrap();
+            assert_eq!(structured.claim(), flat.claim());
+            let mut dense = vec![E::zero(); repacking.domain_len()];
+            for &(address, weight) in flat.terms() {
+                dense[address] += weight;
+            }
+            assert_eq!(structured.materialize().unwrap(), dense);
+            let r = (0..repacking.domain_len().trailing_zeros())
+                .map(|i| ext(500 + i as usize))
+                .collect::<Vec<_>>();
+            assert_eq!(structured.evaluate(&r).unwrap(), flat.evaluate(&r).unwrap());
+        }
     }
 }

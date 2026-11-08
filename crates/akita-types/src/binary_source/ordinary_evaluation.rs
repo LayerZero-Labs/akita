@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn each_ordinary_reading_constrains_the_same_source() {
-        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
+        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64, None);
         let plan = OrdinaryNativeRootPlan::new(profile, 0).unwrap();
         let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
         let mut source = vec![E::zero(); repacking.domain_len()];
@@ -154,7 +154,7 @@ mod tests {
             num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
             setup_seed: [41; 32].into(),
         };
-        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64);
+        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64, None);
         let single =
             BinaryRootPublic::new(&manifest, None, &prime, &setup, 1 << 17, 64, Some(profile))
                 .unwrap();

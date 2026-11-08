@@ -24,8 +24,11 @@ const N: usize = 128;
 
 fn profile(bits: u32, slots: usize, slices: CommitmentSliceCount) -> GroupCommitPhaseParams {
     let width = OrdinarySourceWidth::new(bits).unwrap();
-    let inner_digits = num_digits_inner(width.decomposition(), true);
-    let outer_digits = num_digits_open(width.decomposition());
+    let decomposition = width
+        .decomposition(SisModulusProfileId::Q128Offset275)
+        .unwrap();
+    let inner_digits = num_digits_inner(decomposition, true);
+    let outer_digits = num_digits_open(decomposition);
     let key = SisTableKey {
         policy: DEFAULT_SIS_SECURITY_POLICY,
         table_digest: SisTableDigest::CURRENT,
@@ -134,7 +137,7 @@ fn fixture(profile: GroupCommitPhaseParams, bits: u32) -> Fixture {
             parameters: profile,
             producer_contract: OrdinarySourceWidth::new(bits)
                 .unwrap()
-                .producer_contract()
+                .producer_contract(SisModulusProfileId::Q128Offset275)
                 .unwrap(),
             public: public.commitment().clone(),
             retained: Some(retained),

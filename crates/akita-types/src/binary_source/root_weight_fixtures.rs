@@ -89,12 +89,22 @@ impl Stream {
     }
 }
 
-/// One small ordinary group with real audited table cells.
-pub fn binary_ordinary_profile_fixture(field: BinaryFieldProfile) -> GroupCommitPhaseParams {
+/// One small or explicitly signed ordinary group with real audited table cells.
+pub fn binary_ordinary_profile_fixture(
+    field: BinaryFieldProfile,
+    signed: Option<(u32, usize)>,
+) -> GroupCommitPhaseParams {
     let (modulus, digits) = match field {
         BinaryFieldProfile::P128 => (SisModulusProfileId::Q128Offset275, 43),
         BinaryFieldProfile::P64 => (SisModulusProfileId::Q64Offset59, 22),
     };
+    let (source_digits, slots) = signed.map_or((1, 1), |(bits, slots)| {
+        let decomposition = akita_params::ordinary_source::OrdinarySourceWidth::new(bits)
+            .unwrap()
+            .decomposition(modulus)
+            .unwrap();
+        (akita_params::sis::num_digits_inner(decomposition, true), slots)
+    });
     let key = |role, degree| {
         sis_table_key_for_linf_bound(
             DEFAULT_SIS_SECURITY_POLICY,
@@ -106,12 +116,15 @@ pub fn binary_ordinary_profile_fixture(field: BinaryFieldProfile) -> GroupCommit
         )
         .expect("audited ordinary table cell")
     };
-    let inner = InnerCommitMatrixParams::try_new_with_min_rank(key(SisMatrixRole::Inner, 128), 2)
-        .expect("inner fixture params");
+    let inner = InnerCommitMatrixParams::try_new_with_min_rank(
+        key(SisMatrixRole::Inner, 128),
+        2 * source_digits,
+    )
+    .expect("inner fixture params");
     let geometry = CommitmentSliceGeometry::try_new(
         CommitmentSliceCount::ONE,
         4,
-        1,
+        slots,
         inner.output_rank(),
         digits,
         128,
@@ -125,10 +138,10 @@ pub fn binary_ordinary_profile_fixture(field: BinaryFieldProfile) -> GroupCommit
     .expect("outer fixture params");
     let profile = GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
-        group: PolynomialGroupLayout::singleton(10),
+        group: PolynomialGroupLayout::new(10, slots),
         blocks: BlockGeometry::new(8, 2, 4),
         outer_slice_count: CommitmentSliceCount::ONE,
-        inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
+        inner: RoleParams::new(GadgetDigits::new(3, source_digits), inner),
         outer: RoleParams::new(GadgetDigits::new(3, digits), outer),
     };
     profile
@@ -172,7 +185,7 @@ fn public(
     let manifest = BinaryCommittedGroupManifest::with_field_profile(
         descriptor.clone(),
         0,
-        &binary_ordinary_profile_fixture(BinaryFieldProfile::P128),
+        &binary_ordinary_profile_fixture(BinaryFieldProfile::P128, None),
         BinaryFieldProfile::P128,
     )
     .expect("fixture manifest");
@@ -212,7 +225,7 @@ fn public(
     };
     let ordinary = shape
         .mixed
-        .then(|| binary_ordinary_profile_fixture(BinaryFieldProfile::P128));
+        .then(|| binary_ordinary_profile_fixture(BinaryFieldProfile::P128, None));
     let build = |logical_len| {
         BinaryRootPublic::new(
             &manifest,
@@ -305,7 +318,7 @@ impl RootWeightScenario {
             std::array::from_fn(|_| i128::from(stream.next() as i64));
         let commitment = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
         let d_payload = (0..payload_len).map(|_| stream.field()).collect::<Vec<_>>();
-        let ordinary = binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
+        let ordinary = binary_ordinary_profile_fixture(BinaryFieldProfile::P128, None);
         let ordinary_point = (0..ordinary.group.num_vars())
             .map(|_| stream.field())
             .collect::<Vec<_>>();
@@ -495,7 +508,7 @@ pub fn binary_word_manifest_fixture(
     BinaryCommittedGroupManifest::with_field_profile(
         descriptor,
         0,
-        &binary_ordinary_profile_fixture(field),
+        &binary_ordinary_profile_fixture(field, None),
         field,
     )
     .expect("fixture manifest")

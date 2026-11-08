@@ -52,7 +52,7 @@ fn p64_cannot_use_an_ordinary_catalog_row() {
     )
     .unwrap();
     let commitment = CommittedGroup::new_binary(
-        binary_ordinary_profile_fixture(profile),
+        binary_ordinary_profile_fixture(profile, None),
         akita_types::Commitment::new(akita_types::RingVec::from_coeffs(vec![
             Base::from_u64(0);
             manifest
