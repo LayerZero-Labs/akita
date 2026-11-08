@@ -216,6 +216,11 @@ where
         PackedSignedDigits::from_i8_digits_auto(padded)
     };
     drop(witness_span);
+    let _session = tracing::info_span!(
+        "root_prepare_relation_session",
+        negative_count = negative_binary_weights.len()
+    )
+    .entered();
     let mut session = CpuStage2SessionHandle::from_structured_relation(
         digits,
         Box::new(profiles),

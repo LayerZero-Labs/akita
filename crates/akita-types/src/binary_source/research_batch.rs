@@ -335,9 +335,12 @@ impl ResearchBatchPlan {
         cursor = range.end;
         let ordinary_offset = *self.offsets.get(4).ok_or(AkitaError::InvalidProof)?;
         let ordinary_batches = batches.get(range).ok_or(AkitaError::InvalidProof)?;
+        let parent = tracing::Span::current();
         let (binary_weights, ordinary_weights) = cfg_join!(
             || cfg_iter!(tasks)
                 .map(|&(local, input, offset, batches)| {
+                    let _parent = parent.enter();
+                    let _group = tracing::info_span!("research_compile_binary", offset).entered();
                     let (weights, negative) = local.relation(
                         input.challenges,
                         alpha,
@@ -356,6 +359,8 @@ impl ResearchBatchPlan {
                 })
                 .collect::<Vec<_>>(),
             || {
+                let _parent = parent.enter();
+                let first = tracing::info_span!("research_compile_ordinary_first").entered();
                 let mut weights = vec![self.ordinary.linear_weights(
                     &self.ordinary_repacking,
                     setup,
@@ -363,6 +368,8 @@ impl ResearchBatchPlan {
                     alpha,
                     ordinary_batches,
                 )?];
+                drop(first);
+                let second = tracing::info_span!("research_compile_ordinary_second").entered();
                 // E64's second readings follow all first-pass linear rows and
                 // precede negative-bit rows in the original challenge order.
                 for (local, reading) in self.ordinary.plans().iter().zip(ordinary.iter().skip(4)) {
@@ -381,6 +388,8 @@ impl ResearchBatchPlan {
                         batches.get(range).ok_or(AkitaError::InvalidProof)?,
                     )?);
                 }
+                drop(second);
+                let _merge = tracing::info_span!("research_compile_ordinary_merge").entered();
                 NativeRootWeights::merge(self.ordinary_repacking.domain_len(), weights, E::zero())
             }
         );

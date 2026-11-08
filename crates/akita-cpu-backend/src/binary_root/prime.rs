@@ -87,6 +87,7 @@ pub fn prime_plane_digits<F: Field + CanonicalEncoding>(
 /// Construct prime planes directly from column-contiguous packed carriers.
 /// Shared subset sums lift source bits into the proof prime without expanding
 /// source ring coefficients or multiplying each bit by a row weight.
+#[tracing::instrument(level = "info", skip_all, name = "packed_prime_planes", fields(planes = manifest.planes().len(), columns = descriptor.index_map().columns(), carriers = sources.len()))]
 pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
     descriptor: &BinarySourceDescriptor,
     manifest: &PrimePlaneManifest,
@@ -130,6 +131,7 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
         .zip(digits.chunks_exact_mut(plane_width))
         .zip(factors)
     {
+        let _plane = tracing::info_span!("packed_prime_plane", owner = claim.polynomial).entered();
         let rows = factors.rows;
         let start = checked::product([claim.polynomial, index.padded_carriers()])
             .ok_or(AkitaError::InvalidProof)?;

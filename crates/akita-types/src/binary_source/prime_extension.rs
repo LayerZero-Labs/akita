@@ -95,6 +95,7 @@ pub struct PrimePlaneFactors<E: Field> {
 impl PrimePlaneManifest {
     /// Compile public tensors once per point, sharing them across owners.
     /// Coordinate projection precedes later extension-field evaluation.
+    #[tracing::instrument(level = "info", skip_all, name = "prime_plane_factors", fields(planes = self.planes().len()))]
     pub fn plane_factors<E: Field>(
         &self,
         source: &BinarySourceDescriptor,

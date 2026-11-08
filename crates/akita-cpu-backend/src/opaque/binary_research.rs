@@ -118,6 +118,7 @@ where
         .enumerate()
     {
         let group = checked::sum([index, 4]).ok_or(AkitaError::InvalidProof)?;
+        let _group = tracing::info_span!("research_ordinary_preimage", group).entered();
         let GroupClaimKind::ResearchOrdinary { owners, width, .. } =
             request.kinds.get(group).ok_or(AkitaError::InvalidProof)?
         else {
@@ -136,10 +137,13 @@ where
             .scope_lease()
             .admit_commitment(&group_context, handle.committed.commitment_id)?;
     }
+    let repack =
+        tracing::info_span!("research_ordinary_repack", segments = segments.len()).entered();
     let ordinary = request
         .plan
         .ordinary_repacking()
         .repack(&segments.iter().map(Vec::as_slice).collect::<Vec<_>>())?;
+    drop(repack);
     drop(stage);
     Ok((
         payload,

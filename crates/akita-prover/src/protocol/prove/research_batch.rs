@@ -327,6 +327,7 @@ where
         stage2.witness_evaluation,
     )?;
     drop(stage);
+    let _advance = tracing::info_span!("research_root_advance_witness").entered();
     backend.advance_witness_level(&mut witness)?;
     Ok(ProveLevelOutput {
         next_state: SuffixProverState {

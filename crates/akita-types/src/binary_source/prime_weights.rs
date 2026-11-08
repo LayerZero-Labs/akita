@@ -352,6 +352,13 @@ impl<E: Field> PrimePlaneWeights<E> {
     /// A response element `polynomial * ring_rows + ring_row` gathers rows
     /// `4 * ring_row + k` of every plane on that polynomial.
     pub(crate) fn emit(&self, profiles: &mut ProfileBuilder<E>) -> Result<(), AkitaError> {
+        let response = tracing::info_span!(
+            "prime_plane_response_profiles",
+            planes = self.planes.len(),
+            ring_rows = self.ring_rows,
+            owners = self.owner_planes.len()
+        )
+        .entered();
         profiles.add_shared(&self.response, |element, profile| {
             let (polynomial, ring_row) = (element / self.ring_rows, element % self.ring_rows);
             for &plane_index in self
@@ -384,6 +391,13 @@ impl<E: Field> PrimePlaneWeights<E> {
             }
             Ok(())
         })?;
+        drop(response);
+        let _planes = tracing::info_span!(
+            "prime_plane_column_profiles",
+            planes = self.planes.len(),
+            columns = self.columns
+        )
+        .entered();
         profiles.add_shared(&self.plane_lanes, |element, profile| {
             let plane = self
                 .planes

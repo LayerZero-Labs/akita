@@ -376,6 +376,7 @@ where
         )?;
     }
     drop(preflight);
+    let root = tracing::info_span!("opening_root_execution").entered();
     let (mut public, mut resident) = root_executor.root(
         &mut handoff,
         &mut grinding,
@@ -384,7 +385,9 @@ where
         &claims.groups,
         basis,
     )?;
+    drop(root);
     for index in 0..request.schedule.recursive_folds.len() {
+        let _fold = tracing::info_span!("opening_recursive_execution", index).entered();
         let owner = resident.owner;
         handoff.current = owner;
         handoff.next = *owners
@@ -400,9 +403,11 @@ where
     }
     let owner = resident.owner;
     let levels = public.level + 1;
+    let terminal = tracing::info_span!("opening_terminal_execution", levels).entered();
     registry
         .slot(owner)?
         .terminal(owner, &request, &mut grinding, public, resident)?;
+    drop(terminal);
     if levels != request.schedule.num_fold_levels() {
         return Err(AkitaError::Internal(
             "proved fold count differs from schedule".into(),
