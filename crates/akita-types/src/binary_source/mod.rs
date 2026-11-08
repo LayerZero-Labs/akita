@@ -85,4 +85,6 @@ pub use root_weight_fixtures::{
 #[cfg(any(test, feature = "test-support"))]
 mod grouped_fixtures;
 #[cfg(any(test, feature = "test-support"))]
-pub use grouped_fixtures::{grouped_binding_fixture, grouped_sources_fixture};
+pub use grouped_fixtures::{
+    grouped_binding_fixture, grouped_sources_fixture, grouped_suffix_sources_fixture,
+};

@@ -10,7 +10,7 @@ use akita_config::{
 use akita_params::{ChunkedWitnessCfg, OpeningScheduleSelection, ScheduleRowDigest};
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::binary_source::{
-    grouped_sources_fixture, GroupedNativeRootPlan, GroupedPrefixCapacity, GroupedTypedPrefix,
+    grouped_suffix_sources_fixture, GroupedNativeRootPlan, GroupedPrefixCapacity, GroupedTypedPrefix,
 };
 use akita_types::AkitaSetupDescriptor;
 use std::sync::OnceLock;
@@ -40,7 +40,7 @@ fn fixture() -> &'static Fixture {
             seed.schedule().root.params.role_dims(),
             second.schedule().root.params.role_dims()
         );
-        let (binary, signed) = grouped_sources_fixture();
+        let (binary, signed) = grouped_suffix_sources_fixture();
         let plan = GroupedNativeRootPlan::new(&binary, &signed, 128).unwrap();
         let price = price_grouped_root(&plan).unwrap();
         let transition = NativeRootTransition::new(
@@ -296,7 +296,7 @@ fn native_setup_rejects_reordered_bindings() {
 fn native_setup_rejects_conflicting_prefix_streams() {
     let fixture = fixture();
     let mut bindings = fixture.bindings.clone();
-    let (mut binary, signed) = grouped_sources_fixture();
+    let (mut binary, signed) = grouped_suffix_sources_fixture();
     binary.reverse();
     let capacity = &bindings[1].1;
     let plan = GroupedNativeRootPlan::new(

@@ -1,4 +1,4 @@
-//! Small deterministic resources for the grouped capacity controls.
+//! Deterministic resources for grouped capacity and native setup controls.
 
 use super::*;
 use akita_params::binary_setup::BinaryFieldProfile;
@@ -70,9 +70,26 @@ pub fn grouped_sources_fixture() -> (
     (binary, ordinary)
 }
 
-/// Table-backed complete-cube profile for a witness or full-field setup prefix.
-fn profile(domain: usize, digits: usize) -> GroupCommitPhaseParams {
-    let positions = 64;
+/// Larger signed cubes for an ordinary suffix, retaining the small binary prefix.
+/// The physical witness has 2,614,272 cells; the typed prefix has 561,664.
+pub fn grouped_suffix_sources_fixture() -> (
+    Vec<GroupedBinarySource>,
+    Vec<(GroupCommitPhaseParams, OrdinarySourceWidth)>,
+) {
+    let (binary, mut ordinary) = grouped_sources_fixture();
+    for (source, _) in &mut ordinary {
+        *source = profile(
+            8192,
+            source.inner.digits.num_digits,
+            16,
+            source.group.num_polynomials(),
+        );
+    }
+    (binary, ordinary)
+}
+
+/// Table-backed complete-cube profile for a source or full-field setup prefix.
+fn profile(domain: usize, digits: usize, positions: usize, slots: usize) -> GroupCommitPhaseParams {
     let blocks = domain / (128 * positions);
     assert!(blocks > 0);
     let key = |role, degree| {
@@ -94,7 +111,7 @@ fn profile(domain: usize, digits: usize) -> GroupCommitPhaseParams {
     let geometry = CommitmentSliceGeometry::try_new(
         CommitmentSliceCount::ONE,
         blocks,
-        1,
+        slots,
         inner.output_rank(),
         22,
         128,
@@ -108,7 +125,7 @@ fn profile(domain: usize, digits: usize) -> GroupCommitPhaseParams {
     .unwrap();
     GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
-        group: PolynomialGroupLayout::singleton(domain.trailing_zeros() as usize),
+        group: PolynomialGroupLayout::new(domain.trailing_zeros() as usize, slots),
         blocks: BlockGeometry::new(domain / 128, positions, blocks),
         outer_slice_count: CommitmentSliceCount::ONE,
         inner: RoleParams::new(GadgetDigits::new(3, digits), inner),
@@ -127,10 +144,10 @@ pub fn grouped_binding_fixture(plan: &GroupedNativeRootPlan) -> GroupedTypedPref
                 .natural_len
         })
         .sum::<usize>();
-    let successor = profile(plan.repacking().domain_len(), 1);
+    let successor = profile(plan.repacking().domain_len(), 1, 64, 1);
     let first = SetupPrefixSlotId {
         natural_len,
-        commitment_profile: profile(natural_len.next_power_of_two(), 22),
+        commitment_profile: profile(natural_len.next_power_of_two(), 22, 64, 1),
     };
     let mut required = akita_params::setup_prefix_slot_field_elements(&first).unwrap();
     for p in std::iter::once(&successor)
