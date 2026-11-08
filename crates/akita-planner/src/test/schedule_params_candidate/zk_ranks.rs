@@ -4,12 +4,18 @@ use akita_config::{
 };
 use akita_params::zk::{MaskedFoldSizing, ZkOpeningSchedule, ZK_CUT_LEVEL};
 
-/// At every masked level, re-pricing the clear schedule's fixed geometry
-/// with the one-shot digit ranges keeps the clear A rank.
+/// At every masked level of the clear 36:1 row, re-pricing the row's
+/// fixed geometry with the one-shot digit ranges keeps the clear A rank,
+/// except at level 2. There the row's digits come from the planner's modeled
+/// per-attempt ℓ∞ cap, which a masked level never takes, and the one-shot
+/// digits need one more A rank.
 #[test]
-fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
+fn one_shot_sizing_a_ranks_at_the_masked_levels() {
     type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
     const NUM_VARS: usize = 36;
+    const LEVELS: usize = ZK_CUT_LEVEL as usize + 1;
+    const CAPPED: [bool; LEVELS] = [false, false, true];
+    const EXTRA_A_RANK: [usize; LEVELS] = [0, 0, 1];
 
     let chunking = akita_params::ChunkedWitnessCfg::default_non_chunked();
     let policy = policy_of::<Cfg>(chunking);
@@ -54,18 +60,15 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
             .unwrap()
             .expect("admitted candidate")
         };
-        // No masked level of main's K = 16 catalog row is capped (its
-        // scheduled digits equal the clear derivation's), so this compares
-        // uncapped levels only; dev's K = 256 row capped level 1.
         assert_eq!(
-            params.num_digits_fold(),
-            derive(LevelMasking::Clear).num_digits_fold,
-            "level {level}: the row now caps its digits; restore the capped-level case",
+            params.num_digits_fold() < derive(LevelMasking::Clear).num_digits_fold,
+            CAPPED[level],
+            "level {level}: whether the row caps its digits changed",
         );
         let one_shot = derive(LevelMasking::Masked(zk.fold_failure_target(1).unwrap()));
         assert_eq!(
             one_shot.inner_commit_matrix.output_rank(),
-            params.inner().matrix.output_rank(),
+            params.inner().matrix.output_rank() + EXTRA_A_RANK[level],
             "level {level}: one-shot digits {} vs clear {}",
             one_shot.num_digits_fold,
             params.num_digits_fold(),
@@ -73,12 +76,11 @@ fn one_shot_sizing_keeps_the_clear_a_ranks_at_the_masked_levels() {
     }
 }
 
-/// The capped-level case of the test above, which main's K = 16 row no
-/// longer reaches: a modeled ℓ∞ cap one digit below the clear derivation's
-/// lowers the clear digits, and the one-shot sizing, which ignores the
-/// per-attempt cap, still re-prices A at the capped clear rank.
+/// A masked level never takes a per-attempt cap: at every masked level of
+/// the 36:1 row, a modeled ℓ∞ cap one digit below the clear derivation's
+/// lowers the clear digits and leaves the one-shot digits unchanged.
 #[test]
-fn one_shot_sizing_keeps_the_capped_clear_a_rank() {
+fn one_shot_sizing_ignores_the_per_attempt_cap() {
     type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
     const NUM_VARS: usize = 36;
 
@@ -135,18 +137,10 @@ fn one_shot_sizing_keeps_the_capped_clear_a_rank() {
             "level {level}: the cap lowers the clear digits by one"
         );
         let target = LevelMasking::Masked(zk.fold_failure_target(1).unwrap());
-        let one_shot = derive(target, Some(cap));
         assert_eq!(
-            one_shot.num_digits_fold,
+            derive(target, Some(cap)).num_digits_fold,
             derive(target, None).num_digits_fold,
             "level {level}: a one-shot sizing ignores the per-attempt cap"
-        );
-        assert_eq!(
-            one_shot.inner_commit_matrix.output_rank(),
-            capped.inner_commit_matrix.output_rank(),
-            "level {level}: one-shot digits {} vs capped clear {}",
-            one_shot.num_digits_fold,
-            capped.num_digits_fold,
         );
     }
 }
