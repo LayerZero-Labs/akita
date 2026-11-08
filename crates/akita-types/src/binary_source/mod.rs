@@ -11,6 +11,8 @@ mod evaluation_bounds;
 mod evaluation_weights;
 mod field_switch;
 mod grinding;
+mod grouped_prefix;
+mod grouped_root;
 mod index;
 mod ordinary_batch;
 mod ordinary_root;
@@ -35,6 +37,8 @@ pub use evaluation_bounds::*;
 pub use evaluation_weights::*;
 pub use field_switch::*;
 pub use grinding::*;
+pub use grouped_prefix::*;
+pub use grouped_root::*;
 pub use index::*;
 pub use ordinary_batch::*;
 pub use ordinary_root::*;
@@ -75,3 +79,8 @@ pub use root_weight_fixtures::{
     binary_ordinary_profile_fixture, binary_word_manifest_fixture, root_weight_scenarios,
     RootFixtureField, RootWeightFixture, RootWeightScenario, Stage3Fixture,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+mod grouped_fixtures;
+#[cfg(any(test, feature = "test-support"))]
+pub use grouped_fixtures::{grouped_binding_fixture, grouped_sources_fixture};

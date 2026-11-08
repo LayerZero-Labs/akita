@@ -12,6 +12,10 @@ use akita_types::binary_source::{
     PrimePlaneManifest,
 };
 
+#[path = "grouped_root.rs"]
+mod grouped;
+pub use grouped::{price_grouped_root, GroupedRootPrice};
+
 /// Exact witness and D widths, without a production-admission assertion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryPrimePlanePrice {

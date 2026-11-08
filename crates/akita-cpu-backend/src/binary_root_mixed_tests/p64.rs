@@ -218,3 +218,6 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
         );
     }
 }
+
+#[path = "../binary_root/grouped_prefix_tests.rs"]
+mod grouped_prefix;

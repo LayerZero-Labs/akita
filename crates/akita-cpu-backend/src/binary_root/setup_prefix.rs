@@ -5,7 +5,9 @@ use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_prover::SetupPrefixProverRegistry;
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::binary_source::{BinaryCommittedGroupManifest, BinaryTypedPrefix};
+use akita_types::binary_source::{
+    BinaryCommittedGroupManifest, BinaryTypedPrefix, GroupedTypedPrefix,
+};
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
 };
@@ -66,15 +68,7 @@ where
             manifest,
             first.n_prefix()?,
         )?;
-        let mut registry = SetupPrefixProverRegistry::default();
-        registry.insert(self.prepare_setup_prefix_from_coefficients(first, coefficients)?)?;
-        for id in remaining {
-            // Several ordinary levels can share one immutable prefix slot.
-            if registry.get(id).is_none() {
-                registry.insert(self.prepare_setup_prefix(id)?)?;
-            }
-        }
-        Ok(registry)
+        self.prepare_typed_prefix_registry(first, remaining, coefficients)
     }
 
     /// Authenticate a supplied typed prefix commitment once and install a verifier view.
@@ -106,6 +100,82 @@ where
             .get(first)
             .ok_or_else(|| AkitaError::Internal("prepared typed prefix is missing".into()))?
             .public;
+        Self::authenticate_typed_prefix(ordinary, first, supplied, expected, || {
+            typed.identity(manifest, first)
+        })
+    }
+
+    /// Prepare one registry for the capacity-bound ordered grouped stream.
+    pub fn prepare_grouped_typed_prefixes(
+        &self,
+        typed: &GroupedTypedPrefix,
+        remaining: &[SetupPrefixSlotId],
+    ) -> Result<SetupPrefixProverRegistry<F, CommitmentHandle<F, E>>, AkitaError> {
+        let first = typed.first();
+        if E::DEGREE != 2
+            || self.prepared()?.expanded.descriptor() != typed.setup()
+            || remaining.contains(first)
+        {
+            return Err(AkitaError::InvalidInput(
+                "grouped prefix setup mismatch".into(),
+            ));
+        }
+        let coefficients = typed.setup_coefficients()?;
+        self.prepare_typed_prefix_registry(first, remaining, coefficients)
+    }
+
+    /// Authenticate the complete grouped stream before installing its one context.
+    pub fn prepare_grouped_typed_verifier_setup(
+        &self,
+        ordinary: &AkitaVerifierSetup<F>,
+        typed: &GroupedTypedPrefix,
+        supplied: &SetupPrefixVerifierSlot<F>,
+    ) -> Result<AkitaVerifierSetup<F>, AkitaError> {
+        if ordinary.expanded().descriptor() != typed.setup() {
+            return Err(AkitaError::InvalidInput(
+                "grouped verifier setup mismatch".into(),
+            ));
+        }
+        let expected = self.prepare_grouped_typed_prefixes(typed, &[])?;
+        let expected = &expected
+            .get(typed.first())
+            .ok_or(AkitaError::InvalidProof)?
+            .public;
+        let verifier = Self::authenticate_typed_prefix(
+            ordinary,
+            typed.first(),
+            supplied,
+            expected,
+            || Ok(typed.identity().to_vec()),
+        )?;
+        typed.validate_verifier_setup(&verifier)?;
+        Ok(verifier)
+    }
+
+    fn prepare_typed_prefix_registry(
+        &self,
+        first: &SetupPrefixSlotId,
+        remaining: &[SetupPrefixSlotId],
+        coefficients: Vec<F>,
+    ) -> Result<SetupPrefixProverRegistry<F, CommitmentHandle<F, E>>, AkitaError> {
+        let mut registry = SetupPrefixProverRegistry::default();
+        registry.insert(self.prepare_setup_prefix_from_coefficients(first, coefficients)?)?;
+        for id in remaining {
+            // Several ordinary levels can share one immutable prefix slot.
+            if registry.get(id).is_none() {
+                registry.insert(self.prepare_setup_prefix(id)?)?;
+            }
+        }
+        Ok(registry)
+    }
+
+    fn authenticate_typed_prefix(
+        ordinary: &AkitaVerifierSetup<F>,
+        first: &SetupPrefixSlotId,
+        supplied: &SetupPrefixVerifierSlot<F>,
+        expected: &SetupPrefixVerifierSlot<F>,
+        identity: impl FnOnce() -> Result<Vec<u8>, AkitaError>,
+    ) -> Result<AkitaVerifierSetup<F>, AkitaError> {
         supplied
             .check()
             .map_err(|_| AkitaError::InvalidInput("invalid typed prefix commitment".into()))?;
@@ -141,6 +211,6 @@ where
                 }
             }
         }
-        verifier.with_prefix_context(first.clone(), typed.identity(manifest, first)?)
+        verifier.with_prefix_context(first.clone(), identity()?)
     }
 }

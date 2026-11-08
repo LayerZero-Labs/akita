@@ -221,6 +221,11 @@ impl OrdinaryNativeRootPlan {
         self.source_width
     }
 
+    /// First preimage segment in the common outgoing coefficient table.
+    pub fn first_segment(&self) -> usize {
+        self.first_segment
+    }
+
     pub fn segments(&self) -> &[RootRepackingSegment] {
         &self.segments
     }
