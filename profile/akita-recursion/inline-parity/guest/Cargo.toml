@@ -17,8 +17,8 @@ akita-algebra = { path = "../../../../crates/akita-algebra", features = [
   "ntt-inline",
 ] }
 # Aliased as `jolt` so `#[jolt::provable]` resolves as in the Jolt examples.
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "495ba15585790a1a3d1932865fe2f59e7cde1b27", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "495ba15585790a1a3d1932865fe2f59e7cde1b27", default-features = false, features = [
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "eb3b0fb8be748284deba72c6855cf737d0394ae4", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "eb3b0fb8be748284deba72c6855cf737d0394ae4", default-features = false, features = [
   "asm",
   "solinas",
 ] }

@@ -16,7 +16,7 @@ akita-recursion-glue = { path = "../glue" }
 akita-serialization = { path = "../../../crates/akita-serialization" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "495ba15585790a1a3d1932865fe2f59e7cde1b27", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "eb3b0fb8be748284deba72c6855cf737d0394ae4", default-features = false, features = [
   "asm",
   "solinas",
 ] }
