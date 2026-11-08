@@ -53,12 +53,12 @@ pub(super) fn build_successor(
         .live_ring_elements_per_claim = predecessor
         .output_witness_len
         .div_ceil(successor_witness.d_a());
-    let successor_field_len = akita_error::checked::product([
+    let successor_field_len = jolt_algebra::checked::product([
         successor_witness.blocks().live_ring_elements_per_claim,
         successor_witness.d_a(),
     ])
     .ok_or_else(|| AkitaError::InvalidSetup("packing successor input overflow".into()))?;
-    let successor_num_vars = akita_error::checked::ceil_log2(successor_field_len)
+    let successor_num_vars = jolt_algebra::checked::ceil_log2(successor_field_len)
         .ok_or_else(|| AkitaError::InvalidSetup("packing successor input is empty".into()))?;
     successor_witness.own_group_mut().profile.group =
         akita_params::PolynomialGroupLayout::singleton(successor_num_vars);

@@ -49,12 +49,12 @@ pub use root::{
 };
 pub use statement::{PrimeClaim, RootOpeningMode, RootStatement};
 
-use akita_algebra::{
-    binary::{field_switch::SwitchField, BinaryField162 as B},
-    ring::trinomial::TrinomialModulus,
-};
+use akita_algebra::binary::{field_switch::SwitchField, BinaryField162 as B};
+
+use akita_algebra::trinomial::TrinomialModulus;
 use akita_challenges::BinaryChallengeSampler;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 /// Bind the full public statement before any frontend challenges.
 pub fn bind_statement<H: SwitchField, const D: usize, M: TrinomialModulus, S: ClearChannel>(

@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 use akita_prover::backend::{NativeRootRelationRequest, RelationCompiler};
 use akita_types::native_root_relation::NativeRootWeights;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 use crate::CpuBackend;
 
@@ -34,7 +34,7 @@ impl<F: Field, E: Field> RelationCompiler<NativeRootRelationRequest<'_, E>> for 
     }
 }
 
-impl<E: Field + jolt_field::Unreduced + jolt_field::Fold + 'static> CompiledNativeRoot<E> {
+impl<E: Field + jolt_algebra::Unreduced + jolt_algebra::Fold + 'static> CompiledNativeRoot<E> {
     /// Consume these public weights in the ordinary fused relation/range-image
     /// sumcheck. Stage 1 authenticates `range_image_evaluation`; the successor
     /// opening authenticates the returned session's final witness evaluation.

@@ -3,7 +3,7 @@
 use super::{PreparedRelationGroups, RelationMatrixEvaluator};
 use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, FpExtEncoding};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Extension seam: relation weights for the shared Stage 2, including groups
 /// with different native polynomial identities.

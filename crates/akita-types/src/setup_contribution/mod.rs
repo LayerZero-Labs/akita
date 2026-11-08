@@ -8,9 +8,10 @@
 //! Coefficient functionals and the structured setup-index MLE live here so
 //! external accumulation uses exactly the same arithmetic definitions.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, OpeningClaimsLayout};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field};
 
 mod coefficient_functional;
 mod geometry;

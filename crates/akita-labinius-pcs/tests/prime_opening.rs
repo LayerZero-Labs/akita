@@ -11,7 +11,7 @@ use akita_labinius_verifier::{root::verify_root_reduction_bytes, RootOpeningMode
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::CommittedGroup;
 use common::{locate, message, sample_geometry_opening, Case, H};
-use jolt_field::One;
+use jolt_algebra::One;
 
 fn opening_and_tampering<P: FieldFamily>(mode: RootOpeningMode) {
     let case = Case::<P>::new(16, mode);

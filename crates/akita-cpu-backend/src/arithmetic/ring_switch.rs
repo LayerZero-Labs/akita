@@ -12,7 +12,7 @@ use crate::opaque::RingSwitchRelationPlan;
 use crate::opaque::RingSwitchRelationView;
 use akita_error::AkitaError;
 use akita_types::{centered_quotient_requires_i16_tail_for_field, NttCacheKey, NttTransformDomain};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 fn validate_role_shape(role: &str, rows: usize, width: usize) -> Result<(), AkitaError> {
     if rows != 0 && width == 0 {

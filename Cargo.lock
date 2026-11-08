@@ -30,11 +30,10 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "jolt-inlines-ntt",
  "jolt-poly",
  "rand 0.8.8",
- "rand_core 0.6.4",
  "rayon",
  "tracing",
 ]
@@ -46,7 +45,8 @@ dependencies = [
  "akita-error",
  "akita-transcript",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
+ "jolt-crypto",
  "keccak 0.1.6",
  "num-bigint 0.5.1",
  "postcard",
@@ -67,7 +67,7 @@ dependencies = [
  "akita-serialization",
  "akita-transcript",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
  "serde_json",
 ]
 
@@ -88,7 +88,7 @@ dependencies = [
  "akita-types",
  "akita-verifier",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "rand 0.8.8",
  "rayon",
@@ -99,6 +99,8 @@ dependencies = [
 name = "akita-error"
 version = "0.1.0"
 dependencies = [
+ "jolt-algebra",
+ "jolt-crypto",
  "thiserror",
 ]
 
@@ -122,7 +124,8 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
- "jolt-field",
+ "jolt-algebra",
+ "jolt-crypto",
  "jolt-transcript",
  "tracing",
  "tracing-subscriber",
@@ -139,9 +142,9 @@ dependencies = [
  "akita-params",
  "akita-sumcheck",
  "akita-transcript",
- "akita-types",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.8",
@@ -160,7 +163,8 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
+ "jolt-crypto",
  "rayon",
 ]
 
@@ -168,14 +172,12 @@ dependencies = [
 name = "akita-metal"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
  "akita-cpu-backend",
- "akita-error",
  "akita-params",
  "akita-types",
  "bytemuck",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "jolt-metal",
  "rand 0.8.8",
  "rayon",
@@ -192,7 +194,7 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
- "jolt-field",
+ "jolt-algebra",
  "jolt-transcript",
  "keccak 0.2.2",
  "num-bigint 0.5.1",
@@ -223,7 +225,7 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "jolt-transcript",
  "libc",
@@ -256,6 +258,7 @@ dependencies = [
  "akita-schedules",
  "akita-sis-estimator",
  "akita-types",
+ "jolt-algebra",
  "libm",
 ]
 
@@ -272,7 +275,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "tracing",
 ]
@@ -284,6 +287,7 @@ dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-params",
+ "jolt-algebra",
  "postcard",
  "serde",
  "serde_bytes",
@@ -294,7 +298,8 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
+ "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
  "proptest",
  "thiserror",
@@ -311,7 +316,7 @@ dependencies = [
  "akita-params",
  "akita-serialization",
  "akita-types",
- "jolt-field",
+ "jolt-algebra",
  "tracing",
 ]
 
@@ -339,7 +344,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "akita-transcript",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
 ]
 
@@ -348,7 +353,7 @@ name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
  "akita-error",
- "jolt-field",
+ "jolt-algebra",
  "jolt-transcript",
  "sha3",
  "spongefish",
@@ -366,7 +371,8 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
+ "jolt-crypto",
  "jolt-poly",
  "jolt-transcript",
  "rand 0.8.8",
@@ -390,8 +396,9 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "criterion",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
+ "jolt-transcript",
  "rayon",
  "tracing",
 ]
@@ -401,7 +408,7 @@ name = "akita-zk-prover"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
- "jolt-field",
+ "jolt-algebra",
  "rand 0.8.8",
  "rand_core 0.6.4",
 ]
@@ -412,7 +419,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-error",
- "jolt-field",
+ "jolt-algebra",
  "rand 0.8.8",
 ]
 
@@ -1075,9 +1082,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "jolt-field"
+name = "jolt-algebra"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "bytemuck",
  "cc",
@@ -1090,14 +1097,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-crypto"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
+dependencies = [
+ "jolt-algebra",
+ "jolt-poly",
+ "jolt-transcript",
+ "keccak 0.1.6",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "shake",
+ "smallvec",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "jolt-field"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
+dependencies = [
+ "jolt-algebra",
+]
+
+[[package]]
 name = "jolt-inlines-ntt"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 
 [[package]]
 name = "jolt-metal"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "bytemuck",
  "jolt-field",
@@ -1110,12 +1143,13 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "jolt-field",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "thiserror",
  "tracing",
@@ -1124,7 +1158,7 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "blake2",
  "getrandom 0.4.3",
@@ -1137,7 +1171,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1976ced1bb8777af51c706c9c2fee15b3de5a10a#1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+source = "git+https://github.com/a16z/jolt?rev=0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b#0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b"
 dependencies = [
  "num-traits",
 ]
@@ -2037,7 +2071,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys",

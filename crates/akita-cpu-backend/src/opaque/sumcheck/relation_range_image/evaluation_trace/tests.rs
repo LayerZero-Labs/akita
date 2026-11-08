@@ -10,7 +10,7 @@ use akita_params::{
 use akita_types::{
     FpExtEncoding, PreparedOpeningPoint, RelationRangeImagePlan, RingMultiplierOpeningPoint,
 };
-use jolt_field::{Ext2, ExtField, One, Ring, Zero};
+use jolt_algebra::{Ext2, ExtField, One, Ring, Zero};
 
 type F = fp128::Field;
 const D: usize = 128;

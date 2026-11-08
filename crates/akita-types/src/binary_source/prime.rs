@@ -1,8 +1,9 @@
 use super::BinarySourceDescriptor;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
-use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, Prime64Offset59, Ring};
 
 pub(super) type E64 = Ext2<Prime64Offset59>;
 

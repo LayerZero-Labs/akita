@@ -59,7 +59,7 @@ The system has four layers. They are deliberately separate.
 
 ```text
 semantic public parameters
-    AkitaSetupSeed = derivation algorithm + public seed
+    PublicMatrixSeed = derivation algorithm + public seed
     S_F,id : nonnegative field index -> F
                          |
                          | exact prefix [0, capacity_fields)
@@ -90,11 +90,11 @@ one setup seed or one carrier dimension.
 
 #### Public matrix identity
 
-`AkitaSetupSeed` identifies the infinite deterministic stream. Its semantic
+`PublicMatrixSeed` identifies the infinite deterministic stream. Its semantic
 fields are:
 
 ```rust
-pub struct AkitaSetupSeed {
+pub struct PublicMatrixSeed {
     pub derivation: PublicMatrixDerivation,
     pub seed: [u8; 32],
 }
@@ -109,7 +109,7 @@ implementation detail such as XOF page size or field sampling from changing
 silently. The base field is already bound by the algebra section and Rust type,
 so it need not be duplicated in this value.
 
-`AkitaSetupSeed` MUST NOT contain:
+`PublicMatrixSeed` MUST NOT contain:
 
 - a ring dimension;
 - a matrix row count or width;
@@ -123,7 +123,7 @@ The expanded coefficient object is logically:
 
 ```rust
 pub struct PublicMatrixPrefix<F> {
-    pub id: AkitaSetupSeed,
+    pub id: PublicMatrixSeed,
     coefficients: Vec<F>,
 }
 ```
@@ -150,7 +150,7 @@ requires `required <= coefficients.len()`, and reshapes
 `max_num_vars` and `max_num_batched_polys` are host admission and provisioning
 limits. They determine which catalog schedules and setup-prefix slots a setup
 package promises to cover. They MAY remain metadata on the prover/verifier
-setup package, but they MUST NOT be part of `AkitaSetupSeed`, public-matrix
+setup package, but they MUST NOT be part of `PublicMatrixSeed`, public-matrix
 derivation, or transcript identity.
 
 The canonical physical capacity unit is a base-field element count. The setup
@@ -174,7 +174,7 @@ Akita has transparent public parameters. There is no secret ceremony output to
 trust. This does not mean that arbitrary serialized setup artifacts are safe to
 accept. A verifier must distinguish three separate claims:
 
-1. `AkitaSetupSeed` names the intended deterministic stream under the intended
+1. `PublicMatrixSeed` names the intended deterministic stream under the intended
    field and derivation version.
 2. A setup-prefix commitment is the exact commitment to the stated full
    power-of-two prefix of that stream, with the stated active support and
@@ -209,7 +209,7 @@ C_i = Commit(
 
 The certified transcript MUST bind at least:
 
-- the field and complete `AkitaSetupSeed`;
+- the field and complete `PublicMatrixSeed`;
 - the certificate protocol version and domain separator;
 - the exact bytes or a cryptographic canonical digest of `C_i`;
 - the complete slot ID, active support, full-prefix length, and commitment
@@ -223,7 +223,7 @@ must establish the complete derivation statement above, while the next level
 establishes the corresponding statement for `C_(i+1)`. Every step MUST
 strictly reduce the natural prefix that remains to be checked. The final
 certificate MUST end at a small prefix that the validator derives directly
-from `AkitaSetupSeed`. This terminal direct check is the cryptographic trust
+from `PublicMatrixSeed`. This terminal direct check is the cryptographic trust
 anchor. A release signature, protected local key, or pinned package digest may
 authenticate an already validated package for fast restart, but none of them
 replaces this derivation chain in the transparent model.
@@ -293,7 +293,7 @@ availability work, not changes to public-stream or proof semantics.
 
 #### Flat field stream
 
-For a base field `F` and `AkitaSetupSeed id`, setup defines an infinite stream
+For a base field `F` and `PublicMatrixSeed id`, setup defines an infinite stream
 
 ```text
 S_F,id[0], S_F,id[1], S_F,id[2], ...
@@ -538,7 +538,7 @@ Therefore:
   the prefix A dimension. Only the full-prefix witness shape consumed by that
   commitment must be divisible by it.
 
-A setup-prefix slot's semantic identity MUST bind the `AkitaSetupSeed`,
+A setup-prefix slot's semantic identity MUST bind the `PublicMatrixSeed`,
 `natural_len`, padded-domain/commitment geometry, and commitment parameters.
 The registry may avoid storing the ID redundantly when its enclosing setup
 package already supplies and validates it.
@@ -584,7 +584,7 @@ AlgebraSection
     message/protocol extension degrees
 
 SetupSection
-    digest(AkitaSetupSeed)
+    digest(PublicMatrixSeed)
     decomposition, SIS, feature, and fold-bound policy
 
 PlanSection
@@ -599,7 +599,7 @@ CallSection
 single ring dimension for a mixed schedule. The effective schedule digest is
 the sole owner of the A/B/D dimensions used by the proof.
 
-The setup-bound digest MUST bind `AkitaSetupSeed`, not the serialized
+The setup-bound digest MUST bind `PublicMatrixSeed`, not the serialized
 materialization package. In particular it MUST NOT bind:
 
 - materialized field-element capacity;
@@ -962,19 +962,19 @@ does not store backend NTT caches.
 The base-prefix cache lineage key is:
 
 ```text
-(field modulus, AkitaSetupSeed)
+(field modulus, PublicMatrixSeed)
 ```
 
 Each artifact under that lineage records its exact materialized field count. A
 validated artifact with a larger count may satisfy a smaller request because
 the derivation is prefix-compatible. The derivation version is already inside
-`AkitaSetupSeed`; config type names, schedule ring dimensions, and generation D
+`PublicMatrixSeed`; config type names, schedule ring dimensions, and generation D
 are not semantic cache keys. The derived setup-prefix registry promises a
 particular set of precomputed slots, so it is keyed by that slot set rather
 than by provisioning limits or a catalog digest
 ([`family-agnostic-cpu-backend.md`](family-agnostic-cpu-backend.md)).
 
-The base-prefix artifact serializes only `AkitaSetupSeed`, the materialized
+The base-prefix artifact serializes only `PublicMatrixSeed`, the materialized
 field count, and the flat coefficients. It does not serialize host admission
 limits. A load reconstructs `max_num_vars` and `max_num_batched_polys` from the
 current request while retaining any larger covering coefficient prefix. Thus a
@@ -1016,7 +1016,7 @@ admitted schedule universe.
 
 ### Invariants
 
-- Public coefficients are determined only by `(field, AkitaSetupSeed, flat
+- Public coefficients are determined only by `(field, PublicMatrixSeed, flat
   index)`.
 - The public stream has no protocol length ceiling. Resource limits belong to
   a host policy or a decode boundary.
@@ -1085,7 +1085,7 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 
 - [x] The instance descriptor version is bumped.
 - [x] The algebra section no longer stores a single ring dimension.
-- [x] The setup section binds `AkitaSetupSeed`, not materialization length or
+- [x] The setup section binds `PublicMatrixSeed`, not materialization length or
   host provisioning limits.
 - [x] Schedule digest tests demonstrate that changing any role-local D changes
   the plan digest.

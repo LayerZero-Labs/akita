@@ -6,7 +6,6 @@
 
 mod support;
 
-use akita_algebra::CyclotomicRing;
 use akita_cpu_backend::benchmark_support::column_sweep_ajtai_onehot_multi;
 use akita_cpu_backend::{OneHotIndex, OneHotSource};
 use akita_metal::onehot::{
@@ -14,7 +13,8 @@ use akita_metal::onehot::{
 };
 use akita_metal::{AkitaMetal, ErrorClass};
 use akita_params::FlatMatrix;
-use jolt_field::{Field, One, Prime128OffsetA7F7, Prime64Offset59, Zero};
+use jolt_algebra::CyclotomicRing;
+use jolt_algebra::{Field, One, Prime128OffsetA7F7, Prime64Offset59, Zero};
 use jolt_metal::MetalField;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -136,8 +136,8 @@ fn cpu_words<F, I, const D: usize>(
     shape: OneHotCommitShape,
 ) -> Vec<F>
 where
-    F: Field + jolt_field::CanonicalEncoding + jolt_field::WithCommitAccumulator,
-    F::Wide: jolt_field::AdditiveGroup + From<F>,
+    F: Field + jolt_algebra::CanonicalEncoding + jolt_algebra::WithCommitAccumulator,
+    F::Wide: jolt_algebra::AdditiveGroup + From<F>,
     I: OneHotIndex,
 {
     let flat = FlatMatrix::from_flat_data(matrix.to_vec());
@@ -167,8 +167,8 @@ fn check<F, const D: usize>(
     schedules: &[OneHotSchedule],
     seed: u64,
 ) where
-    F: MetalField + jolt_field::CanonicalEncoding + jolt_field::WithCommitAccumulator,
-    F::Wide: jolt_field::AdditiveGroup + From<F>,
+    F: MetalField + jolt_algebra::CanonicalEncoding + jolt_algebra::WithCommitAccumulator,
+    F::Wide: jolt_algebra::AdditiveGroup + From<F>,
 {
     let mut rng = StdRng::seed_from_u64(seed ^ (D as u64) << 32);
     let columns = case.positions * case.digits;
@@ -238,8 +238,8 @@ fn chunk_logs(ring_degree: usize) -> [u32; 4] {
 
 fn check_degree<F, const D: usize>(metal: &AkitaMetal, seed: u64)
 where
-    F: MetalField + jolt_field::CanonicalEncoding + jolt_field::WithCommitAccumulator,
-    F::Wide: jolt_field::AdditiveGroup + From<F>,
+    F: MetalField + jolt_algebra::CanonicalEncoding + jolt_algebra::WithCommitAccumulator,
+    F::Wide: jolt_algebra::AdditiveGroup + From<F>,
 {
     let log_d = D.trailing_zeros() as usize;
     let max_lanes = OneHotSchedule::max_lanes::<F, D>(metal).expect("lane limit");
@@ -308,8 +308,8 @@ where
 
 fn check_all_degrees<F>(metal: &AkitaMetal, seed: u64)
 where
-    F: MetalField + jolt_field::CanonicalEncoding + jolt_field::WithCommitAccumulator,
-    F::Wide: jolt_field::AdditiveGroup + From<F>,
+    F: MetalField + jolt_algebra::CanonicalEncoding + jolt_algebra::WithCommitAccumulator,
+    F::Wide: jolt_algebra::AdditiveGroup + From<F>,
 {
     check_degree::<F, 64>(metal, seed);
     check_degree::<F, 128>(metal, seed);

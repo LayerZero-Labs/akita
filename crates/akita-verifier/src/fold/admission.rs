@@ -2,7 +2,7 @@ use akita_error::AkitaError;
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::proof::commitment::CommittedGroupKind;
 use akita_types::CommittedGroup;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Extension seam: validate the payload according to its committed group kind.
 /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
@@ -75,7 +75,7 @@ mod tests {
         PrimePlaneManifest,
     };
     use akita_types::{Commitment, RingVec};
-    use jolt_field::{Prime64Offset59 as F, Zero};
+    use jolt_algebra::{Prime64Offset59 as F, Zero};
 
     #[test]
     fn binary_source_payload_admission_uses_each_manifest_rank() {

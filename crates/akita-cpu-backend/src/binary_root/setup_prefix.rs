@@ -1,7 +1,7 @@
 //! Explicit preprocessing for the binary root's typed setup prefix: A, then B/D.
 
 use crate::{CommitmentHandle, CpuBackend};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_serialization::{AkitaSerialize, Valid};
@@ -12,7 +12,8 @@ use akita_types::binary_source::{
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
 };
-use jolt_field::{
+use jolt_algebra::checked;
+use jolt_algebra::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced,
     WithCommitAccumulator,
 };

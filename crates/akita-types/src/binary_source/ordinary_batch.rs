@@ -1,9 +1,11 @@
 //! Ordered ordinary-group compiler seam for a future admitted mixed root.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::GroupCommitPhaseParams;
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;

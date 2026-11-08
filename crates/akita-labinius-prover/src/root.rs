@@ -29,7 +29,7 @@ use akita_labinius_verifier::{
 use akita_params::sis::labinius::LABINIUS_BALANCED_LOG_BASIS;
 use akita_sumcheck::SumcheckProverChannel;
 use akita_transcript::ChallengeCodec;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use tracing::info_span;
 
 use crate::{

@@ -2,7 +2,7 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_zk_verifier::ring::LiftedFunctional;
-use jolt_field::{Field, Fp64, One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{Field, Fp64, One, Prime128Offset275, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

@@ -1,8 +1,8 @@
 use super::*;
 use crate::opaque::{ProofContext, ProofScope};
-use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
 
-fn proof_scope<B: jolt_field::Field, E>(
+fn proof_scope<B: jolt_algebra::Field, E>(
     backend: &CpuBackend<B, E>,
 ) -> ProofScope<'_, CpuBackend<B, E>> {
     let scope = backend.owner().begin_test_scope(vec![1]).unwrap();
@@ -116,7 +116,7 @@ fn stage3_scopes_are_independent_and_owner_bound() {
 #[test]
 fn stage3_retains_setup_across_cache_eviction() {
     use crate::opaque::ComputeBackendSetup;
-    type Base = jolt_field::Prime64Offset59;
+    type Base = jolt_algebra::Prime64Offset59;
     type Extension =
         <akita_config::proof_optimized::fp64::OneHot as akita_config::CommitmentConfig>::ExtField;
     let setup = crate::AkitaProverSetup::<Base>::generate_with_capacity(

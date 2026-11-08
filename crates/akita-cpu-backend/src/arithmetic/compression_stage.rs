@@ -11,7 +11,7 @@ use crate::opaque::OperationCtx;
 use akita_error::AkitaError;
 use akita_params::{CompressionChainPlan, CompressionChainWitness, RingRelationMode};
 use akita_types::{AkitaExpandedSetup, RingVec};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -219,7 +219,7 @@ mod tests {
     use crate::opaque::{CommitInnerPlan, ComputeBackendSetup};
     use crate::AkitaProverSetup;
     use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
-    use jolt_field::{Prime128OffsetA7F7, Ring};
+    use jolt_algebra::{Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
 

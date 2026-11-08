@@ -1,6 +1,6 @@
 // Balanced base-2^b digits of field coefficients, bit-exact with
 // balanced_decompose_coefficients_pow2_* in
-// crates/akita-algebra/src/ring/cyclotomic/decomposition.rs.
+// jolt-algebra/src/ring/cyclotomic/decomposition.rs.
 //
 // The CPU centers a canonical c in [0, q) at a threshold T (c when c <= T,
 // else c - q), then peels `levels` balanced digits: d = X mod 2^b, taken as

@@ -12,7 +12,7 @@ use akita_error::AkitaError;
 use akita_params::{dispatch_for_field, CommittedGroupParams};
 use akita_serialization::AkitaSerialize;
 use akita_types::{RingRelationInstance, RingVec};
-use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, Field, Ring};
 
 pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
     inner: Vec<crate::opaque::OpaqueInnerRelationState<F>>,
@@ -28,6 +28,8 @@ pub(crate) struct PreparedRelationPayload<F: Field + CanonicalEncoding> {
 pub(crate) struct CpuRecursiveWitnessAssemblyState<F: Field + CanonicalEncoding> {
     group_openings: Vec<PreparedOpeningWitness<F>>,
     d_quotients: RelationDQuotientWitness<F>,
+    /// D hiding randomness appended to the shared D input; empty when clear.
+    d_randomness: Vec<i8>,
     inner_relation: Vec<crate::opaque::OpaqueInnerRelationState<F>>,
     compression: Option<CompressionWitnessMaterialization<F>>,
 }
@@ -50,7 +52,7 @@ pub(crate) fn begin_cpu_recursive_witness<F, E>(
 >
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Send + Sync + 'static,
-    E: jolt_field::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
+    E: jolt_algebra::ExtField<F> + akita_types::FpExtEncoding<F> + Send + Sync + 'static,
 {
     let ctx = OperationCtx::new(
         backend,
@@ -97,6 +99,14 @@ where
     }
     crate::arithmetic::requirements::warm_relation_ntt_cache(backend, prepared, level)?;
     let dims = level.role_dims();
+    // Extension seam: outer hiding randomness columns, zero width on main (akita#120). No route
+    // samples D randomness, so a level that declares it cannot be opened.
+    if level.open_randomness_columns != 0 {
+        return Err(AkitaError::UnsupportedSchedule(
+            "D hiding randomness has no sampler".into(),
+        ));
+    }
+    let d_randomness = Vec::new();
     let (v, d_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Opening),
         F,
@@ -109,6 +119,7 @@ where
             level.open().matrix.output_rank(),
             level.shared_d_digit_log_basis(),
             level.ring_relation_mode,
+            &d_randomness,
         )
     )?;
     let payload = prepare_relation_payload(
@@ -133,6 +144,7 @@ where
         assembly_state: CpuRecursiveWitnessAssemblyState {
             group_openings,
             d_quotients,
+            d_randomness,
             inner_relation: inner,
             compression,
         },
@@ -186,6 +198,7 @@ where
     let CpuRecursiveWitnessAssemblyState {
         group_openings,
         d_quotients,
+        d_randomness,
         inner_relation,
         compression,
     } = assembly_state;
@@ -216,7 +229,8 @@ where
             opening.into_relation_witness(fold_handle, challenges, inner_relation, group_dims)?;
         group_witnesses.push(witness);
     }
-    let witness = RingRelationWitness::from_groups(group_witnesses, d_quotients, compression);
+    let witness = RingRelationWitness::from_groups(group_witnesses, d_quotients, compression)
+        .with_d_randomness(d_randomness);
     RingRelationInstance::check_v_shape_for_level(&v, &level)?;
     if relation_rhs != *relation.rhs() {
         return Err(AkitaError::InvalidInput(

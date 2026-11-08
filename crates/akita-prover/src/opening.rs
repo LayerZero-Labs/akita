@@ -8,7 +8,7 @@ use akita_params::{
 use akita_transcript::CommitmentDigest;
 use akita_types::GrindingReplay;
 use akita_types::{Commitment, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 pub struct SelectedProverOpeningData<'a, E: Field, H, F: Field> {
     profile: CommittedGroupBatchProfile,
@@ -197,13 +197,14 @@ impl<'a, PointF: Clone, G, CommitF: Field> ProverOpeningData<'a, PointF, G, Comm
     }
     /// Bind the root statement: each group's commitment digest, then each
     /// group's opening point.
-    pub(crate) fn append_to(
+    pub(crate) fn append_to<C>(
         &self,
         root_params: &CommittedGroupParams,
         digests: &[CommitmentDigest],
-        grinding: &mut akita_types::ProverGrinding<'_>,
+        grinding: &mut akita_types::ProverGrinding<'_, C>,
     ) -> Result<(), AkitaError>
     where
+        C: akita_types::ProverGrindingChannel,
         CommitF: CanonicalEncoding,
         PointF: ExtField<CommitF>,
     {

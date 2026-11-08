@@ -11,7 +11,8 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use akita_algebra::binary::BinaryField128;
-use akita_challenges::{BinaryChallengeSampler, FoldDraw};
+use akita_challenges::BinaryChallengeSampler;
+use akita_challenges::FoldDraw;
 use akita_error::AkitaError;
 use akita_labinius_prover::fold_kernel::fold_integer as kernel;
 use akita_labinius_verifier::endpoint::fold_integer as reference;

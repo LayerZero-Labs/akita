@@ -165,6 +165,7 @@ pub(super) fn derive_inner_commitment_candidate(
         witness_norms,
         log_basis_response: log_basis_open,
         challenge_config: ring_challenge_cfg,
+        failure_target: FoldFailureTarget::PerAttempt,
     }) else {
         return Ok(None);
     };

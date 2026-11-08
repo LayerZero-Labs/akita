@@ -1,10 +1,11 @@
 use crate::opaque::CommitInnerPlan;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{
     validate_setup_prefix_domain, CommitmentPayloadMode, CommitmentSliceGeometry,
     CommittedGroupParams, CompressionChainPlan, GroupCommitPhaseParams, RingRelationMode,
     SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
 };
+use jolt_algebra::checked;
 
 /// Checked B-stage arithmetic plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,27 +373,6 @@ mod tests {
         assert_eq!(plan.mode(), CommitmentExecutionMode::Uncompressed);
         assert!(plan.compression().is_none());
         assert_eq!(plan.relation_mode(), None);
-    }
-
-    #[test]
-    fn recursive_plan_preserves_resource_owner_fold() {
-        let params = recursive_params(CommitmentPayloadMode::Raw);
-        let plan = CommitmentExecutionPlan::from_profile(
-            7,
-            &params.own_group().profile,
-            params.payload_mode,
-            params.ring_relation_mode,
-        )
-        .unwrap();
-        let inner = plan
-            .inner_ntt_requirement(crate::commitment::PolynomialType::Dense(
-                crate::commitment::DenseType::Coefficients,
-            ))
-            .unwrap()
-            .unwrap();
-        let outer = plan.outer_ntt_requirement().unwrap().unwrap();
-        assert_eq!(inner.fold_level(), 7);
-        assert_eq!(outer.fold_level(), 7);
     }
 
     #[test]

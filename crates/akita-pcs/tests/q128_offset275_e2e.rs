@@ -2,7 +2,7 @@
 //!
 //! No preset in this repository selects that profile and no checked-in
 //! schedule artifact names it. This file declares a configuration over
-//! `jolt_field::Prime128Offset275` that reuses the `fp128::Dense` policy,
+//! `jolt_algebra::Prime128Offset275` that reuses the `fp128::Dense` policy,
 //! names the exact profile of its field, and plans its own schedule.
 
 #![allow(missing_docs)]
@@ -23,7 +23,7 @@ use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::SetupPolicy;
-use jolt_field::{CanonicalEncoding, Field, One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Field, One, Prime128Offset275, Ring, Zero};
 
 /// Declares a config that takes everything except its field and its SIS
 /// modulus profile from `fp128::Dense`.

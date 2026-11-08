@@ -23,7 +23,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_types::SubfieldMultiplierOpeningPoint;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use crate::kernels::avx_decompose_fold as decompose_fold_avx;

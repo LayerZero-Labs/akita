@@ -1,6 +1,6 @@
 use super::*;
 use crate::opaque::{CpuProofSessionHandle, ProofScope};
-use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
 
 #[test]
 fn stage3_alternate_table_uses_ordinary_rounds_and_terminal_value() {

@@ -9,15 +9,14 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, optional = true }
+jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, optional = true }
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
@@ -29,10 +28,6 @@ rand = "0.8"
 name = "binary162"
 harness = false
 required-features = ["labinius-binary"]
-
-[[bench]]
-name = "crt_ntt_ops"
-harness = false
 
 [[bench]]
 name = "offset_eq_window"
@@ -54,13 +49,12 @@ harness = false
 required-features = ["labinius-trinomial"]
 
 [features]
-ntt-inline = ["dep:jolt-inlines-ntt"]
+ntt-inline = ["dep:jolt-inlines-ntt", "jolt-algebra/ntt64-backend"]
 default = []
 labinius-binary = []
-parallel = ["dep:rayon", "jolt-field/parallel"]
+parallel = ["dep:rayon", "jolt-algebra/parallel"]
 labinius-trinomial = []
 tensor-no-carry = []
 tensor-eq-runs = []
-
 [lints]
 workspace = true

@@ -1,10 +1,8 @@
 #![cfg(feature = "labinius")]
 
-use akita_algebra::{
-    binary::BinaryField162,
-    ring::trinomial::signed::{signed_trinomial_product, signed_trinomial_remainder},
-    PlusTrinomial,
-};
+use akita_algebra::{binary::BinaryField162, PlusTrinomial};
+
+use akita_algebra::trinomial::signed::{signed_trinomial_product, signed_trinomial_remainder};
 use akita_labinius_prover::lowered::binary_weighted_integer_convolution;
 
 fn reference(weights: &[BinaryField162], rows: &[[i64; 162]]) -> [i128; 323] {

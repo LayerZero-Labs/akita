@@ -8,14 +8,12 @@
 
 mod support;
 
-use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
-use akita_algebra::tables::{q128_primes, Q64_PRIMES};
-use akita_algebra::{
-    CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, MontCoeff, NttPrime,
-};
 use akita_metal::ntt::DeviceCrtNtt;
 use akita_metal::AkitaMetal;
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
+use jolt_algebra::tables::{q128_primes, Q64_PRIMES};
+use jolt_algebra::{CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, MontCoeff, NttPrime};
+use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};

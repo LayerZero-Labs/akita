@@ -11,7 +11,7 @@ use akita_types::binary_source::{
 };
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{FpExtEncoding, GroupBatchStatement, PendingEof};
-use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 impl<Cfg> AkitaVerifier<Cfg>
 where

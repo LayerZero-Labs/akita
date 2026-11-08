@@ -1,8 +1,9 @@
 use crate::{channel::ClearChannel, codec, lowered::LoweredRootLayout};
 use akita_algebra::{poly::multilinear_eval, EqPolynomial};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use core::marker::PhantomData;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// The polynomial-opening obligations returned by the reduction: one point
 /// and one value per committed table, in the challenge field `E`.
@@ -269,10 +270,13 @@ mod tests {
         check_transparent_evaluations, digit_multilinear_eval, RootEvaluationClaims,
         DIGIT_CHUNK_BITS,
     };
-    use akita_algebra::{poly::multilinear_eval, One, Ring};
-    use akita_error::{checked, AkitaError};
+    use akita_algebra::poly::multilinear_eval;
+    use akita_error::AkitaError;
+    use jolt_algebra::checked;
+    use jolt_algebra::One;
+    use jolt_algebra::Ring;
 
-    type F = jolt_field::Prime128Offset275;
+    type F = jolt_algebra::Prime128Offset275;
 
     fn random_word(state: &mut u64) -> u64 {
         *state ^= *state >> 12;

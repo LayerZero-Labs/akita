@@ -9,8 +9,8 @@ use akita_types::{prepare_ntt_cache, NttCacheMode};
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Ring};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Ring};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 

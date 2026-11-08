@@ -5,7 +5,7 @@ use crate::opaque::{
     ValidatedRelationWitnessPlan, ValidatedTerminalFoldProbePlan, ValidatedTerminalZEncodingPlan,
 };
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Backend-associated preparation of the consumer-owned Stage 1/2 witness.
 pub(crate) trait RecursiveRelationWitnessKernel<H, F>: ComputeBackendSetup<F>

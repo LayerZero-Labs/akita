@@ -13,7 +13,7 @@ use akita_algebra::binary::BinaryField162 as B;
 use akita_challenges::{PreviewFoldDraw, ProverFoldDraw};
 use akita_params::{binary_setup::BinaryFieldProfile, GrindingPlan, GrindingRun};
 use akita_transcript::{new_prover_channel, public_bytes, public_extensions};
-use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
+use jolt_algebra::{Ext2, Prime128Offset275, Prime64Offset59};
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 

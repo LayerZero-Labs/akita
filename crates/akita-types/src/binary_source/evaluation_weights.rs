@@ -2,11 +2,12 @@
 
 use std::{borrow::Cow, sync::Arc};
 
-use akita_algebra::ring::{shifted_remainder_evaluations, PlusTrinomial};
+use akita_algebra::trinomial::{shifted_remainder_evaluations, PlusTrinomial};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 
 use super::{
     binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor, BinaryTerminalClaim,

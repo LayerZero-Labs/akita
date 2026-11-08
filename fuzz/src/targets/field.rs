@@ -1,7 +1,7 @@
 //! Base- and extension-field arithmetic as configured by Akita.
 //!
 //! Base fields are checked against a `num-bigint` oracle. Extension fields,
-//! whose defining polynomials belong to the pinned `jolt-field` dependency,
+//! whose defining polynomials belong to the pinned `jolt-algebra` dependency,
 //! are checked by field laws and by consistency with their base-field
 //! embedding, so this target restates no extension formula. Delayed-reduction
 //! accumulators are checked against their documented exactness contracts,
@@ -11,7 +11,7 @@ use crate::gen::{self, modulus, Domain};
 use crate::input::Reader;
 use crate::stats;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use jolt_field::{
+use jolt_algebra::{
     CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, One,
     PseudoMersenne, Unreduced, WithCommitAccumulator, Zero,
 };

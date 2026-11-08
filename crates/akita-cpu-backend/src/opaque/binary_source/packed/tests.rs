@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::binary::BinaryField162;
-use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
+use akita_algebra::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
 use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 use akita_params::binary_setup::BinaryFieldProfile;
@@ -8,7 +8,7 @@ use akita_types::binary_source::{
     BinaryCommitmentProfiles, BinaryIndexMap, BinaryTerminalClaim, PrimeGroupClaim,
     PrimePlaneClaim, PrimePlaneManifest,
 };
-use jolt_field::Prime128Offset275;
+use jolt_algebra::Prime128Offset275;
 
 struct SeedDraw;
 impl FoldDraw for SeedDraw {

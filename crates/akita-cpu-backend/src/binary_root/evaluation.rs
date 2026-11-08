@@ -1,17 +1,18 @@
 //! Honest construction of the U view and both committed binary carries.
 
 use akita_algebra::binary::BinaryField162;
-use akita_algebra::ring::trinomial::{
+use akita_algebra::trinomial::{
     module_map::{scalar_to_binary, unpack_signed_components},
     signed::{signed_trinomial_product, signed_trinomial_remainder},
 };
 use akita_algebra::PlusTrinomial;
 use akita_challenges::Challenges;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::binary_source::{
     binary_scalar_challenges, binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor,
     BinaryTerminalClaim, BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -236,7 +237,7 @@ impl BinaryEvaluationWitness {
             for (sum, other) in sums.iter_mut().zip(&other) {
                 accumulate(sum, other, false)?;
             }
-            Ok(sums)
+            Ok::<_, AkitaError>(sums)
         };
         #[cfg(feature = "parallel")]
         let [parity_sum, mut value] = (0..column_weights.len())

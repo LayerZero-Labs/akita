@@ -1,8 +1,8 @@
 //! Reconstruct the honest fixture table solely through public arithmetic APIs.
 
 use super::*;
-use akita_algebra::ring::trinomial::image::Q24Image;
-use akita_algebra::ring::trinomial::signed::signed_trinomial_product;
+use akita_algebra::trinomial::image::Q24Image;
+use akita_algebra::trinomial::signed::signed_trinomial_product;
 use akita_algebra::MinusTrinomial;
 use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_cpu_backend::binary_root::{

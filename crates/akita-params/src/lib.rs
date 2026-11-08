@@ -101,8 +101,8 @@ pub use tail_golomb_rice_low_bits::{rice_low_bits_for_cap, wire_rice_low_bits};
 pub use transcript_grinding::{
     independent_batch_loss_factor, multilinear_point_loss_factor, polynomial_identity_loss_factor,
     powers_batch_loss_factor, ring_switch_alpha_loss_factor, ChallengeFieldOrder,
-    FoldChallengeCost, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
-    SumcheckProtocol, TranscriptGrindingCost, FOLD_COORDINATE_ORACLE_REVISION,
+    FoldChallengeCost, FoldResponseSearch, GrindingPlan, GrindingQueryKind, GrindingRun,
+    GrindingSite, SumcheckProtocol, TranscriptGrindingCost, FOLD_COORDINATE_ORACLE_REVISION,
     FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_CHECK_BYTES,
     GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
     GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, MAX_SETUP_BATCH_CLAIMS,
@@ -116,7 +116,8 @@ pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,
     QuotientCoefficientBreakdown, RelationQuotientLayout, RelationQuotientPlan, WitnessChunkShape,
-    WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
+    WitnessLayout, WitnessQuotientRowLayout, WitnessRandomnessLayout, WitnessUnitLayout,
+    MAX_WITNESS_CHUNKS,
 };
 
 #[cfg(any(test, feature = "test-support"))]

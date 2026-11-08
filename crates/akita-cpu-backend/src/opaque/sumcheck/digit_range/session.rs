@@ -4,7 +4,7 @@ use crate::opaque::{
     Stage1FinalClaims, Stage1PublicTransition, Stage1RoundPolynomial, Stage1Step, Stage1Transition,
 };
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
-use jolt_field::{Fold, Unreduced};
+use jolt_algebra::{Fold, Unreduced};
 use jolt_poly::UnivariatePolynomial;
 
 #[cfg(test)]

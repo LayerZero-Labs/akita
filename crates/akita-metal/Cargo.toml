@@ -12,17 +12,15 @@ readme = "../../README.md"
 # this crate compiles against jolt-metal's uninhabited backend and
 # `AkitaMetal::new` reports `Unavailable`.
 [dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 # The one-hot kernel takes the CPU backend's one-hot sources directly.
 akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
-akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 bytemuck = { version = "1.16", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
   "bytemuck",
   "solinas",
 ] }
-jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a" }
+jolt-metal = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b" }
 thiserror = "2.0"
 
 [dev-dependencies]

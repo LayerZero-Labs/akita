@@ -391,7 +391,7 @@ impl FoldSuccessor<'_> {
             Self::Recursive(params) => params.blocks().positions_per_block,
             Self::Terminal(params) => params.blocks.positions_per_block,
         };
-        akita_error::checked::product([self.ring_dimension(), positions])
+        jolt_algebra::checked::product([self.ring_dimension(), positions])
             .ok_or_else(|| AkitaError::InvalidSetup("source block width overflow".into()))
     }
 
@@ -531,7 +531,7 @@ impl FoldSchedule {
         let (first_successor_d, first_successor_opening_num_vars) =
             self.recursive_folds.first().map_or_else(
                 || {
-                    Ok((
+                    Ok::<_, AkitaError>((
                         self.terminal.d_a(),
                         self.terminal.recursive_opening_num_vars()?,
                     ))
@@ -572,7 +572,7 @@ impl FoldSchedule {
             let (successor_d, successor_opening_num_vars) =
                 self.recursive_folds.get(index + 1).map_or_else(
                     || {
-                        Ok((
+                        Ok::<_, AkitaError>((
                             self.terminal.d_a(),
                             self.terminal.recursive_opening_num_vars()?,
                         ))

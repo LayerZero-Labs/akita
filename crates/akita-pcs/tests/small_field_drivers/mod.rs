@@ -22,8 +22,8 @@ use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
-use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{Fold, Unreduced, WithCommitAccumulator};
 
 /// Artifacts retained from a successful single-group roundtrip so focused
 /// protocol tests can mutate the exact proof that was already produced.
@@ -74,8 +74,8 @@ where
         + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
     P: akita_cpu_backend::CpuSource<Cfg::Field, Cfg::ExtField> + Clone,
-    Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field>,
-    <Cfg::Field as Unreduced>::Wide: jolt_field::AdditiveGroup,
+    Cfg::ExtField: jolt_algebra::MulBaseUnreduced<Cfg::Field>,
+    <Cfg::Field as Unreduced>::Wide: jolt_algebra::AdditiveGroup,
 {
     let scheme =
         load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())

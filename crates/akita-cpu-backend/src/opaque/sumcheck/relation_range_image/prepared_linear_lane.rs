@@ -4,7 +4,7 @@ use super::evaluation_trace::{
     PreparedLaneTerm, PreparedLaneWeights, PreparedPackingLaneMap, PreparedPackingSegment,
     PreparedProverLinearTerms, PreparedTraceSource,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 enum PreparedLinearLaneKind<'a, E: Field> {
     Dense(E),

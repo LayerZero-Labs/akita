@@ -5,7 +5,7 @@ use crate::opaque::DigitRowsComputeBackend;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{NttCacheKey, NttTransformDomain};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<F, E> DigitRowsComputeBackend<F> for CpuBackend<F, E>
 where

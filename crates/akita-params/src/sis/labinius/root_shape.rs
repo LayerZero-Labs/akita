@@ -1,5 +1,6 @@
 use akita_challenges::BinaryChallengeProfile;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::{
     labinius_min_secure_rank, LabiniusCommitmentLift, LabiniusFoldResponse, LabiniusRootProfile,

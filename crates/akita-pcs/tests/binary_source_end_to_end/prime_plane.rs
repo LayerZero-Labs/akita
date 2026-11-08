@@ -5,7 +5,7 @@ use akita_types::binary_source::{
     binary_root_challenges, binary_root_statement, PrimeGroupClaim, PrimePlaneClaim,
     PrimePlaneManifest,
 };
-use jolt_field::CanonicalEncoding;
+use jolt_algebra::CanonicalEncoding;
 
 const WORDS: [u128; 8] = [
     0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
@@ -860,7 +860,7 @@ fn multiple_owner_catalog(
 
 #[test]
 fn prime_plane_p64_extension_claims_and_extension_typed_prefix_endpoint() {
-    use jolt_field::{Ext2, Prime64Offset59 as Base};
+    use jolt_algebra::{Ext2, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let manifest = stage3::p64_typed_prefix_endpoint(false, 2);
     stage3::p64_typed_prefix_endpoint(true, 2);
@@ -901,7 +901,7 @@ fn prime_plane_p64_extension_reading_rejects_each_coordinate_and_plane() {
     use akita_types::binary_source::{
         binary_word_manifest_fixture, prime_plane_relation_weights, BinaryRootWitnessPlan,
     };
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let field = BinaryFieldProfile::P64;
     let manifest = binary_word_manifest_fixture(field, 1);

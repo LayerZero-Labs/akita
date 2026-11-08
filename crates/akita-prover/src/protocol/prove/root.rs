@@ -1,7 +1,7 @@
 use super::*;
 use crate::SelectedProverOpeningData;
 use akita_config::TrustedScheduleCatalog;
-use jolt_field::AdditiveGroup;
+use jolt_algebra::AdditiveGroup;
 
 #[allow(clippy::type_complexity)]
 pub(super) fn resolve_root<'a, 's, Cfg, H>(

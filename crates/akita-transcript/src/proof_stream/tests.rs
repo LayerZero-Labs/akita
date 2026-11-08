@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{CanonicalBytes, FpExt4, Prime32Offset99 as F, Ring, Zero};
+use jolt_algebra::{CanonicalBytes, FpExt4, Prime32Offset99 as F, Ring, Zero};
 
 type E = FpExt4<F>;
 

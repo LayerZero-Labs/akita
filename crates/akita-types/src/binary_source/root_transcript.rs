@@ -8,12 +8,13 @@ use crate::GrindingReplay;
 use akita_challenges::{
     Challenges, FoldChallengeDistribution, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{binary_setup::BINARY_SETUP_P64, GrindingSite};
 use akita_transcript::{
     ext_challenges, ChallengeCodec, ProofChannel, ProtocolSiteId, SITE_FAMILY_ROOT_STATEMENT,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Extension seam: bind the complete order-zero binary and mixed statement.
 /// <https://github.com/LayerZero-Labs/akita/issues/285>
@@ -270,7 +271,7 @@ pub fn binary_root_challenges(
 #[cfg(test)]
 mod p64_tests {
     use super::*;
-    use jolt_field::{Ext2, Prime64Offset59, Ring};
+    use jolt_algebra::{Ext2, Prime64Offset59, Ring};
     type F = Prime64Offset59;
     type E = Ext2<F>;
 

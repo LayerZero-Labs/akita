@@ -1,5 +1,5 @@
 use akita_algebra::CyclotomicRing;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Named ring-switch relation rows returned by a backend.
 #[derive(Debug, Clone, PartialEq, Eq)]

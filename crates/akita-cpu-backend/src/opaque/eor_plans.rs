@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_algebra::Field;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ValidatedWitnessOpeningPlan<'a, E: Field> {
     point: &'a [E],

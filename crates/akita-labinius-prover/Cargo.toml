@@ -19,18 +19,20 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-labinius-verifier = { version = "0.1.0", path = "../akita-labinius-verifier", default-features = false, features = [
   "prover",
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false }
 
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 
 [dev-dependencies]
-akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
+  "lattice",
+] }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false }
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
@@ -60,7 +62,7 @@ parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
   "akita-labinius-verifier/parallel",
-  "jolt-field/parallel",
+  "jolt-algebra/parallel",
 ]
 labinius = [
   "akita-algebra/labinius-binary",

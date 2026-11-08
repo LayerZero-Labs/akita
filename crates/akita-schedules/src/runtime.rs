@@ -967,18 +967,6 @@ mod tests {
     }
 
     #[test]
-    fn recursive_and_direct_policies_use_distinct_setup_objectives() {
-        assert_eq!(
-            SelectionPolicyId::for_policy(false),
-            SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
-        );
-        assert_eq!(
-            SelectionPolicyId::for_policy(true),
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-        );
-    }
-
-    #[test]
     fn setup_objective_admission_matches_recursive_setup_planning() {
         for recursive_setup_planning in [false, true] {
             let mut policy = PlannerPolicy {

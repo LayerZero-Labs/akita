@@ -6,15 +6,15 @@
 
 use std::sync::Arc;
 
-use akita_algebra::{
-    fft::field_pow,
-    offset_eq::{
-        eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
-        EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
-    },
+use akita_algebra::offset_eq::{
+    eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+    EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
 };
-use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::fft::field_pow;
+use jolt_algebra::Field;
 
 use crate::{
     RelationCoefficientLayout, RelationCoefficientRole, RelationPolynomial, RelationPolynomialKind,
@@ -543,7 +543,7 @@ fn validate_work(actual: usize) -> Result<(), AkitaError> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
-    use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 

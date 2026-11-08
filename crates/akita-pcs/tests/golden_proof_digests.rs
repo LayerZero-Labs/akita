@@ -1,0 +1,256 @@
+//! Golden commitment and proof digests for clear-mode catalog rows.
+//!
+//! Behavior-preserving changes, and `dev` with no extension selected
+//! (`docs/branches.md`, rules 1 and 2), must keep `main`'s commitment and
+//! proof bytes. This test pins those bytes for a few
+//! cheap catalog rows: a two-level one-hot schedule, five-level dense and
+//! one-hot schedules, a precommitted multi-group root, and an
+//! extension-field opening. Each line records the row, the Blake2b-256 digest
+//! of the serialized commitments, the proof length, and the Blake2b-256 digest
+//! of the proof. The setup is seed-expanded and its matrices enter every
+//! commitment, so a setup change also moves the commitment digest.
+//!
+//! The digests are frozen prover outputs, not an independent model. Change
+//! them only with a protocol change that is meant to move these bytes. To
+//! regenerate, run
+//!
+//! ```text
+//! cargo nextest run -p akita-pcs --test golden_proof_digests
+//! ```
+//!
+//! and copy the `actual` table from the failure message into
+//! `CURRENT_PROTOCOL`.
+
+#![allow(missing_docs)]
+
+mod common;
+
+use akita_config::proof_optimized::fp64;
+use akita_cpu_backend::{CommitOutput, CpuBackend, CpuSource, GroupContext};
+use akita_serialization::AkitaSerialize;
+use common::*;
+use jolt_algebra::{ExtField, Ring};
+
+/// Digests under the current protocol (v8).
+const CURRENT_PROTOCOL: &[&str] = &[
+    "fp128_onehot final=12:1 commitments=d693010878a84b6562b79d753c7fe74204fb92115741504eecb4d1c5d5080119 proof_len=42621 proof=b08099ce626db5fd4ab1b2866ca8b58eb217c7cdd91dd9292219d4b1be0ecae1",
+    "fp128_dense final=14:1 commitments=59e7a284290a49719d282e05945912f5a9e9f0668286b57c0b1cebedc697288e proof_len=68809 proof=27ca568f5387caa58988d8f52128c97f62e84811246cdc8c700cfce2f233215e",
+    "fp128_onehot final=18:1 commitments=ece414efb98d4ec2a733517dd9e5128dd761b24b784b3f4dc0e2a21bff93fbc0 proof_len=66263 proof=346d111831a6fa8117043d28688bbd46c22a1e785e472e0f7451009af4901b02",
+    "fp128_onehot final=16:1;precommitted=14:1 commitments=c13a992e649895d0ca9eb4a80f718402d0fa669d8665c8556cec8ae4dc40c0a3 proof_len=65545 proof=8419433696032026be18676d53eab4d15422dfc9aebbebee59cd8c3dc271a9bb",
+    "fp64_dense final=14:1 commitments=51616667401b02eec741de1070a4f5a6cbd9234a9c515e5ee930c169dfa95053 proof_len=63845 proof=6457f41c3a80ee48f0aaafc306e04e386d6d613e850f4c91a7b0ce837d1809d3",
+];
+
+const SESSION: &[u8] = b"golden_proof_digests";
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn digest_line<Base: jolt_algebra::Field>(
+    row: &str,
+    commitments: &[&CommittedGroup<Base>],
+    proof: &[u8],
+) -> String
+where
+    CommittedGroup<Base>: AkitaSerialize,
+{
+    let mut commitment_bytes = Vec::new();
+    for commitment in commitments {
+        commitment
+            .serialize_compressed(&mut commitment_bytes)
+            .expect("serialize commitment");
+    }
+    format!(
+        "{row} commitments={} proof_len={} proof={}",
+        hex(&akita_params::digest_descriptor_bytes(&commitment_bytes)),
+        proof.len(),
+        hex(&akita_params::digest_descriptor_bytes(proof)),
+    )
+}
+
+/// One fp128 single-group opening.
+fn fp128_single_group<Cfg, P>(row: &str, poly: P, point: &[F], opening: F) -> String
+where
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    P: CpuSource<F, F>,
+{
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
+    let setup = scheme.setup_prover(point.len(), 1).expect("setup");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+    let CommitOutput {
+        committed_group: commitment,
+        private_handle: hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(vec![poly]).expect("source"),
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
+    let prover_data = prove_input::<Cfg>(point, &[opening], &commitment, hint, scheme.schedules());
+    let proof = scheme
+        .batched_prove(&setup, prover_data, &stack, SESSION, BasisMode::Lagrange)
+        .expect("prove");
+    digest_line(row, &[&commitment], &proof)
+}
+
+fn fp128_dense_14() -> String {
+    const NV: usize = 14;
+    let evals = dense_field_evals(NV, 0x601d_0001);
+    let point = random_point(NV, 0x601d_0002);
+    let opening = dense_opening_lagrange(&evals, &point);
+    let poly = DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
+    fp128_single_group::<fp128::Dense, _>("fp128_dense final=14:1", poly, &point, opening)
+}
+
+fn fp128_onehot(nv: usize) -> String {
+    let poly = make_onehot_poly::<fp128::OneHot>(nv, 0x601d_0003 ^ nv as u64);
+    let point = random_point(nv, 0x601d_0004 ^ nv as u64);
+    let opening = onehot_opening_lagrange(&poly, &point);
+    fp128_single_group::<fp128::OneHot, _>(
+        &format!("fp128_onehot final={nv}:1"),
+        poly,
+        &point,
+        opening,
+    )
+}
+
+/// A one-hot final group at `nv = 16` opened jointly with one precommitted
+/// one-hot group at `nv = 14`.
+fn fp128_onehot_16_precommitted_14() -> String {
+    type Cfg = fp128::OneHot;
+    const PRE_NV: usize = 14;
+    const FINAL_NV: usize = 16;
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
+    let setup = scheme.setup_prover(FINAL_NV, 2).expect("setup");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+
+    let pre_poly = make_onehot_poly::<Cfg>(PRE_NV, 0x601d_0005);
+    let CommitOutput {
+        committed_group: pre_commitment,
+        private_handle: pre_hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack.import_source(vec![pre_poly.clone()]).expect("source"),
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("precommit");
+    let final_poly = make_onehot_poly::<Cfg>(FINAL_NV, 0x601d_0006);
+    let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![*pre_commitment.profile()])
+        .expect("nonempty precommitted groups");
+    let CommitOutput {
+        committed_group: final_commitment,
+        private_handle: final_hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack
+                .import_source(vec![final_poly.clone()])
+                .expect("source"),
+            GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .expect("final commit");
+
+    let point = random_point(FINAL_NV, 0x601d_0007);
+    let claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(
+            point[..PRE_NV].to_vec(),
+            vec![onehot_opening_lagrange(&pre_poly, &point[..PRE_NV])],
+            pre_commitment.clone(),
+        )
+        .expect("precommitted group"),
+        PolynomialGroupClaims::new(
+            point.clone(),
+            vec![onehot_opening_lagrange(&final_poly, &point)],
+            final_commitment.clone(),
+        )
+        .expect("final group"),
+    ])
+    .expect("claims");
+    let prover_data =
+        selected_prover_data::<Cfg>(claims, vec![pre_hint, final_hint], scheme.schedules());
+    let proof = scheme
+        .batched_prove(&setup, prover_data, &stack, SESSION, BasisMode::Lagrange)
+        .expect("prove");
+    digest_line(
+        "fp128_onehot final=16:1;precommitted=14:1",
+        &[&pre_commitment, &final_commitment],
+        &proof,
+    )
+}
+
+/// A dense fp64 opening at an extension-field point.
+fn fp64_dense_14() -> String {
+    type Cfg = fp64::Dense;
+    type Base = fp64::Field;
+    type Ext = fp64::ExtensionField;
+    const NV: usize = 14;
+    let evals: Vec<Base> = (0..1u64 << NV)
+        .map(|i| Base::from_u64(i.wrapping_mul(0x9e37_79b9).wrapping_add(17)))
+        .collect();
+    let point: Vec<Ext> = (0..NV as u64)
+        .map(|i| Ext::from_u64(i.wrapping_mul(5).wrapping_add(3)))
+        .collect();
+    let lifted: Vec<Ext> = evals.iter().map(|&eval| Ext::lift_base(eval)).collect();
+    let opening = dense_opening_lagrange(&lifted, &point);
+
+    let scheme =
+        load_workspace_scheme::<Cfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
+            .expect("workspace schedule artifact");
+    let setup = scheme.setup_prover(NV, 1).expect("setup");
+    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+    let CommitOutput {
+        committed_group: commitment,
+        private_handle: hint,
+    } = stack
+        .commit(
+            scheme.schedules(),
+            &stack
+                .import_source(vec![
+                    DensePoly::<Base>::from_field_evals(NV, &evals).expect("poly")
+                ])
+                .expect("source"),
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
+    let prover_data = prove_input::<Cfg>(&point, &[opening], &commitment, hint, scheme.schedules());
+    let proof = scheme
+        .batched_prove(&setup, prover_data, &stack, SESSION, BasisMode::Lagrange)
+        .expect("prove");
+    digest_line("fp64_dense final=14:1", &[&commitment], &proof)
+}
+
+#[test]
+fn clear_catalog_rows_keep_their_golden_digests() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let actual = [
+            fp128_onehot(12),
+            fp128_dense_14(),
+            fp128_onehot(18),
+            fp128_onehot_16_precommitted_14(),
+            fp64_dense_14(),
+        ];
+        let expected = CURRENT_PROTOCOL;
+        // Each line starts with its row name, up to " commitments=".
+        let moved: Vec<&str> = actual
+            .iter()
+            .enumerate()
+            .filter(|(index, line)| expected.get(*index) != Some(&line.as_str()))
+            .map(|(_, line)| line.split(" commitments=").next().unwrap_or(line))
+            .collect();
+        assert!(
+            moved.is_empty() && actual.len() == expected.len(),
+            "golden digests moved for {moved:?}; actual:\n{}",
+            actual
+                .iter()
+                .map(|line| format!("    \"{line}\",\n"))
+                .collect::<String>(),
+        );
+    });
+}

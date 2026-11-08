@@ -20,8 +20,9 @@ use crate::{
     statement::RootStatement, AdmittedRootSetup,
 };
 use akita_algebra::{binary::field_switch::SwitchField, TrinomialModulus};
-use akita_error::{checked, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// The bytes that name the field pair `(F, E)` in the root statement.
 ///

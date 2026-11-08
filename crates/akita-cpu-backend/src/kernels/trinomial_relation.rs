@@ -6,14 +6,18 @@
 
 use std::{fmt::Debug, marker::PhantomData};
 
-use akita_algebra::{
-    fft::{primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField},
-    TrinomialModulus, TrinomialRing,
-};
-use akita_error::{checked, AkitaError};
+use akita_algebra::{TrinomialField, TrinomialModulus, TrinomialRing};
+
+use akita_error::AkitaError;
 use akita_types::{RelationCoefficientRole, RelationPolynomial};
+use jolt_algebra::checked;
+use jolt_algebra::fft::{FftWorkspace, SmoothDomain};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+/// Every transform's input, output, and workspace come from one domain of
+/// length `n`, so the shared FFT's length checks cannot fail.
+const DOMAIN_SIZED: &str = "the quotient builder sizes every transform to its domain";
 
 /// Reusable linear-convolution plan for a row of `A v = Y c` in a trinomial ring.
 ///
@@ -26,7 +30,7 @@ use rayon::prelude::*;
 /// field elements. Operand transforms and their products run in parallel
 /// under the `parallel` feature; field sums are exact, so the result does not
 /// depend on the schedule. This is a prover kernel, not a proof verifier.
-pub struct TrinomialRelationQuotientBuilder<F: SmoothFftField, const D: usize, M: TrinomialModulus>
+pub struct TrinomialRelationQuotientBuilder<F: TrinomialField, const D: usize, M: TrinomialModulus>
 {
     polynomial: RelationPolynomial,
     domain: SmoothDomain<F>,
@@ -38,7 +42,7 @@ pub struct TrinomialRelationQuotientBuilder<F: SmoothFftField, const D: usize, M
     modulus: PhantomData<M>,
 }
 
-impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
+impl<F: TrinomialField + Debug, const D: usize, M: TrinomialModulus>
     TrinomialRelationQuotientBuilder<F, D, M>
 {
     /// Prepare a plan and cache the operands common to every row.
@@ -70,7 +74,10 @@ impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
                 "coefficient field does not support the trinomial convolution domain".into(),
             ));
         }
-        let domain = SmoothDomain::new(primitive_nth_root::<F>(length), length);
+        let root = F::primitive_root(length)
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+        let domain = SmoothDomain::new(root, length)
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         let response_transforms = transform_operands(&domain, response);
         let challenge_transforms = transform_operands(&domain, challenges);
         Ok(Self {
@@ -142,7 +149,8 @@ impl<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>
             *sum = added - subtracted;
         }
         self.domain
-            .inverse_into(&self.sum, &mut self.padded, &mut self.workspace);
+            .inverse_into(&self.sum, &mut self.padded, &mut self.workspace)
+            .expect(DOMAIN_SIZED);
         let (remainder, quotient) = TrinomialRing::<F, D, M>::reduce_product_with_quotient(
             &self.padded[..self.polynomial.product_coefficient_len()?],
         )
@@ -160,7 +168,7 @@ struct TransformScratch<F> {
     transform: Vec<F>,
 }
 
-impl<F: SmoothFftField + Debug> TransformScratch<F> {
+impl<F: TrinomialField + Debug> TransformScratch<F> {
     fn new(domain: &SmoothDomain<F>) -> Self {
         Self {
             workspace: domain.workspace(),
@@ -176,13 +184,15 @@ impl<F: SmoothFftField + Debug> TransformScratch<F> {
         operand: &TrinomialRing<F, D, M>,
     ) -> &[F] {
         self.padded[..D].copy_from_slice(operand.coefficients());
-        domain.forward_into(&self.padded, &mut self.transform, &mut self.workspace);
+        domain
+            .forward_into(&self.padded, &mut self.transform, &mut self.workspace)
+            .expect(DOMAIN_SIZED);
         &self.transform
     }
 }
 
 /// Forward transforms of the zero-padded operands, in operand order.
-fn transform_operands<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>(
+fn transform_operands<F: TrinomialField + Debug, const D: usize, M: TrinomialModulus>(
     domain: &SmoothDomain<F>,
     operands: &[TrinomialRing<F, D, M>],
 ) -> Vec<Vec<F>> {
@@ -205,7 +215,7 @@ fn transform_operands<F: SmoothFftField + Debug, const D: usize, M: TrinomialMod
 }
 
 /// `sum_j transform(left_j) * right_j` in transform space.
-fn transform_products<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>(
+fn transform_products<F: TrinomialField + Debug, const D: usize, M: TrinomialModulus>(
     domain: &SmoothDomain<F>,
     lefts: &[TrinomialRing<F, D, M>],
     rights: &[Vec<F>],

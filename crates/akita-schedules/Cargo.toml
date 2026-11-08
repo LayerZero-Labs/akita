@@ -11,7 +11,7 @@ readme = "../../README.md"
 [features]
 default = ["transcript-keccak"]
 # Extension seam: explicitly selected native roots; https://github.com/LayerZero-Labs/akita/issues/285.
-labinius-trinomial = []
+labinius-trinomial = ["dep:jolt-algebra"]
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-params/transcript-blake2b",
@@ -34,6 +34,7 @@ akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-fe
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, optional = true }
 
 [lints]
 workspace = true

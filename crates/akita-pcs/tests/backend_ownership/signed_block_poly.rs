@@ -4,7 +4,7 @@ use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_params::BasisMode;
 use akita_pcs::custom_source::{SignedBlockDecoder, SignedBlockPoly};
 use akita_serialization::AkitaSerialize;
-use jolt_field::{Ring, Zero};
+use jolt_algebra::{Ring, Zero};
 use std::sync::Arc;
 
 type Cfg = fp128::Dense;

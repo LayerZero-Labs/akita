@@ -1,6 +1,6 @@
 //! Integrated outer setup checks and optional standalone reductions.
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_sumcheck::{verify_sumcheck_rounds, SumcheckShape};
 use akita_transcript::ChallengeCodec;
 use akita_types::{
@@ -13,8 +13,9 @@ use akita_types::{
     },
     AkitaExpandedSetup, FpExtEncoding, GrindingReplay, GrindingSumcheckVerifier, VerifierGrinding,
 };
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Verify a reduction, leaving exactly the returned setup evaluation unresolved.
 pub fn verify_setup_batch_deferred<F, E>(
@@ -39,7 +40,7 @@ where
     let coefficients = batch_coefficients::<F, E, _>(&mut grinding, 0, statement.claims().len())?;
     let input_claim = statement.input_claim(&coefficients)?;
     let replay = verify_sumcheck_rounds::<F, E, _>(
-        &mut GrindingSumcheckVerifier::<F, E>::new(
+        &mut GrindingSumcheckVerifier::<F, E, _>::new(
             &mut grinding,
             akita_params::SumcheckProtocol::SetupBatch,
             0,

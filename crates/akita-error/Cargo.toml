@@ -4,12 +4,16 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 license = "Apache-2.0 OR MIT"
-description = "Protocol errors and checked integer arithmetic shared by Akita crates"
+description = "Protocol errors shared by Akita crates"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
 thiserror = "2.0"
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
+  "lattice",
+] }
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false }
 
 [lints]
 workspace = true

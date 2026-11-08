@@ -136,7 +136,7 @@ Both sweeps load a matrix entry `a` as `NegacyclicShiftWindows`: the canonical
 several shifts of the same entry. The windows read each shift as one
 contiguous window and add up to eight windows per pass over the wide
 destination, instead of updating the whole destination once per shift. The
-kernel runs over the flat 16-bit and 32-bit lane slices that `jolt-field`
+kernel runs over the flat 16-bit and 32-bit lane slices that `jolt-algebra`
 exposes, so each vector instruction widens and adds whole lanes rather than
 shuffling per-coefficient lane groups. Each shift adds a value
 below `2^16` to each signed 32-bit lane, so the field's commit accumulation

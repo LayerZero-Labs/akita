@@ -1,8 +1,9 @@
 //! Validated minimal geometry for the indexed binary column-address seam.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{GrindingPlan, GrindingRun};
+use jolt_algebra::checked;
 
 /// One group's immutable column geometry and priced transcript sites.
 ///

@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
-use akita_algebra::CanonicalEncoding;
-use akita_error::checked;
 use bytemuck::{Pod, Zeroable};
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::checked;
+use jolt_algebra::ring::cyclotomic::decompose_centering_threshold;
+use jolt_algebra::CanonicalEncoding;
+use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid, MslType};
 use jolt_metal::MetalField;
 

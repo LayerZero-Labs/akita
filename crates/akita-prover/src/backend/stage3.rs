@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, RelationAddressGeometry, SetupPrefixSlotId};
 use akita_types::RingRelationInstance;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_poly::UnivariatePoly;
 use std::sync::Arc;
 
@@ -108,7 +108,7 @@ pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
         _request: TypedStage3Request<'_, E, Self::ProofSessionHandle, Self::CommitmentHandle>,
     ) -> Result<(E, Self::Stage3SessionHandle), AkitaError>
     where
-        F: jolt_field::CanonicalEncoding,
+        F: jolt_algebra::CanonicalEncoding,
         Self: super::ProverHandleFamily<F, E>,
     {
         Err(AkitaError::UnsupportedSchedule(

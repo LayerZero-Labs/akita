@@ -1,12 +1,13 @@
 //! Shared public compilation of the binary root's fused linear relation.
 
 use akita_challenges::Challenges;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::binary_setup::{derive_centered_q_matrix, BinaryFieldProfile};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, ExtField, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_chunks, cfg_iter_mut, cfg_join, ExtField, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,

@@ -5,7 +5,7 @@ use crate::binary_source::BinaryCommittedGroupManifest;
 use akita_error::AkitaError;
 use akita_params::GroupCommitPhaseParams;
 use akita_serialization::{AkitaSerialize, Valid};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
     /// Select the experimental binary root while retaining an ordinary suffix carrier.
@@ -43,7 +43,7 @@ mod binary_source_tests {
         BlockGeometry, CommitmentSliceCount, GadgetDigits, PolynomialGroupLayout, RoleParams,
     };
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Valid, Validate};
-    use jolt_field::{Prime128Offset275, Prime64Offset59, Ring, Zero};
+    use jolt_algebra::{Prime128Offset275, Prime64Offset59, Ring, Zero};
 
     fn carrier(field: BinaryFieldProfile) -> GroupCommitPhaseParams {
         let (modulus, bits) = match field {
@@ -73,6 +73,7 @@ mod binary_source_tests {
             group: PolynomialGroupLayout::singleton(6),
             blocks: BlockGeometry::new(1, 1, 1),
             outer_slice_count: CommitmentSliceCount::ONE,
+            randomness_columns: 0,
             inner: RoleParams::new(GadgetDigits::new(1, 1), inner),
             outer: RoleParams::new(GadgetDigits::new(1, 1), outer),
         };
@@ -285,7 +286,7 @@ mod binary_source_tests {
     fn p64_binary_root_statement_rejects_on_both_channels() {
         use akita_transcript::{new_prover_channel, new_verifier_channel};
         type F = Prime64Offset59;
-        type E = jolt_field::Ext2<F>;
+        type E = jolt_algebra::Ext2<F>;
         let manifest = manifest(BinaryFieldProfile::P64, 2, 1);
         let prime = crate::binary_source::PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
@@ -323,7 +324,7 @@ mod binary_source_tests {
     #[test]
     fn e64_uses_nonresidue_two_and_two_canonical_base_coordinates() {
         type F = Prime64Offset59;
-        type E = jolt_field::Ext2<F>;
+        type E = jolt_algebra::Ext2<F>;
         let u = E::new(F::zero(), F::from_u64(1));
         assert_eq!(u * u, E::new(F::from_u64(2), F::zero()));
         let value = E::new(F::from_u64(17), F::from_u64(19));

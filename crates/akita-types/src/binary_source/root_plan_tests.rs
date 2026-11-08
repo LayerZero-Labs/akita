@@ -2,7 +2,7 @@ use super::*;
 use crate::binary_source::root_public::reference::residual_envelope;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap, CANONICAL_IMAGE_WINDOW};
 use akita_challenges::{Challenges, SparseChallenge};
-use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
 
@@ -328,7 +328,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
     };
     use crate::AkitaSetupDescriptor;
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, Prime64Offset59};
+    use jolt_algebra::{Ext2, Prime64Offset59};
     type E = Ext2<Prime64Offset59>;
     let setup = AkitaSetupDescriptor {
         max_num_vars: 0,

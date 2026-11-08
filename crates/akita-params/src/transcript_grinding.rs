@@ -412,6 +412,19 @@ impl GrindingSite {
     }
 }
 
+/// How the prover finds the accepted counter of a scheduled fold response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FoldResponseSearch {
+    /// Try counters in order and send the first accepted one as a nonce of
+    /// [`FOLD_RESPONSE_NONCE_BITS`] bits.
+    Grind,
+    /// Probe counter 0 only. No nonce is sent: the run has `nonce_bits = 0`.
+    ///
+    /// Extension seam: zero knowledge (akita#120). [`GrindingPlan::new`] rejects such a
+    /// run, so no plan on `main` schedules it.
+    OneShot,
+}
+
 /// One compact plan run in protocol replay order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GrindingRun {
@@ -543,6 +556,19 @@ impl GrindingRun {
             nonce_bits: FOLD_RESPONSE_NONCE_BITS,
             multiplicity: 1,
             challenge_set_bits: 0,
+        }
+    }
+
+    /// The search of a fold-response run, or `None` for any other run or an
+    /// unsupported nonce width.
+    #[must_use]
+    pub const fn fold_response_search(self) -> Option<FoldResponseSearch> {
+        match (self.kind(), self.nonce_bits) {
+            (GrindingQueryKind::FoldResponse, 0) => Some(FoldResponseSearch::OneShot),
+            (GrindingQueryKind::FoldResponse, FOLD_RESPONSE_NONCE_BITS) => {
+                Some(FoldResponseSearch::Grind)
+            }
+            _ => None,
         }
     }
 

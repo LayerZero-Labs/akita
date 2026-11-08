@@ -3,7 +3,7 @@ use crate::opaque::sumcheck::{digit_range, relation_range_image};
 use akita_error::AkitaError;
 use akita_prover::backend::RelationCompiler;
 use digit_range::DigitRangeProver;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 
 pub struct CpuStage2SessionHandle<E: Field> {
@@ -84,7 +84,7 @@ pub(crate) fn cpu_extension_opening_session<E>(
     input_claim: E,
 ) -> Result<Box<dyn crate::opaque::eor::ExtensionOpeningSession<E>>, AkitaError>
 where
-    E: Field + jolt_field::Unreduced + jolt_field::Fold + 'static,
+    E: Field + jolt_algebra::Unreduced + jolt_algebra::Fold + 'static,
 {
     Ok(Box::new(cpu_witness_eor_session(group, input_claim)?))
 }
@@ -94,7 +94,7 @@ fn cpu_witness_eor_session<E>(
     input_claim: E,
 ) -> Result<CpuExtensionOpeningSession<E>, AkitaError>
 where
-    E: Field + jolt_field::Unreduced + jolt_field::Fold + 'static,
+    E: Field + jolt_algebra::Unreduced + jolt_algebra::Fold + 'static,
 {
     let num_terms = group.num_terms();
     Ok(CpuExtensionOpeningSession {
@@ -121,9 +121,9 @@ pub(crate) fn cpu_extension_opening_session_from_witnesses<F, E>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>
-        + jolt_field::Unreduced
-        + jolt_field::Fold
-        + jolt_field::MulBaseUnreduced<F>
+        + jolt_algebra::Unreduced
+        + jolt_algebra::Fold
+        + jolt_algebra::MulBaseUnreduced<F>
         + 'static,
 {
     Ok(Box::new(cpu_witness_eor_session_from_witnesses::<F, E>(
@@ -148,9 +148,9 @@ pub(super) fn cpu_witness_eor_session_from_witnesses<F, E>(
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>
-        + jolt_field::Unreduced
-        + jolt_field::Fold
-        + jolt_field::MulBaseUnreduced<F>
+        + jolt_algebra::Unreduced
+        + jolt_algebra::Fold
+        + jolt_algebra::MulBaseUnreduced<F>
         + 'static,
 {
     if witnesses.len() != claim_coefficients.len() {
@@ -181,7 +181,7 @@ where
 
 impl<E> crate::opaque::eor::ExtensionOpeningSession<E> for CpuExtensionOpeningSession<E>
 where
-    E: Field + jolt_field::Unreduced + jolt_field::Fold,
+    E: Field + jolt_algebra::Unreduced + jolt_algebra::Fold,
 {
     fn num_rounds(&self) -> usize {
         akita_sumcheck::SumcheckInstanceProver::num_rounds(&self.prover)
@@ -255,7 +255,7 @@ where
 
 impl<E> ConsumerStage2Session<E>
 where
-    E: Field + Ring + jolt_field::Unreduced + jolt_field::Fold + 'static,
+    E: Field + Ring + jolt_algebra::Unreduced + jolt_algebra::Fold + 'static,
 {
     /// Extension seam: dense public relation weights use the shared Stage 2 engine.
     ///
@@ -323,7 +323,7 @@ where
         batching: E,
     ) -> Result<Self, AkitaError> {
         let domain_len = weights.len();
-        let coefficient_count = akita_error::checked::pow2(coefficient_bits);
+        let coefficient_count = jolt_algebra::checked::pow2(coefficient_bits);
         if !domain_len.is_power_of_two()
             || coefficient_count.is_none_or(|count| {
                 count > domain_len
@@ -487,7 +487,7 @@ where
 
 impl<E> ConsumerStage2Session<E>
 where
-    E: Field + Ring + jolt_field::Unreduced + jolt_field::Fold + 'static,
+    E: Field + Ring + jolt_algebra::Unreduced + jolt_algebra::Fold + 'static,
 {
     pub(crate) fn new<F>(
         prepared: &crate::opaque::CpuPreparedSetup<F>,
@@ -496,7 +496,7 @@ where
     ) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-        E: akita_types::FpExtEncoding<F> + jolt_field::MulBaseUnreduced<F>,
+        E: akita_types::FpExtEncoding<F> + jolt_algebra::MulBaseUnreduced<F>,
     {
         if witness.packed.len() != plan.witness_len() {
             return Err(AkitaError::InvalidInput(
@@ -614,7 +614,7 @@ where
 
 impl<E> CpuStage1SessionHandle<E>
 where
-    E: Field + Ring + jolt_field::Unreduced + jolt_field::Fold + 'static,
+    E: Field + Ring + jolt_algebra::Unreduced + jolt_algebra::Fold + 'static,
 {
     pub(crate) fn new(
         binding: crate::opaque::OperationBinding,

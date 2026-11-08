@@ -11,7 +11,6 @@ mod native_catalog;
 
 use akita_config::TrustedScheduleCatalog;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
-use akita_error::checked;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, SetupPrefixSlotId};
 use akita_pcs::AkitaCommitmentScheme;
@@ -26,7 +25,8 @@ use akita_types::{
 };
 use akita_verifier::SetupPolicy;
 use config::{FullSize, F};
-use jolt_field::Ring;
+use jolt_algebra::checked;
+use jolt_algebra::Ring;
 use jolt_transcript::BytesMsg;
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter, Write};

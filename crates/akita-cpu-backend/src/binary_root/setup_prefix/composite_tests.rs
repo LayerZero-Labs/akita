@@ -1,7 +1,7 @@
 use super::*;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::binary_word_manifest_fixture;
-use jolt_field::{Ext2, Prime64Offset59 as F, Zero};
+use jolt_algebra::{Ext2, Prime64Offset59 as F, Zero};
 type E = Ext2<F>;
 
 fn slot(domain: usize) -> SetupPrefixSlotId {

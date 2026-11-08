@@ -22,7 +22,7 @@ use akita_types::{
     GrindingReplay, GrindingSumcheckProver, GrindingSumcheckVerifier, ProverGrinding,
     VerifierGrinding,
 };
-use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as F, Ring, Zero};
+use jolt_algebra::{Ext2, ExtField, One, Prime64Offset59 as F, Ring, Zero};
 use std::sync::Arc;
 type E = Ext2<F>;
 
@@ -290,7 +290,7 @@ pub(crate) fn root_round_trip(
             &tau,
             E::zero(),
             SumcheckShape::new(variables, 4)?,
-            &mut GrindingSumcheckVerifier::<F, E>::new(
+            &mut GrindingSumcheckVerifier::<F, E, _>::new(
                 &mut grinding,
                 SumcheckProtocol::Stage1,
                 0,
@@ -309,7 +309,7 @@ pub(crate) fn root_round_trip(
         }
         let gamma = grinding.grinded_ext_challenge::<E>(GrindingSite::Stage2Batch { level: 0 })?;
         let relation = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-            &mut GrindingSumcheckVerifier::<F, E>::new(
+            &mut GrindingSumcheckVerifier::<F, E, _>::new(
                 &mut grinding,
                 SumcheckProtocol::Stage2,
                 0,
@@ -338,7 +338,7 @@ pub(crate) fn root_round_trip(
         akita_types::stage3_public_slot(&mut grinding, 0, &identity)?;
         let claim = akita_types::stage3_claim::<F, E, _>(&mut grinding, 0, E::zero())?;
         let product = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-            &mut GrindingSumcheckVerifier::<F, E>::new(
+            &mut GrindingSumcheckVerifier::<F, E, _>::new(
                 &mut grinding,
                 SumcheckProtocol::Stage3,
                 0,

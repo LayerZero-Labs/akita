@@ -218,7 +218,7 @@ pub(super) fn proof(
     log_carriers: usize,
     word: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use akita_error::checked;
+    use jolt_algebra::checked;
 
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
     println!(

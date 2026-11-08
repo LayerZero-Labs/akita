@@ -1,11 +1,12 @@
 //! Opening-claim prefix replay, one module per scheduled opening method, and
 //! the shared evaluation-batch draw that finalizes the fold prefix.
 
+use crate::claims::ClaimReplay;
 use akita_error::AkitaError;
 use akita_params::OpeningClaimsLayout;
 use akita_transcript::ChallengeCodec;
 use akita_types::{OpeningFamily, PreparedOpeningPoint};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 mod coefficient_packing;
 mod extension_claim;
@@ -20,12 +21,12 @@ pub(crate) use extension_claim::{
 pub(crate) use single_field::prepare_single_field_suffix_groups;
 
 /// Common prepared fold prefix consumed by root and suffix finishing logic.
-pub(crate) struct FoldPrefix<F: Field, E: Field> {
+pub(crate) struct FoldPrefix<F: Field, E: Field, V = E> {
     pub(crate) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
     pub(crate) row_coefficients: Vec<E>,
-    pub(crate) trace_eval_target: E,
+    pub(crate) trace_eval_target: V,
     pub(crate) trace_claim_coefficients: Vec<E>,
-    pub(crate) scalar_openings: Vec<E>,
+    pub(crate) scalar_openings: Vec<V>,
 }
 
 pub(crate) type PreparedFoldOpeningPoint<F, E> = OpeningFamily<
@@ -34,19 +35,19 @@ pub(crate) type PreparedFoldOpeningPoint<F, E> = OpeningFamily<
 >;
 
 /// Fold material fixed before the shared opening payload is absorbed.
-pub(crate) struct FoldClaimMaterial<F: Field, E: Field> {
+pub(crate) struct FoldClaimMaterial<F: Field, E: Field, V = E> {
     pub(crate) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
-    pub(crate) openings: Vec<E>,
+    pub(crate) openings: Vec<V>,
     pub(crate) reduction_final_claims: Option<Vec<E>>,
     pub(crate) reduction_factors: Option<Vec<E>>,
 }
 
-pub(crate) fn finalize_claims<F, E>(
+pub(crate) fn finalize_claims<F, E, G: ClaimReplay<F, E>>(
     opening_shape: &OpeningClaimsLayout,
-    material: FoldClaimMaterial<F, E>,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    material: FoldClaimMaterial<F, E, G::Claim>,
+    grinding: &mut G,
     level: u32,
-) -> Result<FoldPrefix<F, E>, AkitaError>
+) -> Result<FoldPrefix<F, E, G::Claim>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + ChallengeCodec,
@@ -69,17 +70,24 @@ where
         if final_claims.len() != row_coefficients.len() || material.reduction_factors.is_none() {
             return Err(AkitaError::InvalidProof);
         }
-        final_claims
-            .iter()
-            .zip(&row_coefficients)
-            .fold(E::zero(), |acc, (&claim, &coefficient)| {
-                acc + coefficient * claim
-            })
+        G::clear_path(
+            final_claims
+                .iter()
+                .zip(&row_coefficients)
+                .fold(E::zero(), |acc, (&claim, &coefficient)| {
+                    acc + coefficient * claim
+                }),
+        )?
     } else {
         if material.reduction_factors.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        opening_shape.batched_eval_target(&trace_claim_coefficients, &material.openings)?
+        opening_shape.batched_claim(
+            &trace_claim_coefficients,
+            &material.openings,
+            G::constant(E::zero()),
+            |acc, opening, coefficient| G::add(acc, &G::scale(opening, coefficient)),
+        )?
     };
     Ok(FoldPrefix {
         prepared_points: material.prepared_points,

@@ -15,7 +15,7 @@ use crate::opaque::{
 use akita_error::AkitaError;
 use akita_params::GroupCommitPhaseParams;
 use akita_types::{AkitaExpandedSetup, CommittedGroup};
-use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::sync::Arc;
 
 use super::state_policy::CommitmentStateExporters;
@@ -735,7 +735,7 @@ mod tests {
     use akita_params::{
         CommittedGroupParams, SetupMatrixCapacity, SisModulusProfileId, TerminalFoldParams,
     };
-    use jolt_field::{Prime64Offset59, Ring};
+    use jolt_algebra::{Prime64Offset59, Ring};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

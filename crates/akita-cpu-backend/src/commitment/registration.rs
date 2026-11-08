@@ -258,7 +258,7 @@ impl<K> Default for StateOwnerCapability<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::AkitaSetupSeed;
+    use akita_types::PublicMatrixSeed;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn binding() -> CommitmentStateBinding {
@@ -267,7 +267,7 @@ mod tests {
                 max_num_vars: 8,
                 max_num_batched_polys: 1,
                 num_field_elements: 64,
-                setup_seed: AkitaSetupSeed::shake256_paged_v1([7; 32]),
+                setup_seed: PublicMatrixSeed::shake256_paged_v1([7; 32]),
             },
             CommitInnerPlan {
                 ring_dimension: 64,

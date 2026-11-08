@@ -1,7 +1,8 @@
 //! Binary terminal claims consumed by the native root relations.
 
 use akita_algebra::binary::BinaryField162;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::BinarySourceDescriptor;
 

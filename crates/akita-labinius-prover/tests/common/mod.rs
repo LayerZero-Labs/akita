@@ -7,7 +7,8 @@ use akita_algebra::{
     binary::{field_switch::SwitchField, BinaryField128, BinaryField192},
     MinusTrinomial, TrinomialModulus,
 };
-use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing, FoldDraw};
+use akita_challenges::FoldDraw;
+use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_error::AkitaError;
 use akita_labinius_prover::{
     commit_binary_clear, lowered::encode_image, prove_root_reduction_bytes,
@@ -23,8 +24,8 @@ use akita_params::sis::labinius::{
     LabiniusCommitmentModulus, LabiniusRingDegree, LabiniusRootProfile,
 };
 use akita_transcript::ChallengeCodec;
-use akita_types::proof::AkitaSetupSeed;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Prime128Offset275};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Prime128Offset275};
+use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::marker::PhantomData;
 

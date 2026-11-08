@@ -11,10 +11,12 @@ use akita_params::{
     RelationRowFamily, RelationWitnessGeometry, RingRelationMode, SisModulusProfileId,
     WitnessLayout,
 };
+use akita_types::check_stage2_oracle;
 use akita_types::{
     build_reduced_compression_relation_weights, AkitaSetupDescriptor, NegativeBinarySupport,
 };
-use jolt_field::{Ext2, ExtField, One, Prime64Offset59, Zero};
+use jolt_algebra::{Ext2, ExtField, One, Prime64Offset59, Zero};
+use jolt_transcript::{ClaimMismatch, ClearDomain};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
@@ -447,17 +449,15 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         support: &support,
         binary_batching,
     };
+    let weights = compression_oracle_weights(&compression, &setup, &stage1_point, &point).unwrap();
     assert_eq!(
-        evaluate_compression_oracle(
-            &compression,
-            &setup,
-            &stage1_point,
-            &point,
-            witness_evaluation,
-        )
-        .unwrap(),
-        expected
+        weights,
+        Stage2OracleWeights {
+            binary: binary_batching * binary_weight,
+            linear: relation_weight,
+        }
     );
+    check_stage2_oracle(&mut ClearDomain, &weights, witness_evaluation, expected).unwrap();
 
     let wrong_successor = literal_reduced_compression_table(
         &params,
@@ -510,16 +510,14 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
 
     let digit_index = layout.compression_layers()[0].f_spans()[0].1.range().start;
     let tampered_witness_evaluation = witness_evaluation + eq_eval_at_index(&point, digit_index);
-    assert_ne!(
-        evaluate_compression_oracle(
-            &compression,
-            &setup,
-            &stage1_point,
-            &point,
+    assert_eq!(
+        check_stage2_oracle(
+            &mut ClearDomain,
+            &weights,
             tampered_witness_evaluation,
-        )
-        .unwrap(),
-        expected
+            expected
+        ),
+        Err(ClaimMismatch)
     );
 
     let mut wrong_mode = params.clone();
@@ -536,14 +534,11 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
     )
     .is_err());
     assert_eq!(
-        evaluate_compression_oracle(
-            &Stage2CompressionOracle::Raw,
-            &setup,
-            &stage1_point,
-            &point,
-            witness_evaluation,
-        )
-        .unwrap(),
-        E::zero()
+        compression_oracle_weights(&Stage2CompressionOracle::Raw, &setup, &stage1_point, &point)
+            .unwrap(),
+        Stage2OracleWeights {
+            binary: E::zero(),
+            linear: E::zero(),
+        }
     );
 }

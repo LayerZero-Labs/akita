@@ -1,7 +1,8 @@
 //! Session construction, canonical Akita proof atoms and diagnostic site records.
 
-use akita_error::{narrowing::usize_to_u64, AkitaError};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use akita_error::AkitaError;
+use jolt_algebra::narrowing::usize_to_u64;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_transcript::{
     protocol_tag, BytesMsg, ChallengeCodec, DigestHash, DigestHasher, Shake128, DIGEST_HASH,
     TAG_BYTES,
@@ -20,10 +21,14 @@ use crate::{ProverChannel, VerifierChannel};
 mod channel;
 mod digest;
 mod nonce;
+mod private;
 mod site;
 pub use channel::ProofChannel;
 pub use digest::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, NonceAtom};
+pub use private::{
+    exchange_public_extension_group, exchange_public_field_group, PrivateProofChannel,
+};
 
 /// Proof channel and proof-stream format version, named by [`PROTOCOL_TAG`].
 ///
@@ -777,6 +782,68 @@ where
     E: ExtField<F>,
     S: ProofChannel,
 {
+    exchange_extension_atoms::<F, E, S>(state, site, values, |state, atoms| state.exchange(atoms))
+}
+
+/// Exchange a schedule-fixed group of base-field proof values in place, as
+/// [`send_field_group`] and [`receive_field_group`] do on their channels.
+///
+/// # Errors
+///
+/// As [`exchange_extension_group`].
+pub fn exchange_field_group<F, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [F],
+) -> Result<(), AkitaError>
+where
+    F: CanonicalEncoding + Copy,
+    S: ProofChannel,
+{
+    exchange_field_atoms::<F, S>(state, site, values, |state, atoms| state.exchange(atoms))
+}
+
+/// One group of base-field atoms, exchanged by `exchange`: the shared body of
+/// [`exchange_field_group`] and [`exchange_public_field_group`].
+fn exchange_field_atoms<F, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [F],
+    exchange: impl FnOnce(&mut S, &mut [FieldAtom<F>]) -> Result<(), AkitaError>,
+) -> Result<(), AkitaError>
+where
+    F: CanonicalEncoding + Copy,
+    S: ProofChannel,
+{
+    let record = group_record(
+        site,
+        ProtocolMessageKind::ProofAtoms,
+        Some(values.len()),
+        F::NUM_BYTES,
+    );
+    let record = state.guard(record)?;
+    state.context(record);
+    let mut atoms: Vec<FieldAtom<F>> = values.iter().map(|&value| FieldAtom::new(value)).collect();
+    exchange(state, &mut atoms)?;
+    for (value, atom) in values.iter_mut().zip(atoms) {
+        *value = atom.into_inner();
+    }
+    Ok(())
+}
+
+/// One group of extension atoms, exchanged by `exchange`: the shared body of
+/// [`exchange_extension_group`] and [`exchange_public_extension_group`].
+fn exchange_extension_atoms<F, E, S>(
+    state: &mut S,
+    site: ProtocolSiteId,
+    values: &mut [E],
+    exchange: impl FnOnce(&mut S, &mut [ExtensionAtom<F, E>]) -> Result<(), AkitaError>,
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    S: ProofChannel,
+{
     let record = group_record(
         site,
         ProtocolMessageKind::ProofAtoms,
@@ -789,7 +856,7 @@ where
         .iter()
         .map(|&value| ExtensionAtom::new(value))
         .collect();
-    state.exchange(&mut atoms)?;
+    exchange(state, &mut atoms)?;
     for (value, atom) in values.iter_mut().zip(atoms) {
         *value = atom.into_inner();
     }
@@ -818,7 +885,7 @@ where
 {
     let challenge_bytes = E::challenge_bytes(count).unwrap_or(0);
     let challenge_bytes = usize_to_u64(challenge_bytes, "challenge message byte count");
-    let challenge_bytes = state.guard(challenge_bytes)?;
+    let challenge_bytes = state.guard(challenge_bytes.map_err(AkitaError::from))?;
     state.context(ProtocolContextRecord::new(
         site.to_bytes(),
         ProtocolMessageKind::Challenge as u32,
@@ -956,6 +1023,25 @@ impl FoldPreview {
     /// live channel will when it sends the nonce.
     #[must_use]
     pub fn new(state: &ProverChannel, nonce: u32) -> Self {
+        let mut preview = Self::detached(state, nonce);
+        preview
+            .state
+            .public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
+        preview
+    }
+
+    /// Copy the public state for a one-shot fold response, which sends no
+    /// nonce: its counter is 0 and nothing is absorbed before the proof of
+    /// work.
+    ///
+    /// Extension seam: zero knowledge (akita#120). Only a run with `nonce_bits = 0`
+    /// previews this way, and `main` schedules none.
+    #[must_use]
+    pub fn one_shot(state: &ProverChannel) -> Self {
+        Self::detached(state, 0)
+    }
+
+    fn detached(state: &ProverChannel, nonce: u32) -> Self {
         // The preview draws no private randomness and its sponge is replaced
         // by the live one, so it takes a fixed seed instead of OS entropy and
         // derives the session identifier once.
@@ -963,10 +1049,8 @@ impl FoldPreview {
         let mut detached =
             ProverChannel::new_with_seed(&PREVIEW_SESSION, &BytesMsg(Vec::new()), [0; 32]);
         detached.duplex_sponge_state = state.duplex_sponge_state.clone();
-        let mut state = detached;
-        state.public_message_as(&NonceAtom::new(nonce), |nonce| nonce.word());
         Self {
-            state,
+            state: detached,
             nonce,
             work: None,
         }
@@ -1035,7 +1119,8 @@ mod indexed {
     // Detached, prefix-bound work and atomic replay of indexed nonce messages.
 
     use crate::{NonceAtom, ProofChannel, ProverChannel, VerifierChannel};
-    use akita_error::{checked, AkitaError};
+    use akita_error::AkitaError;
+    use jolt_algebra::checked;
     use jolt_transcript::Transcript as _;
     #[cfg(feature = "prover")]
     use spongefish::NargReader;

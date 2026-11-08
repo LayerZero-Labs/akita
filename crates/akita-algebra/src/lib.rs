@@ -1,13 +1,12 @@
 //! Concrete algebra backends and arithmetic building blocks.
 //!
-//! This module includes:
-//! - Multilinear polynomial utilities (`poly`)
-//! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
-//! - Cyclotomic ring and backend arithmetic structure
+//! This module includes multilinear polynomial, eq-polynomial, and offset-eq
+//! utilities.
 //!
-//! Concrete fields and field packing live in `jolt-field`. Sparse
-//! Fiat–Shamir challenge representations and samplers live in
-//! `akita-challenges`.
+//! Concrete fields, field packing, the cyclotomic ring, NTT/CRT arithmetic,
+//! and the smooth FFT live in `jolt-algebra`; [`fft`], [`ntt`], and [`ring`]
+//! re-export its modules under their former paths. Sparse Fiat–Shamir
+//! challenge representations and samplers live in `akita-challenges`.
 
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
@@ -15,25 +14,33 @@
 #[cfg(feature = "labinius-binary")]
 pub mod binary;
 pub mod eq_poly;
-pub mod fft;
-pub mod ntt;
 pub mod offset_eq;
 pub mod poly;
-pub mod ring;
 pub mod row_batch;
 pub mod split_eq;
+#[cfg(feature = "labinius-trinomial")]
+pub mod trinomial;
+
+pub use jolt_algebra::{fft, ntt, ring};
+
+// The Jolt RISC-V guest inlines serve jolt-algebra's 64-point `i32` NTT and
+// pointwise dot (the `ntt-inline` feature). jolt-algebra cannot depend on
+// `jolt-inlines-ntt` itself: that crate's host registration reaches
+// jolt-algebra again through `jolt-inlines-sdk` and `tracer`, a package
+// cycle Cargo rejects, so the backend is supplied from here.
+#[cfg(feature = "ntt-inline")]
+jolt_algebra::ntt64_backend!(
+    jolt_inlines_ntt::forward_ntt64,
+    jolt_inlines_ntt::pointwise_dot64
+);
 
 // Flat re-exports for convenience.
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use fft::SmoothFftField;
-#[cfg(feature = "labinius-trinomial")]
-pub use fft::{
-    Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, PRIME64_OFFSET_23703_MODULUS,
-};
-pub use jolt_field::{
+pub use jolt_algebra::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
-pub use jolt_field::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
+pub use jolt_algebra::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
 pub use ntt::tables;
 pub use ntt::{
     CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth, RADIX_BITS,
@@ -44,14 +51,16 @@ pub use ring::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
     DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
 };
-#[cfg(feature = "labinius-trinomial")]
-pub use ring::{
-    embed_scalar, pack_scalar_components, shifted_remainder_evaluations, unpack_scalar_components,
-    MinusTrinomial, PlusTrinomial, TrinomialError, TrinomialI8Lut, TrinomialLimbAccumulator,
-    TrinomialLimbDomain, TrinomialLimbSlots, TrinomialModulus, TrinomialNtt, TrinomialNttDomain,
-    TrinomialNttWorkspace, TrinomialRing,
-};
 pub use split_eq::GruenSplitEq;
+#[cfg(feature = "labinius-trinomial")]
+pub use trinomial::{
+    embed_scalar, pack_scalar_components, shifted_remainder_evaluations, unpack_scalar_components,
+    MinusTrinomial, PlusTrinomial, Prime64Offset23703, Prime64Offset23703Ext2,
+    Prime64Offset23703Nr5, TrinomialError, TrinomialField, TrinomialI8Lut,
+    TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots, TrinomialModulus,
+    TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace, TrinomialRing,
+    PRIME64_OFFSET_23703_MODULUS,
+};
 
 /// Fallible parallel fold-reduce over a range.
 ///

@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::{MinusTrinomial, PlusTrinomial, Prime64Offset23703};
-use jolt_field::{Field, Prime128OffsetA7F7};
+use jolt_algebra::{Field, Prime128OffsetA7F7};
 
 fn sample<F: Field, const D: usize, M: TrinomialModulus>(seed: u64) -> TrinomialRing<F, D, M> {
     TrinomialRing::from_coefficients(std::array::from_fn(|i| {
@@ -9,7 +9,7 @@ fn sample<F: Field, const D: usize, M: TrinomialModulus>(seed: u64) -> Trinomial
     .unwrap()
 }
 
-fn check<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>() {
+fn check<F: TrinomialField + Debug, const D: usize, M: TrinomialModulus>() {
     let a = [sample::<F, D, M>(3), sample::<F, D, M>(21)];
     let v = [sample::<F, D, M>(7), sample::<F, D, M>(16)];
     let one = TrinomialRing::from_coefficients(std::array::from_fn(|i| {
@@ -61,7 +61,7 @@ fn check<F: SmoothFftField + Debug, const D: usize, M: TrinomialModulus>() {
             .rev()
             .fold(F::zero(), |acc, &x| acc * alpha + x)
     };
-    let modulus_root = primitive_nth_root::<F>(D / 2 * M::ROOT_ORDER_STRIDE);
+    let modulus_root = F::primitive_root(D / 2 * M::ROOT_ORDER_STRIDE).unwrap();
     assert!(builder
         .polynomial()
         .evaluate_modulus_at(modulus_root)

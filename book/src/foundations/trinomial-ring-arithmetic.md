@@ -164,14 +164,14 @@ The relation multiplies by `Phi_D(alpha)`; it never divides by that value.
 These APIs prepare the relation bridge. They do not yet add a binary opening
 method, change the proof transcript, or register a mixed-root protocol profile.
 
-**Code:** `crates/akita-algebra/src/ring/trinomial.rs` and
-`crates/akita-algebra/src/fft/fields.rs`; the protocol-neutral bridge is in
+**Code:** `crates/akita-algebra/src/trinomial.rs` and
+`crates/akita-algebra/src/trinomial/fields.rs`; the protocol-neutral bridge is in
 `crates/akita-types/src/relation_bridge.rs` and
 `crates/akita-types/src/setup_contribution/trinomial.rs`; quotient construction
 is in `crates/akita-cpu-backend/src/kernels/trinomial_relation.rs`.
 
-**Tests:** `crates/akita-algebra/src/ring/trinomial/tests.rs` and
-`crates/akita-algebra/src/fft/fields/tests.rs`. The bridge modules include
+**Tests:** `crates/akita-algebra/src/trinomial/tests.rs` and
+`crates/akita-algebra/src/trinomial/fields/tests.rs`. The bridge modules include
 layout and setup-weight oracle tests; independent coefficient recomposition
 is checked in `crates/akita-cpu-backend/src/kernels/trinomial_relation/tests.rs`.
 

@@ -8,9 +8,10 @@
 
 use super::product_table::SetupProductSource;
 use super::utils::fold_pair;
-use akita_error::{checked, AkitaError};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, MulBaseUnreduced, Ring, Unreduced, Zero};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{Field, MulBaseUnreduced, Ring, Unreduced, Zero};
 
 /// Stage 3 weights of a setup source that is zero outside their live blocks.
 ///

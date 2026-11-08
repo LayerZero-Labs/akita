@@ -1,5 +1,5 @@
 use super::*;
-use akita_error::checked;
+use jolt_algebra::checked;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -137,6 +137,7 @@ impl SetupPrefixCandidateContext<'_> {
             return Ok(None);
         };
         let profile = GroupCommitPhaseParams {
+            randomness_columns: 0,
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
 

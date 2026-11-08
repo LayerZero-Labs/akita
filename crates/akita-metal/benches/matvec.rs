@@ -11,15 +11,15 @@
 mod bench {
     use std::time::{Duration, Instant};
 
-    use akita_algebra::tables::q128_primes;
-    use akita_algebra::{CanonicalEncoding, CrtNttParamSet, CyclotomicRing, One};
     use akita_cpu_backend::benchmark_support::mat_vec_mul_ntt_digits_i8;
     use akita_metal::matvec::{plan_matvec, DeviceNttMatrix, MatvecPlan};
     use akita_metal::{AkitaMetal, DeviceDigitPlanes, DigitPlane};
     use akita_params::FlatMatrix;
     use akita_types::{prepare_ntt_cache, NttCacheMode, PreparedNttCache};
     use criterion::{BenchmarkId, Criterion};
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_algebra::tables::q128_primes;
+    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::{CanonicalEncoding, CrtNttParamSet, CyclotomicRing, One};
     use jolt_metal::runtime::DeviceBuffer;
     use rayon::prelude::*;
 

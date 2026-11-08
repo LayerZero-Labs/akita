@@ -6,7 +6,7 @@ mod trace_prefix;
 use super::*;
 use crate::opaque::pad_compact_witness;
 use akita_algebra::eq_poly::EqPolynomial;
-use jolt_field::{One, Prime128Offset275};
+use jolt_algebra::{One, Prime128Offset275};
 use jolt_poly::UnivariatePoly;
 
 type F = Prime128Offset275;

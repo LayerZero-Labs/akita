@@ -4,7 +4,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
 use akita_params::{BlockGeometry, CommitmentSliceGeometry, PolynomialGroupLayout};
-use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
+use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
 
 type E = Ext2<F>;
 

@@ -10,7 +10,7 @@ use akita_types::{
     prepare_joined_exact_ntt_cache, setup_seed_digest, view_riscv64_scalar_q128_cache,
     AkitaVerifierSetup, PreparedNttCache, PreparedVerifierNttCacheBinding,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(crate) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 pub(crate) const TERMINAL_I16_ABS_BOUND: u64 = 1 << (TERMINAL_I16_LOG_BASIS - 1);
@@ -263,7 +263,7 @@ mod tests {
         prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaSetupDescriptor,
         SetupPrefixVerifierRegistry,
     };
-    use jolt_field::{Prime128Offset275 as F, Ring};
+    use jolt_algebra::{Prime128Offset275 as F, Ring};
     use std::sync::Arc;
 
     #[test]
@@ -294,7 +294,7 @@ mod tests {
             .prefix_len
             .checked_mul(requirement.ring_dimension)
             .expect("setup field count");
-        let seed: akita_types::AkitaSetupSeed = [6; 32].into();
+        let seed: akita_types::PublicMatrixSeed = [6; 32].into();
         let setup = AkitaVerifierSetup::from_parts(
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(

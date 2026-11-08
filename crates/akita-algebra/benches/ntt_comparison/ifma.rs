@@ -2,8 +2,8 @@
 
 pub(super) fn bench(criterion: &mut criterion::Criterion) {
     #[cfg(target_arch = "x86_64")]
-    if akita_algebra::ntt::ifma52::ifma52_enabled() {
-        use akita_algebra::ntt::ifma52::IFMA52_PRIMES;
+    if jolt_algebra::ntt::ifma52::ifma52_enabled() {
+        use jolt_algebra::ntt::ifma52::IFMA52_PRIMES;
         bench_profile::<super::Prime64Offset23703, 2>(
             criterion,
             "p64_23703",
@@ -23,8 +23,8 @@ fn bench_profile<F: super::CrtNttConvertibleField + std::fmt::Debug, const K: us
 ) {
     use std::hint::black_box;
 
-    use akita_algebra::{CyclotomicRing, Ifma52NttMatrix, Ifma52Params};
     use criterion::BenchmarkId;
+    use jolt_algebra::{CyclotomicRing, Ifma52NttMatrix, Ifma52Params};
 
     use super::{configure, full_field_coefficients, matvec_digits, MATVEC_COLS, MATVEC_ROWS};
 

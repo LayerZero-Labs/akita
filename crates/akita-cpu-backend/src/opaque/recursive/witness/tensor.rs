@@ -5,11 +5,12 @@ use crate::arithmetic::extension_opening_reduction::{
     tensor_column_partials_split_fold, TensorColumnSource,
 };
 use akita_algebra::SplitEqEvals;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_types::tensor_opening_split;
+use jolt_algebra::checked;
 #[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 
 use crate::sources::packed_digits::PackedSignedDigitView;
@@ -59,7 +60,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
-        E: jolt_field::MulBaseUnreduced<F>,
+        E: jolt_algebra::MulBaseUnreduced<F>,
     {
         let (split_bits, width) = tensor_opening_split::<F, E>()?;
         let num_vars = self.num_vars();
@@ -142,12 +143,12 @@ where
 mod tests {
     use super::*;
     use crate::opaque::RecursiveWitnessFlat;
-    use jolt_field::{Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_algebra::{Prime128OffsetA7F7 as F, Ring, Zero};
 
     #[test]
     fn suffix_tensor_inputs_match_padded_base_table_reference() {
         const D: usize = 16;
-        type E = jolt_field::FpExt4<F>;
+        type E = jolt_algebra::FpExt4<F>;
 
         let digits = (0..3 * D)
             .map(|index| (index % 7) as i8 - 3)

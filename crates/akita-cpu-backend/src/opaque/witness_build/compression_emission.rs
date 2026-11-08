@@ -3,9 +3,10 @@
 use akita_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, ring::cyclotomic::BalancedDecomposePow2Params,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::{CompressionWitnessSpan, PackedNegativeBinary, WitnessQuotientRowLayout};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::checked;
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(crate) fn emit_packed_negative_binary(
     mut write: impl FnMut(usize, &[i8]) -> Result<(), AkitaError>,

@@ -10,7 +10,7 @@ use akita_params::{
     BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits,
     GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
 };
-use jolt_field::{Prime128Offset275, Ring};
+use jolt_algebra::{Prime128Offset275, Ring};
 
 use super::{
     BinaryAOperand, BinaryAProduct, BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic,
@@ -128,6 +128,7 @@ pub fn binary_ordinary_profile_fixture(field: BinaryFieldProfile) -> GroupCommit
         group: PolynomialGroupLayout::singleton(10),
         blocks: BlockGeometry::new(8, 2, 4),
         outer_slice_count: CommitmentSliceCount::ONE,
+        randomness_columns: 0,
         inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
         outer: RoleParams::new(GadgetDigits::new(3, digits), outer),
     };

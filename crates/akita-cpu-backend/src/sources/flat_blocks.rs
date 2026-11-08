@@ -1,4 +1,5 @@
-use akita_error::{narrowing::usize_to_u32, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::narrowing::usize_to_u32;
 
 /// Owned flat storage for sparse entries grouped by logical block.
 ///
@@ -40,7 +41,7 @@ impl<E> FlatBlocks<E> {
     }
 
     fn entry_offset(&self) -> Result<u32, AkitaError> {
-        usize_to_u32(self.entries.len(), "flat block entry count")
+        usize_to_u32(self.entries.len(), "flat block entry count").map_err(AkitaError::from)
     }
 
     fn advance_to_block(

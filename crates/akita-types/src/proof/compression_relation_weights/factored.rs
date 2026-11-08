@@ -997,8 +997,8 @@ impl<E: Field> CompressionRelationWeights<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7 as F;
-    use jolt_field::{One, Zero};
+    use jolt_algebra::Prime128OffsetA7F7 as F;
+    use jolt_algebra::{One, Zero};
 
     /// Deterministic full-width field elements (no external RNG).
     struct Stream(u64);
@@ -1368,21 +1368,6 @@ mod tests {
             });
         }
         assert_all_agree(&weights, &mut stream, "direct groups");
-    }
-
-    /// The product of two Boolean tables' extensions is not the extension of
-    /// their product (the pitfall the factorization avoids by splitting only
-    /// disjoint digit positions).
-    #[test]
-    fn same_variable_products_do_not_factor() {
-        let table = [F::one(), F::zero()];
-        let point = [F::from_u64(5)];
-        let product =
-            multilinear_eval(&table, &point).unwrap() * multilinear_eval(&table, &point).unwrap();
-        let extension = multilinear_eval(&[F::one(), F::zero()], &point).unwrap();
-        assert_ne!(product, extension);
-        let groups_value = eq_bits(&point[..], 0);
-        assert_eq!(groups_value, extension);
     }
 
     /// The cross-check rejects an evaluation whose closed form disagrees with

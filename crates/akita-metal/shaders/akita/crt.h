@@ -1,5 +1,5 @@
 // Garner CRT reconstruction from K NTT-prime residues into a field element,
-// bit-exact with reconstruct in crates/akita-algebra/src/ring/crt_ntt_repr.rs.
+// bit-exact with reconstruct in jolt-algebra/src/ring/crt_ntt_repr.rs.
 //
 // The CPU centers each residue, forms centered mixed-radix digits
 // d_0 = r_0 and d_i = center(((r_i - d_0) g_{i,0} - d_1) g_{i,1} ... mod p_i),

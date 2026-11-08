@@ -15,7 +15,7 @@ use criterion::measurement::WallTime;
 use criterion::{
     criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion, SamplingMode,
 };
-use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7, Zero};
+use jolt_algebra::{CanonicalEncoding, Prime128OffsetA7F7, Zero};
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;

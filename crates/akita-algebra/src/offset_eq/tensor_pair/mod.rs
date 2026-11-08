@@ -9,7 +9,8 @@ pub(super) use materialize::{DenseLeftOverlap, ResidualTerms, MAX_RESIDUAL_TABLE
 
 use super::MAX_COMPACT_STRIDE_TERMS;
 use crate::Field;
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 use std::sync::Arc;
 
 /// Weights carried by one affine tensor axis.

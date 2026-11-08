@@ -8,7 +8,7 @@ use akita_transcript::{
     bind_instance, exchange_extension_group, new_prover_channel, new_verifier_channel,
     ChallengeCodec, ProofChannel, ProtocolSiteId, ProverChannel, VerifierChannel,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 const FAMILY: u32 = 0x53424154;
 fn site(invocation: u32, round: u32, detail: u32) -> ProtocolSiteId {

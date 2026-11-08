@@ -9,7 +9,7 @@ use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
     AkitaVerifierSetup, SetupPrefixVerifierRegistry,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 /// Prover setup artifact.
@@ -147,7 +147,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> Valid for AkitaProve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128Offset275;
+    use jolt_algebra::Prime128Offset275;
 
     #[test]
     fn generate_with_capacity_rejects_zero_setup_len() {
@@ -308,6 +308,7 @@ mod tests {
         let commitment_params = GroupOpenPhaseParams {
             setup_natural_len: None,
             profile: GroupCommitPhaseParams {
+                randomness_columns: 0,
                 version: GroupCommitPhaseParams::VERSION,
                 group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
                 blocks: akita_params::BlockGeometry::new(1, 1, 1),

@@ -8,8 +8,8 @@
 //! this adapter because its misaligned path does not allocate or issue aligned
 //! loads.
 
-use akita_error::checked;
 use akita_serialization::SerializationError;
+use jolt_algebra::checked;
 
 const SETUP_MATRIX_WIRE_ALIGNMENT: usize = 8;
 const SETUP_MATRIX_LENGTH_BYTES: usize = core::mem::size_of::<u64>();

@@ -222,7 +222,7 @@ pub(super) fn p64_typed_prefix_endpoint(word: bool, planes: usize) -> BinaryComm
     use akita_types::binary_source::{
         binary_word_manifest_fixture, BinaryAProduct, BinaryAReadGuard, BinaryRootWitnessPlan,
     };
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
     let plan = BinaryRootWitnessPlan::for_profile(

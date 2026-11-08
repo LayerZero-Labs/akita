@@ -1,7 +1,7 @@
 use super::*;
 use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
-use jolt_field::AdditiveGroup;
+use jolt_algebra::AdditiveGroup;
 /// Transcript-derived continuation; no backend-private storage.
 pub(crate) struct FoldPublicState<F: Field, E: Field> {
     pub(crate) level: usize,
@@ -53,6 +53,92 @@ where
         + 'static,
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
+    let level = index + 1;
+    let step_params = &schedule
+        .recursive_folds
+        .get(index)
+        .ok_or_else(|| AkitaError::InvalidInput("recursive step is outside the schedule".into()))?
+        .params;
+    let setup_batch = handoff
+        .request
+        .setup_batch
+        .filter(|(target, _)| *target as usize == level)
+        .map(|(_, statement)| statement);
+    let output = prove_recursive_level::<Cfg, B, akita_transcript::ProverChannel>(
+        expanded,
+        prefix_slots,
+        backend,
+        grinding,
+        current_state,
+        schedule,
+        session,
+        index,
+        setup_batch,
+        |relation, commitment, binding, witness, material| {
+            handoff.handoff_successor(
+                backend,
+                session,
+                level,
+                step_params,
+                relation,
+                commitment,
+                binding,
+                witness,
+                material,
+            )
+        },
+    )?;
+    Ok(output.next_state)
+}
+
+/// Proves recursive fold `index + 1` on any prover channel and hands the
+/// successor witness to `handoff`.
+///
+/// Extension seam: zero knowledge (akita#120). A masked prefix proves its recursive
+/// levels through this function on a masking channel, with its own handoff.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+pub(super) fn prove_recursive_level<Cfg, B, C>(
+    expanded: &akita_types::AkitaSetupDescriptor,
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
+    backend: &B,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
+    current_state: SuffixProverState<
+        Cfg::Field,
+        Cfg::ExtField,
+        B::CommitmentMaterialHandle,
+        B::WitnessHandle,
+    >,
+    schedule: &FoldSchedule,
+    session: &B::ProofSessionHandle,
+    index: usize,
+    setup_batch: Option<&akita_types::setup_claims::SetupBatchStatement<Cfg::ExtField>>,
+    handoff: impl FnOnce(
+        &RingRelationInstance<Cfg::Field>,
+        &crate::backend::ValidatedRecursiveWitnessCommitPlan,
+        &NextWitnessState<Cfg::Field>,
+        &B::WitnessHandle,
+        &B::CommitmentMaterialHandle,
+    ) -> Result<(), AkitaError>,
+) -> Result<
+    ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
+    AkitaError,
+>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<Cfg::Field>
+        + AkitaSerialize
+        + 'static,
+    B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<Cfg::Field>,
+{
     let step = schedule
         .recursive_folds
         .get(index)
@@ -80,7 +166,7 @@ where
             )
         },
     );
-    let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B>(
+    let prepared = prepare_suffix::<Cfg::Field, Cfg::ExtField, B, C>(
         backend,
         prefix_slots,
         grinding,
@@ -91,7 +177,7 @@ where
         step.output_witness_len,
         next_params.inner_ring_dimension(),
     )?;
-    let output = prove_fold::<Cfg::Field, Cfg::ExtField, B>(
+    prove_fold::<Cfg::Field, Cfg::ExtField, B, C>(
         expanded,
         prefix_slots,
         backend,
@@ -103,26 +189,9 @@ where
         step.output_witness_len,
         next_binding,
         prepared,
-        handoff
-            .request
-            .setup_batch
-            .filter(|(target, _)| *target as usize == level)
-            .map(|(_, statement)| statement),
-        |relation, commitment, binding, witness, material| {
-            handoff.handoff_successor(
-                backend,
-                session,
-                level,
-                &step.params,
-                relation,
-                commitment,
-                binding,
-                witness,
-                material,
-            )
-        },
-    )?;
-    Ok(output.next_state)
+        setup_batch,
+        handoff,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -230,7 +299,7 @@ where
                 point: &sumcheck_challenges,
                 ring_dimension: params.d_a(),
             }];
-            let proved = prove_extension_opening_reduction::<F, E, B>(
+            let proved = prove_extension_opening_reduction::<F, E, B, _>(
                 backend,
                 session,
                 &context,
@@ -293,7 +362,7 @@ where
                         &scalar_openings,
                     )?;
                 }
-                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E>(
+                let trace = crate::protocol::prove::prepare_evaluation_trace_claim::<F, E, _>(
                     &reduction,
                     &scalar_openings,
                     &opening_batch,
@@ -375,10 +444,10 @@ where
     )
 }
 #[allow(clippy::too_many_arguments)]
-fn prepare_suffix<F, E, B>(
+fn prepare_suffix<F, E, B, C>(
     backend: &B,
     prefix_slots: &SetupPrefixProverRegistry<F, B::CommitmentHandle>,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     current_state: SuffixProverState<F, E, B::CommitmentMaterialHandle, B::WitnessHandle>,
     level: usize,
     level_params: &CommittedGroupParams,
@@ -387,6 +456,7 @@ fn prepare_suffix<F, E, B>(
     commitment_ring_dimension: usize,
 ) -> Result<PreparedFold<F, E, B::WitnessHandle>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + PseudoMersenne + 'static,
     <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
@@ -502,7 +572,7 @@ where
     }
     materials.push(witness_material);
     // The outer payload was absorbed when it was sent as the next witness.
-    let prepared = prepare_fold::<F, E, B>(
+    let prepared = prepare_fold::<F, E, B, C>(
         backend,
         claims,
         materials,
@@ -527,7 +597,7 @@ mod tests {
     use super::*;
     use crate::protocol::prove::fold_kernels::prepare_evaluation_trace_claim;
     use akita_transcript::new_prover_channel;
-    use jolt_field::{One, Prime32Offset99, Zero};
+    use jolt_algebra::{One, Prime32Offset99, Zero};
 
     type TestF = Prime32Offset99;
 
@@ -557,7 +627,7 @@ mod tests {
         let mut channel = new_prover_channel(b"test/suffix-shared-trace-target");
         let plan = evaluation_batch_plan();
         let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
-        let err = match prepare_evaluation_trace_claim::<TestF, TestF>(
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,
             &opening_batch,
@@ -588,7 +658,7 @@ mod tests {
         let mut channel = new_prover_channel(b"test/suffix-independent-late-eor-batch");
         let plan = evaluation_batch_plan();
         let mut grinding = akita_types::ProverGrinding::new(&mut channel, &plan);
-        let result = prepare_evaluation_trace_claim::<TestF, TestF>(
+        let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,
             &opening_batch,

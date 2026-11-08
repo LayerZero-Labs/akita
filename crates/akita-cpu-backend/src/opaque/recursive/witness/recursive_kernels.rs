@@ -4,7 +4,7 @@ use super::{
 use crate::opaque::{RootOpeningSource, RootPolyMeta, RootPolyShape};
 use akita_error::AkitaError;
 use akita_types::RingVec;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 use std::marker::PhantomData;
 
 macro_rules! impl_cpu_recursive_fold_kernels {
@@ -108,9 +108,9 @@ where
         + CanonicalEncoding
         + akita_serialization::AkitaSerialize
         + Ring
-        + jolt_field::Unreduced
+        + jolt_algebra::Unreduced
         + 'static,
-    <F as jolt_field::Unreduced>::Wide: From<F> + jolt_field::AdditiveGroup,
+    <F as jolt_algebra::Unreduced>::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: akita_types::FpExtEncoding<F> + ExtField<F> + akita_serialization::AkitaSerialize,
     crate::opaque::CpuBackend<F, E>: crate::opaque::ComputeBackendSetup<F, PreparedSetup = crate::opaque::CpuPreparedSetup<F>>
         + crate::opaque::DigitRowsComputeBackend<F>

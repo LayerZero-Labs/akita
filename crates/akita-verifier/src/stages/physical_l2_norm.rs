@@ -1,14 +1,14 @@
 //! Verifier replay for the schedule-selected physical response norm.
 
+use crate::claims::{ClaimReplay, SumcheckFormat, SumcheckInstance};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
 use akita_params::{PhysicalL2NormProofShape, SisModulusProfileId};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_transcript::ChallengeCodec;
-use akita_types::GrindingReplay;
 use akita_types::{reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalResponsePlan};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) point: Vec<E>,
@@ -207,17 +207,18 @@ where
 
 /// Replay a physical-L2 proof directly from the Spongefish stream.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn verify_physical_l2_norm<F, E>(
+pub(crate) fn verify_physical_l2_norm<F, E, G>(
     plan: &PhysicalResponsePlan,
     range: PhysicalL2RangeClaim<'_, E>,
     profile: SisModulusProfileId,
     cap: u128,
-    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    grinding: &mut G,
     level: u32,
 ) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize + ChallengeCodec,
+    G: ClaimReplay<F, E>,
 {
     if range.equality_point.len() != plan.domain().num_vars() || range.leaf_coefficients.len() < 3 {
         return Err(AkitaError::InvalidSetup(
@@ -255,21 +256,21 @@ where
     let norm_merge =
         grinding.grinded_ext_challenge::<E>(akita_params::GrindingSite::L2NormMerge { level })?;
     let input_claim = range.input_claim + norm_merge * norm_input_claim;
-    let mut channel = akita_types::GrindingSumcheckVerifier::<F, E>::new(
-        grinding,
+    let (challenges, output_claim) = grinding.single_sumcheck(
         akita_params::SumcheckProtocol::PhysicalL2,
         level,
         0,
-    );
-    let replay = akita_sumcheck::verify_sumcheck_rounds::<F, E, _>(
-        &mut channel,
-        0,
-        input_claim,
-        akita_sumcheck::SumcheckShape::new(
-            plan.domain().num_vars(),
-            range.leaf_coefficients.len(),
-        )?,
+        SumcheckInstance {
+            invocation: 0,
+            rounds: plan.domain().num_vars(),
+            degree: range.leaf_coefficients.len(),
+            format: SumcheckFormat::Compressed,
+        },
+        G::clear_path(input_claim)?,
     )?;
+    let output_claim = G::clear_values(&[output_claim])?
+        .pop()
+        .ok_or(AkitaError::InvalidProof)?;
     let mut virtual_evaluations =
         akita_transcript::extension_slots::<E, _>(grinding.state_mut(), virtual_count)?;
     akita_types::l2_virtual_evaluations::<F, E, _>(grinding, level, &mut virtual_evaluations)?;
@@ -293,11 +294,11 @@ where
         input_claim,
         norm_merge,
     };
-    if replay.output_claim != verifier.expected_output_claim(&replay.challenges)? {
+    if output_claim != verifier.expected_output_claim(&challenges)? {
         return Err(AkitaError::InvalidProof);
     }
     Ok(PhysicalL2VerifierReplay {
-        point: replay.challenges,
+        point: challenges,
         virtual_evaluations,
         range_image_evaluation,
     })
@@ -306,7 +307,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime32Offset99;
+    use jolt_algebra::Prime32Offset99;
 
     #[test]
     fn centered_lift_accepts_both_boundary_representatives() {

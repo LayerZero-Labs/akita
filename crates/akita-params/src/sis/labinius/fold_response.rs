@@ -43,7 +43,8 @@
 //! [`FOLD_RESPONSE_NONCE_BITS`](crate::FOLD_RESPONSE_NONCE_BITS).
 
 use akita_challenges::{BinaryChallengeProfile, SparseChallengeConfig};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
 
 use super::LabiniusRingDegree;
 use crate::sis::{

@@ -1,7 +1,7 @@
 use super::compiler::RelationWeightGroupPlan;
 use super::schedule::{EtBlockRange, ZPositionRange};
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 pub(super) trait EtWeightSink<E> {
     fn add_e(

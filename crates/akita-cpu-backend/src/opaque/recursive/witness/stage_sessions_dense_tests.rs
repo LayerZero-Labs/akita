@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{One, Prime128OffsetA7F7, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;
 

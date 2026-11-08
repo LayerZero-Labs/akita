@@ -4,7 +4,7 @@ use crate::kernels::linear::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_params::layout::FlatMatrix;
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, Field, One, Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring,
 };
 

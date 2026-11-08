@@ -4,9 +4,10 @@ use super::super::{BinaryColumnGroupPlan, BinaryColumnPlan};
 use akita_challenges::{
     BinaryChallenge, ColumnChallengeAddress, MultigroupColumnSampler, MULTIGROUP_COLUMN_DOMAIN,
 };
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::FOLD_RESPONSE_ATTEMPTS;
 use akita_transcript::{IndexedTranscriptPrefix, NonceAtom, ProofChannel};
+use jolt_algebra::checked;
 
 /// The immutable common prefix through the final D payload.
 #[derive(Clone, Debug, PartialEq, Eq)]

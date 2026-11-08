@@ -9,8 +9,8 @@ use crate::opaque::SubringCoefficientPackingBatchKernel;
 use crate::opaque::{
     OpeningProveBackendFor, RingSwitchProveBackend, RootOpeningSource, RootPolyMeta,
 };
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::Unreduced;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 macro_rules! runtime_capabilities {
     (

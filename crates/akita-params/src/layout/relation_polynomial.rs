@@ -3,11 +3,11 @@
 #[cfg(feature = "labinius-trinomial")]
 use core::ops::Range;
 
-use akita_algebra::fft::field_pow;
-#[cfg(feature = "labinius-trinomial")]
-use akita_error::checked;
 use akita_error::AkitaError;
-use jolt_field::Field;
+#[cfg(feature = "labinius-trinomial")]
+use jolt_algebra::checked;
+use jolt_algebra::fft::field_pow;
+use jolt_algebra::Field;
 
 /// Sign of the middle term in `X^D +/- X^(D/2) + 1`.
 #[cfg(feature = "labinius-trinomial")]
@@ -306,8 +306,8 @@ impl RelationCoefficientLayout {
 #[cfg(all(test, feature = "labinius-trinomial"))]
 mod tests {
     use super::*;
-    use akita_algebra::ring::scalar_powers;
-    use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::ring::scalar_powers;
+    use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 

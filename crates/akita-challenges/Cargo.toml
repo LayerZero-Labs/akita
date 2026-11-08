@@ -10,16 +10,19 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-serde = { version = "1", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+serde = { version = "1", features = ["derive"] }
 num-bigint = { version = "0.5.1", optional = true }
 shake = { version = "0.1.0", optional = true }
 keccak = { version = "0.1.6", features = ["asm"], optional = true }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
+jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "0479ea8ad1bd92fb6db7a7d94acedb4c32c0198b", default-features = false, features = [
+  "lattice",
+] }
 
 [dev-dependencies]
 postcard = { version = "1.1", default-features = false, features = ["alloc"] }
@@ -30,7 +33,7 @@ shake = "0.1.0"
 default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
-parallel = ["jolt-field/parallel"]
+parallel = ["jolt-algebra/parallel", "jolt-crypto/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 # Prover-only fold-response previews, which copy the public sponge state.
 prover = ["akita-transcript/prover"]
@@ -38,7 +41,7 @@ labinius-challenges = ["dep:keccak", "dep:num-bigint", "dep:shake"]
 
 # Recursion option (default off): the D64 selective-L2 operator-norm
 # table reads its base tables from generated static data (same entries).
-ont-static-base = []
+ont-static-base = ["jolt-crypto/ont-static-base"]
 
 [[bench]]
 name = "binary_challenge"

@@ -26,7 +26,7 @@ pub(super) use lb2_alt;
 #[cfg(any(feature = "setup-sop-structured", test))]
 use core::mem::MaybeUninit;
 #[cfg(any(feature = "setup-sop-structured", test))]
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Pairs per [`Field::sum_of_products`] call.
 #[cfg(any(feature = "setup-sop-structured", test))]
@@ -89,7 +89,7 @@ impl<E: Field> PairSum<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 

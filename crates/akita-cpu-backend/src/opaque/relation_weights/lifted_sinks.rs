@@ -289,3 +289,42 @@ pub(super) fn scatter_z<E: Field>(
     })?;
     Ok(())
 }
+
+/// Add the setup weight of every hiding-randomness ring in one witness span.
+///
+/// Randomness enters only its matrix's rows, never the fold consistency, so
+/// ring `k` at `span.start + k * ring_dim` gets the native weight
+/// `setup_values[k]` and no challenge term.
+pub(super) fn scatter_randomness<E: Field>(
+    lanes: &mut [E],
+    span: Range<usize>,
+    ring_dim: usize,
+    relation_coefficient_block_len: usize,
+    lane_alpha_powers: &[E],
+    setup_values: impl ExactSizeIterator<Item = Result<E, AkitaError>>,
+) -> Result<(), AkitaError> {
+    if span.is_empty() {
+        return Ok(());
+    }
+    if ring_dim == 0 || span.len() != setup_values.len() * ring_dim {
+        return Err(AkitaError::Internal(
+            "randomness weights disagree with their witness span".into(),
+        ));
+    }
+    let [mut window] = super::lane_weights::lane_windows_mut(
+        lanes,
+        std::slice::from_ref(&span),
+        relation_coefficient_block_len,
+    )?
+    .try_into()
+    .map_err(|_| AkitaError::Internal("randomness span has no lane window".into()))?;
+    for (ring, native) in setup_values.enumerate() {
+        add_address_lanes(
+            window.lanes_mut(span.start + ring * ring_dim, ring_dim)?,
+            None,
+            native?,
+            lane_alpha_powers,
+        )?;
+    }
+    Ok(())
+}

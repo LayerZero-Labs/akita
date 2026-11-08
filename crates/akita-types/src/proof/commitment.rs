@@ -22,7 +22,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_transcript::CommitmentDigest;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
 /// D-free public commitment payload stored as flat field coefficients.
@@ -147,7 +147,7 @@ impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for Com
 #[cfg(test)]
 mod committed_group_tests {
     use super::*;
-    use jolt_field::{Fp32, Ring};
+    use jolt_algebra::{Fp32, Ring};
 
     type F = Fp32<4294967197>;
 
@@ -192,6 +192,7 @@ mod committed_group_tests {
         )
         .expect("audited B profile");
         let profile = GroupCommitPhaseParams {
+            randomness_columns: 0,
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(11, 1),
             blocks: akita_params::BlockGeometry::new(positions, positions, 1),

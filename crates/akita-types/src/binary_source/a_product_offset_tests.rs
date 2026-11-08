@@ -1,7 +1,7 @@
 use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinarySourceDescriptor};
 use akita_params::binary_setup::BinaryFieldProfile;
-use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as Base, Ring, Zero};
+use jolt_algebra::{Ext2, ExtField, One, Prime64Offset59 as Base, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 type E = Ext2<Base>;

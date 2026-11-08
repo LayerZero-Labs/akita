@@ -3,7 +3,7 @@
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 use jolt_poly::{CompressedPoly, OmittedConstantPoly};
 use std::io::{Read, Write};
 

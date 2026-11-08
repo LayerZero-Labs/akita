@@ -17,9 +17,10 @@ use super::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_error::{checked, AkitaError};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use akita_error::AkitaError;
+use jolt_algebra::checked;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::ops::Range;
 
 use crate::sources::block_digits::{

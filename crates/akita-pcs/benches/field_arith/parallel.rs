@@ -9,7 +9,7 @@ use std::hint::black_box;
 #[cfg(feature = "parallel")]
 use criterion::{Criterion, Throughput};
 #[cfg(feature = "parallel")]
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, Field, Packed, Prime128Offset275, Prime31Offset19, Prime64Offset59, Zero,
 };
 #[cfg(feature = "parallel")]
@@ -156,7 +156,7 @@ fn bench_scalar_parallel<F>(
     out: &mut [F],
     chunk: usize,
 ) where
-    F: jolt_field::Field + Send + Sync,
+    F: jolt_algebra::Field + Send + Sync,
 {
     group.bench_function(format!("{label}_mul_seq"), |b| {
         b.iter(|| {

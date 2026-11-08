@@ -1,6 +1,6 @@
 use super::*;
 use crate::sources::packed_digits::PackedSignedDigits;
-use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
 
 // Same four-digit setup as the existing recursive witness session tests.
 fn stage1_session() -> DigitRangeSession<F> {

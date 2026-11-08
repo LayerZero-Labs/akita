@@ -4,7 +4,7 @@ use crate::protocol::ring_switch::NextWitnessState;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::GrindingReplay;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(in crate::protocol::prove) struct CommittedNextWitness<F: Field, WitnessHandle, M> {
     pub(in crate::protocol::prove) committed_witness_len: usize,
@@ -18,9 +18,9 @@ pub(in crate::protocol::prove) struct CommittedNextWitness<F: Field, WitnessHand
 /// Shared fold orchestration for <https://github.com/LayerZero-Labs/akita/issues/285>.
 /// The logical witness is computed once and retained for ring switching.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::prove) fn commit_next_witness<F, E, B>(
+pub(in crate::protocol::prove) fn commit_next_witness<F, E, B, C>(
     backend: &B,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     next_params: FoldSuccessorParams<'_>,
     expected_output_witness_len: usize,
@@ -28,6 +28,7 @@ pub(in crate::protocol::prove) fn commit_next_witness<F, E, B>(
     witness_handle: B::WitnessHandle,
 ) -> Result<CommittedNextWitness<F, B::WitnessHandle, B::CommitmentMaterialHandle>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: Field,
     B: ProverBackend<F, E>,
@@ -72,7 +73,7 @@ where
             akita_params::NextWitnessBindingPolicy::OuterPayload,
         ) => {
             akita_transcript::send_field_group(
-                grinding.state_mut(),
+                grinding.state_mut().clear_state(),
                 akita_types::FoldSite::NextWitnessPayload { level }.id()?,
                 public_commitment.coeffs(),
             )?;
@@ -91,12 +92,12 @@ where
             // as a digest.
             let (sent, last_block) = terminal.split_last_t_block(message.fields())?;
             akita_transcript::send_field_group(
-                grinding.state_mut(),
+                grinding.state_mut().clear_state(),
                 akita_types::FoldSite::NextWitnessInnerState { level }.id()?,
                 sent,
             )?;
             akita_transcript::send_field_digest(
-                grinding.state_mut(),
+                grinding.state_mut().clear_state(),
                 akita_types::FoldSite::NextWitnessInnerStateDigest { level }.id()?,
                 last_block,
             )?;

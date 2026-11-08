@@ -1,9 +1,10 @@
 //! Canonical placement and binding of independently defined local setup tables.
 
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::{AkitaSerialize, Valid};
-use jolt_field::Field;
+use jolt_algebra::checked;
+use jolt_algebra::Field;
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
 

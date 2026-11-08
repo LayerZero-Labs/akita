@@ -34,7 +34,7 @@ use akita_types::{
     AkitaExpandedSetup, FpExtEncoding, PreparedRelationAddress, RingRelationInstance,
     SetupContributionGroupInputs, SetupContributionPlan,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use product_table::{SetupProductSource, SetupProductSumcheck};
 use std::sync::Arc;
 
@@ -186,7 +186,7 @@ where
                 "factored setup-product factors must have nonempty power-of-two lengths".into(),
             ));
         }
-        let expected_len = akita_error::checked::product([
+        let expected_len = jolt_algebra::checked::product([
             request.index_factor.len(),
             request.coefficient_factor.len(),
         ])

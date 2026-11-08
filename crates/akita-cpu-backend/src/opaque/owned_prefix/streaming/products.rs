@@ -1,11 +1,12 @@
 use super::{PrefixSource, Shape};
 use akita_algebra::{ring::cyclotomic::BalancedDecomposePow2Params, CyclotomicRing};
-use akita_error::{checked, AkitaError};
+use akita_error::AkitaError;
 use akita_params::FlatMatrix;
 use akita_types::{prepare_ntt_cache, NttCacheMode};
+use jolt_algebra::checked;
 #[allow(unused_imports)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::ops::Range;
 
 /// A bounded matrix tile and one source tile per worker. Cached leading

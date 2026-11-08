@@ -17,9 +17,9 @@
 use std::time::Duration;
 
 use akita_cpu_backend::{OneHotIndex, OneHotSource};
-use akita_error::checked;
 use bytemuck::{Pod, Zeroable};
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::checked;
+use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid, MslType};
 use jolt_metal::MetalField;
 

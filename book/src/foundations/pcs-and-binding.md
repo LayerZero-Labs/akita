@@ -310,7 +310,7 @@ folding, ring-relation, sumcheck, and Fiat–Shamir bounds.
   Schedule validation checks the selected geometry against those parameters.
 - `crates/akita-prover/src/protocol/fold_grind.rs` performs bounded honest
   response search.
-- `crates/akita-challenges/src/sampler/stream.rs` decodes one group message
+- [`jolt-crypto/src/challenge/sampler/stream.rs`](https://github.com/a16z/jolt/blob/8f0f5b9edf4ef1b1b837a282357f1061c833dc62/crates/jolt-crypto/src/challenge/sampler/stream.rs) decodes one group message
   into sparse challenges.
 - `crates/akita-types/src/instance_descriptor/` binds schedule identity and
   the protocol-wide grinding contract.

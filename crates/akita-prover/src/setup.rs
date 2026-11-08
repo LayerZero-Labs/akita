@@ -5,7 +5,7 @@ use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::Valid;
 use akita_types::SetupPrefixVerifierSlot;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::collections::BTreeMap;
 
 /// Public prefix commitment paired with the ordinary opaque commitment handle.

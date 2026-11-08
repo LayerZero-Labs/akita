@@ -8,7 +8,7 @@ use crate::commitment::{
 };
 use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
-use jolt_field::{Prime64Offset59, Ring};
+use jolt_algebra::{Prime64Offset59, Ring};
 use std::any::Any;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

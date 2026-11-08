@@ -3,7 +3,7 @@ use super::{SetupAccumulator, SetupPolynomialId};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::io::{Read, Write};
 
 impl<E: Field + Valid> Valid for SetupAccumulator<E> {

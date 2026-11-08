@@ -12,7 +12,7 @@ orchestration lives in `akita-pcs`.
 | Crate | Role |
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges |
-| `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
+| `jolt-algebra` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
 | `akita-transcript` | Spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks |
@@ -44,7 +44,7 @@ Key structural facts:
   reusable exact `usize` formulas in `akita_error::checked`. These formulas
   return `Option`; each caller maps failure to the `AkitaError` variant that
   describes its protocol boundary. Field arithmetic lives in the shared
-  external `jolt-field` crate.
+  external `jolt-algebra` crate.
 - `akita-planner` owns offline schedule search and artifact emission. Normal
   search is `Cfg`-free and is not on the verifier runtime dependency path. The
   optional `catalog-gen` feature enables `akita-config`, so artifact-emission

@@ -3,7 +3,7 @@
 use super::product_table::{SetupProductSource, SetupProductSumcheck};
 use akita_sumcheck::SumcheckKernel;
 use akita_types::binary_source::{root_weight_scenarios, RootFixtureField as F};
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use std::sync::Arc;
 
 #[test]
@@ -63,7 +63,7 @@ fn binary_root_p64_typed_stage3_matches_dense_extension_rounds() {
     use akita_types::binary_source::{
         binary_word_manifest_fixture, BinaryAProduct, BinaryRootWitnessPlan, BinaryTypedPrefix,
     };
-    use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as Base, Zero};
+    use jolt_algebra::{Ext2, ExtField, One, Prime64Offset59 as Base, Zero};
     type E = Ext2<Base>;
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
     let plan = BinaryRootWitnessPlan::for_profile(

@@ -5,7 +5,7 @@ use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::binary_setup::BINARY_SETUP_P;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
-use jolt_field::{CanonicalEncoding, One, Prime128Offset275, Ring};
+use jolt_algebra::{CanonicalEncoding, One, Prime128Offset275, Ring};
 
 type F = Prime128Offset275;
 
@@ -461,7 +461,7 @@ fn p64_prime_units_and_agreement_lift_are_exact() {
 #[test]
 fn p64_prime_structured_and_reference_weights_match_over_e64() {
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
     type E = Ext2<Base>;
     let field = BinaryFieldProfile::P64;
     let source = descriptor();
@@ -610,7 +610,7 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
 
 #[test]
 fn p64_native_tensors_and_readings_match_naive_evaluation() {
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
+    use jolt_algebra::{Ext2, ExtField, Prime64Offset59 as Base, Zero};
     type E = Ext2<Base>;
     let source = descriptor();
     let point = (0..11)
@@ -815,7 +815,7 @@ fn p64_native_tensors_and_readings_match_naive_evaluation() {
 
 #[test]
 fn p64_prime_compilers_reject_a_different_quadratic_basis() {
-    use jolt_field::{Ext2Config, ExtField, FpExt2, Prime64Offset59 as Base, Zero};
+    use jolt_algebra::{Ext2Config, ExtField, FpExt2, Prime64Offset59 as Base, Zero};
 
     struct EightNr;
     impl Ext2Config<Base> for EightNr {

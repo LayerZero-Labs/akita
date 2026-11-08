@@ -2,24 +2,25 @@ use crate::protocol::prove::Stage3ProveOutput;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 
 /// Extension seam: run Stage 3 transport for a backend session whose public
 /// prefix and input claim the caller has already bound, through the terminal
 /// prefix evaluation. <https://github.com/LayerZero-Labs/akita/issues/285>.
-pub(in crate::protocol::prove) fn prove_stage3_session<F, E, B>(
+pub(in crate::protocol::prove) fn prove_stage3_session<F, E, B, C>(
     backend: &B,
     mut session: B::Stage3SessionHandle,
     claim: E,
     rounds: usize,
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
 ) -> Result<Stage3ProveOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F> + AkitaSerialize + ChallengeCodec,
     B: crate::backend::OpaqueStage3Kernel<F, E>,
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
 {
     let mut kernel = Stage3Sumcheck {
         backend,
@@ -29,7 +30,9 @@ where
         next_round: 0,
         field: std::marker::PhantomData,
     };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+    // Stage 3's rounds are public in both modes: the setup product depends
+    // only on the public setup and public challenges.
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new_public(
         grinding,
         akita_params::SumcheckProtocol::Stage3,
         level,

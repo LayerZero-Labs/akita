@@ -8,7 +8,7 @@ pub(crate) struct ProvedExtensionOpeningReduction<E: Field> {
 
 /// Drive one aggregate EOR session; individual contributions stay inside the backend.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prove_extension_opening_reduction<F, E, B>(
+pub(crate) fn prove_extension_opening_reduction<F, E, B, C>(
     backend: &B,
     session: &B::ProofSessionHandle,
     context: &crate::backend::ProofContext,
@@ -19,11 +19,12 @@ pub(crate) fn prove_extension_opening_reduction<F, E, B>(
         B::CommitmentHandle,
         B::WitnessHandle,
     >],
-    grinding: &mut akita_types::ProverGrinding<'_>,
+    grinding: &mut akita_types::ProverGrinding<'_, C>,
     level: u32,
     expected_openings: &[E],
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
 where
+    C: akita_types::ProverGrindingChannel + akita_transcript::PrivateProofChannel<F>,
     F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: ExtField<F>
@@ -99,7 +100,7 @@ where
         rounds: max_tail_vars,
         field: std::marker::PhantomData,
     };
-    let mut channel = akita_types::GrindingSumcheckProver::<F, E>::new(
+    let mut channel = akita_types::GrindingSumcheckProver::<F, E, _>::new(
         grinding,
         akita_params::SumcheckProtocol::ExtensionOpeningReduction,
         level,
