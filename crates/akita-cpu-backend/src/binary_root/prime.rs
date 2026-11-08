@@ -6,7 +6,7 @@ use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::{BinarySourceDescriptor, PrimePlaneManifest};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field};
+use jolt_field::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, CanonicalEncoding, Field};
 
 /// Build the committed prime planes before drawing column fold challenges.
 ///
@@ -125,37 +125,47 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
     let plane_width =
         checked::product([columns, column_digits_len]).ok_or(AkitaError::InvalidProof)?;
     let factors = manifest.plane_factors::<F>(descriptor)?;
-    for ((claim, plane_digits), factors) in manifest
-        .planes()
-        .iter()
-        .zip(digits.chunks_exact_mut(plane_width))
-        .zip(factors)
-    {
-        let _plane = tracing::info_span!("packed_prime_plane", owner = claim.polynomial).entered();
-        let rows = factors.rows;
-        let start = checked::product([claim.polynomial, index.padded_carriers()])
-            .ok_or(AkitaError::InvalidProof)?;
-        let range =
-            checked::range(start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
-        let partials = akita_labinius_prover::lowered::weighted_source_bits::<
-            akita_algebra::binary::BinaryField128,
-            F,
-        >(
-            sources.get(range).ok_or(AkitaError::InvalidProof)?,
-            &rows,
-            1,
-            columns,
-            162,
-            0,
-        )?;
-        if partials.len() != checked::product([columns, 162]).ok_or(AkitaError::InvalidProof)? {
-            return Err(AkitaError::InvalidProof);
-        }
-        // Columns own disjoint digit windows, so the parallel form writes the
-        // same digits.
-        cfg_chunks_mut!(plane_digits, column_digits_len)
-            .zip(cfg_chunks!(partials, 162))
-            .try_for_each(|(column_digits, partial)| write_prime_column(column_digits, partial))?;
+    let parent = tracing::Span::current();
+    let results = cfg_iter!(manifest.planes())
+        .zip(cfg_chunks_mut!(digits, plane_width))
+        .zip(cfg_into_iter!(factors))
+        .map(|((claim, plane_digits), factors)| {
+            let _parent = parent.enter();
+            let _plane =
+                tracing::info_span!("packed_prime_plane", owner = claim.polynomial).entered();
+            let rows = factors.rows;
+            let start = checked::product([claim.polynomial, index.padded_carriers()])
+                .ok_or(AkitaError::InvalidProof)?;
+            let range =
+                checked::range(start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
+            let partials = akita_labinius_prover::lowered::weighted_source_bits::<
+                akita_algebra::binary::BinaryField128,
+                F,
+            >(
+                sources.get(range).ok_or(AkitaError::InvalidProof)?,
+                &rows,
+                1,
+                columns,
+                162,
+                0,
+            )?;
+            if partials.len() != checked::product([columns, 162]).ok_or(AkitaError::InvalidProof)? {
+                return Err(AkitaError::InvalidProof);
+            }
+            // Columns own disjoint digit windows, so the parallel form writes the
+            // same digits.
+            cfg_chunks_mut!(plane_digits, column_digits_len)
+                .zip(cfg_chunks!(partials, 162))
+                .try_for_each(|(column_digits, partial)| {
+                    write_prime_column(column_digits, partial)
+                })?;
+            Ok(())
+        })
+        .collect::<Vec<Result<(), AkitaError>>>();
+    // Independent planes own disjoint windows. Consume errors in manifest order
+    // after the existing pool has joined all writers.
+    for result in results {
+        result?;
     }
     Ok(digits)
 }
