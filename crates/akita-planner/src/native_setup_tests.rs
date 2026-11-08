@@ -146,12 +146,19 @@ fn native_setup_accepts_staged_four_group_p64() {
             .schedule()
             .recursive_folds
             .iter()
-            .filter_map(|fold| fold.params.setup_prefix().and_then(|prefix| prefix.slot_id()))
+            .filter_map(|fold| {
+                fold.params
+                    .setup_prefix()
+                    .and_then(|prefix| prefix.slot_id())
+            })
             .collect();
         assert_eq!(ids, scheduled.iter().cloned().collect::<Vec<_>>());
         expected.extend(scheduled);
         assert!(
-            requirements.requirements().matrix_capacity().num_field_elements
+            requirements
+                .requirements()
+                .matrix_capacity()
+                .num_field_elements
                 >= akita_params::setup_matrix_capacity_for_schedule(row.schedule())
                     .unwrap()
                     .num_field_elements
@@ -159,7 +166,10 @@ fn native_setup_accepts_staged_four_group_p64() {
     }
     assert_eq!(slots, expected.into_iter().collect::<Vec<_>>());
     assert!(
-        requirements.requirements().matrix_capacity().num_field_elements
+        requirements
+            .requirements()
+            .matrix_capacity()
+            .num_field_elements
             >= capacity.matrix_capacity().num_field_elements
     );
     assert!(SetupRequirements::from_catalog(&fixture.catalog, 32, 16).is_err());
@@ -253,7 +263,8 @@ fn native_setup_rejects_short_suffix_capacity() {
         .unwrap();
     let mut suffix = 1;
     for fold in &row.schedule().recursive_folds {
-        akita_params::accumulate_matrix_field_elements_for_level(&fold.params, &mut suffix).unwrap();
+        akita_params::accumulate_matrix_field_elements_for_level(&fold.params, &mut suffix)
+            .unwrap();
     }
     akita_params::accumulate_terminal_matrix_field_elements(&row.schedule().terminal, &mut suffix)
         .unwrap();
@@ -314,11 +325,11 @@ fn native_setup_rejects_successor_profile_mismatch() {
         matrix.output_rank() + 1,
         matrix.input_width(),
         key.coeff_linf_bound,
-        key.ring_dimension,
+        usize::try_from(key.ring_dimension).unwrap(),
     )
     .unwrap();
-    let changed = GroupedPrefixCapacity::new(capacity.plan(), successor, capacity.first().clone())
-        .unwrap();
+    let changed =
+        GroupedPrefixCapacity::new(capacity.plan(), successor, capacity.first().clone()).unwrap();
     // Check the row directly so a registry collision cannot mask the comparison.
     let row = fixture.catalog.resolve_selection(bindings[0].0).unwrap();
     assert!(required_native_setup_prefix_slot_ids_for_row(row, &changed).is_err());

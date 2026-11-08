@@ -113,22 +113,17 @@ impl<F> SetupRequirements<F> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<Self, AkitaError> {
-        Self::from_catalog_with_prefixes(
-            catalog,
-            max_num_vars,
-            max_num_batched_polys,
-            |row| {
-                let ids = if Cfg::recursive_setup_planning() {
-                    crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
-                        row.schedule(),
-                        &row.profiles().opening_layout()?,
-                    )?
-                } else {
-                    Vec::new()
-                };
-                Ok((ids, 0))
-            },
-        )
+        Self::from_catalog_with_prefixes(catalog, max_num_vars, max_num_batched_polys, |row| {
+            let ids = if Cfg::recursive_setup_planning() {
+                crate::setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule(
+                    row.schedule(),
+                    &row.profiles().opening_layout()?,
+                )?
+            } else {
+                Vec::new()
+            };
+            Ok((ids, 0))
+        })
     }
 
     /// Shared validated catalog scan; the selected prefix contract supplies its

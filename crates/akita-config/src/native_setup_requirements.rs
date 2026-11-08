@@ -67,9 +67,13 @@ impl<F> NativeSetupRequirements<F> {
                 .binary()
                 .iter()
                 .map(|binary| &binary.source().carrier)
-                .chain(capacity.plan().ordinary().into_iter().flat_map(|batch| {
-                    batch.plans().iter().map(|plan| plan.profile())
-                }))
+                .chain(
+                    capacity
+                        .plan()
+                        .ordinary()
+                        .into_iter()
+                        .flat_map(|batch| batch.plans().iter().map(|plan| plan.profile())),
+                )
             {
                 if profile.group.num_vars() > max_num_vars
                     || profile.group.num_polynomials() > max_num_batched_polys

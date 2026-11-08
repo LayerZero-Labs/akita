@@ -138,7 +138,8 @@ impl GroupedTypedPrefix {
             .try_reserve_exact(len)
             .map_err(|_| AkitaError::InvalidProof)?;
         coefficients.resize(len, F::zero());
-        for ((range, typed), binary) in self.capacity.parts.iter().zip(self.capacity.plan.binary()) {
+        for ((range, typed), binary) in self.capacity.parts.iter().zip(self.capacity.plan.binary())
+        {
             let local = typed.setup_coefficients(
                 &self.setup.setup_seed.seed,
                 &binary.source().manifest,
