@@ -1,5 +1,6 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
+mod grouping;
 mod unit_intervals;
 
 use super::{
@@ -9,6 +10,9 @@ use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
 use akita_error::{checked, AkitaError};
 use std::collections::BTreeMap;
+
+#[cfg(test)]
+mod grouping_tests;
 
 /// Evaluate tensor-native paired Boolean-basis families.
 ///
@@ -46,8 +50,7 @@ pub(super) fn eval_unfactored_tensor_families<
         .flat_map(|family| &family.axes)
         .try_for_each(EqPairTensorAxis::validate_weights)?;
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
-    let mut multi_axis_batches =
-        BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<&EqPairTensorFamily<F>>>::new();
+    let mut multi_axis_batches = grouping::RecurrenceBatches::new();
     let mut scalar_seeds = Vec::new();
     let mut acc = F::zero();
     for family in families {
@@ -63,6 +66,8 @@ pub(super) fn eval_unfactored_tensor_families<
             acc += value;
             continue;
         }
+        charge_work(work, family.axes.len())?;
+        charge_work(work, 1)?;
         let recurrence_axes = family
             .axes
             .iter()
@@ -79,28 +84,15 @@ pub(super) fn eval_unfactored_tensor_families<
                 .is_some_and(|axis| matches!(axis.weights, EqPairTensorWeights::BitProduct(_)))
         });
         if recurrence_axes.len() >= 2 || has_factored_weights {
-            let recurrence_geometry = recurrence_axes
-                .iter()
-                .map(|&axis_index| {
-                    let axis = family.axes.get(axis_index).ok_or_else(|| {
-                        AkitaError::Internal("selected tensor recurrence axis is absent".into())
-                    })?;
-                    Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            if has_factored_weights {
-                acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                    left_challenges,
-                    right_challenges,
-                    &[family],
-                    &recurrence_geometry,
-                    work,
-                )?;
-            } else {
-                multi_axis_batches
-                    .entry(recurrence_geometry)
-                    .or_default()
-                    .push(family);
+            if let Some(singleton) = grouping::queue_or_singleton::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                left_challenges,
+                right_challenges,
+                family,
+                &recurrence_axes,
+                &mut multi_axis_batches,
+                work,
+            )? {
+                acc += singleton;
             }
             continue;
         }
@@ -127,14 +119,16 @@ pub(super) fn eval_unfactored_tensor_families<
             work,
         )?;
     }
-    for (recurrence_geometry, families) in multi_axis_batches {
-        acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-            left_challenges,
-            right_challenges,
-            &families,
-            &recurrence_geometry,
-            work,
-        )?;
+    for (recurrence_geometry, groups) in multi_axis_batches {
+        for families in groups {
+            acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                left_challenges,
+                right_challenges,
+                &families,
+                &recurrence_geometry,
+                work,
+            )?;
+        }
     }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
         sum + seed.weight
