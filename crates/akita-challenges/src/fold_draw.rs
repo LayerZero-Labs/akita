@@ -138,13 +138,7 @@ pub trait FoldDraw {
             AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
         })?;
         let stream = family.stream(total)?;
-        if total >= 1024
-            && family.ring_d() == 64
-            && family.config().count_pm1 == 31
-            && family.config().count_pm2 == 10
-            && family.rejection().is_none()
-            && crate::checked_hint::active()
-        {
+        if stream.uses_checked_quartets() && crate::checked_hint::active() {
             return self.draw_message(stream.message_len(), |message| {
                 Ok(Some(Challenges::from_checked_quartets(
                     stream.decode_checked_hints(message)?,
@@ -153,8 +147,10 @@ pub trait FoldDraw {
                 )?))
             });
         }
-        let challenges =
-            self.draw_message(stream.message_len(), |message| stream.decode(message))?;
+        let position_hints = crate::checked_hint::positions_active();
+        let challenges = self.draw_message(stream.message_len(), |message| {
+            stream.decode_with(message, position_hints)
+        })?;
         challenges
             .map(|challenges| {
                 Challenges::from_sampled(

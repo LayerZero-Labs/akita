@@ -55,6 +55,23 @@ const MAX_CACHED_BINOMIAL_TABLES: usize = 8;
 #[cfg(feature = "parallel")]
 const PARALLEL_DECODE_WORK_THRESHOLD: usize = 1 << 14;
 
+/// Capture configuration is fixed on first use; configure the process before decoding.
+#[cfg(any(
+    feature = "parallel",
+    all(not(target_arch = "riscv64"), feature = "experiment-capture")
+))]
+fn capture_enabled() -> bool {
+    #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+    {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ENABLED.get_or_init(|| std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some())
+    }
+    #[cfg(not(all(not(target_arch = "riscv64"), feature = "experiment-capture")))]
+    {
+        false
+    }
+}
+
 /// Lower bounds used to size an operator-norm pool.
 ///
 /// `accept` is a rational `u / v` for the probability that one candidate is
@@ -320,13 +337,22 @@ impl SparseChallengeStream {
     /// length, and [`AkitaError::InvalidSetup`] when the predicate table is
     /// unavailable.
     pub fn decode(&self, message: &[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        self.decode_with(message, false)
+    }
+
+    /// Fold drawing selects position advice explicitly; generic decoding never consumes it.
+    pub(crate) fn decode_with(
+        &self,
+        message: &[u8],
+        position_hints: bool,
+    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
         if message.len() != self.message_len() {
             return Err(AkitaError::InvalidInput(
                 "sparse challenge message has the wrong length".into(),
             ));
         }
         #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
-        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some() {
+        if capture_enabled() {
             let mut text = format!(
                 "EXPERIMENT_MESSAGE {} {} {} {} {} ",
                 self.shell.ring_d,
@@ -337,7 +363,7 @@ impl SparseChallengeStream {
             );
             use std::fmt::Write;
             for byte in message {
-                write!(&mut text, "{byte:02x}").map_err(|_| AkitaError::InvalidProof)?;
+                let _ = write!(&mut text, "{byte:02x}");
             }
             eprintln!("{text}");
         }
@@ -348,7 +374,6 @@ impl SparseChallengeStream {
             self.shell.ring_d,
             self.shell.config.count_pm1.max(self.shell.config.count_pm2),
         )?;
-        let position_hints = crate::checked_hint::positions_active();
         let decoder = CandidateDecoder {
             position_hints,
             stream: self,
@@ -370,34 +395,28 @@ impl SparseChallengeStream {
                         )?
                         .then_some(challenge))
                 };
-                self.first_accepted(accept)
+                self.first_accepted(position_hints, accept)
             }
         }
     }
 
+    /// Shared eligibility rule for quartet advice and host position-tape capture.
+    pub(crate) const fn uses_checked_quartets(&self) -> bool {
+        self.count >= 1024
+            && self.shell.ring_d == 64
+            && self.shell.config.count_pm1 == 31
+            && self.shell.config.count_pm2 == 10
+            && self.shell.rejection.is_none()
+    }
+
     pub(crate) fn decode_checked_hints(&self, message: &[u8]) -> Result<Vec<[u64; 4]>, AkitaError> {
         if message.len() != self.message_len
-            || self.shell.ring_d != 64
-            || self.shell.config.count_pm1 != 31
-            || self.shell.config.count_pm2 != 10
-            || self.shell.rejection.is_some()
+            || !self.uses_checked_quartets()
+            || self.shell.candidate_bits != 128
         {
             return Err(AkitaError::InvalidProof);
         }
-        if self.shell.candidate_bits != 128 {
-            return Err(AkitaError::InvalidProof);
-        }
-        let scratch;
-        let message_words: &[u64] = if message.as_ptr().align_offset(8) == 0 {
-            // The message is whole aligned words; every u64 bit pattern is valid.
-            unsafe { std::slice::from_raw_parts(message.as_ptr().cast::<u64>(), message.len() / 8) }
-        } else {
-            scratch = message
-                .chunks_exact(8)
-                .map(|c| u64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
-                .collect::<Vec<_>>();
-            &scratch
-        };
+        let message_words = crate::checked_hint::native_words(message)?;
         let (hints, begin) = crate::checked_hint::take(self.count)?;
         let mut output = Vec::with_capacity(self.count);
         for index in 0..self.count {
@@ -414,7 +433,7 @@ impl SparseChallengeStream {
             if (words[0] | words[1] | words[2] | words[3]) >> 40 != 0 {
                 return Err(AkitaError::InvalidProof);
             }
-            crate::checked_hint::validate(&words, rank, signs)?;
+            crate::checked_hint::validate(&words, rank, self.shell.pm1_rank_space, signs)?;
             output.push(words);
         }
         Ok(output)
@@ -430,7 +449,7 @@ impl SparseChallengeStream {
             })
         };
         #[cfg(feature = "parallel")]
-        if self.parallel() {
+        if !decoder.position_hints && self.parallel() {
             return (0..self.count).into_par_iter().map(decode).collect();
         }
         let mut result = Vec::new();
@@ -445,8 +464,11 @@ impl SparseChallengeStream {
 
     fn first_accepted(
         &self,
+        position_hints: bool,
         accept: impl Fn(usize) -> Result<Option<SparseChallenge>, AkitaError> + Sync,
     ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        #[cfg(not(feature = "parallel"))]
+        let _ = position_hints;
         let mut accepted = Vec::new();
         accepted
             .try_reserve_exact(self.count)
@@ -454,7 +476,7 @@ impl SparseChallengeStream {
         // In parallel, decode the pool in order in chunks of twice the
         // challenge count and stop after the chunk that fills the count.
         #[cfg(feature = "parallel")]
-        if self.parallel() {
+        if !position_hints && self.parallel() {
             let chunk = self.count.saturating_mul(2);
             let mut start = 0;
             while accepted.len() < self.count && start < self.candidates {
@@ -489,11 +511,7 @@ impl SparseChallengeStream {
     /// is, and every parallel region wakes the whole thread pool.
     #[cfg(feature = "parallel")]
     fn parallel(&self) -> bool {
-        #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
-        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some() {
-            return false;
-        }
-        !crate::checked_hint::positions_active()
+        !capture_enabled()
             && self.count.saturating_mul(self.shell.config.weight())
                 >= PARALLEL_DECODE_WORK_THRESHOLD
     }
@@ -831,13 +849,7 @@ impl CandidateDecoder<'_> {
         };
         let pm1_rank = rank - pm2_rank * stream.shell.pm1_rank_space;
         #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
-        if std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some()
-            && !(stream.shell.ring_d == 64
-                && a == 31
-                && b == 10
-                && stream.count >= 1024
-                && stream.shell.rejection.is_none())
-        {
+        if capture_enabled() && !stream.uses_checked_quartets() {
             eprintln!(
                 "EXPERIMENT_RANK {} {} {} {} {}",
                 stream.shell.ring_d, a, b, pm1_rank, pm2_rank
@@ -847,8 +859,7 @@ impl CandidateDecoder<'_> {
         let (pm1, pm2) = positions.split_at_mut(a);
         if self.position_hints {
             let width = weight.div_ceil(4);
-            let (hints, offset) =
-                crate::checked_hint::take_positions(width)?.ok_or(AkitaError::InvalidProof)?;
+            let (hints, offset) = crate::checked_hint::take_positions(width)?;
             let words = hints
                 .get(offset..offset.checked_add(width).ok_or(AkitaError::InvalidProof)?)
                 .ok_or(AkitaError::InvalidProof)?;

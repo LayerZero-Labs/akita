@@ -241,11 +241,7 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
         let stream = layout(d, &config, Some(rejection), count).unwrap();
         #[cfg(feature = "parallel")]
         {
-            #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
-            let capturing = std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some();
-            #[cfg(not(all(not(target_arch = "riscv64"), feature = "experiment-capture")))]
-            let capturing = false;
-            assert_eq!(stream.parallel(), count == 600 && !capturing);
+            assert_eq!(stream.parallel(), count == 600 && !capture_enabled());
         }
         let ChallengePolicy::OperatorNorm { threshold, table } =
             ChallengePolicy::new(d, &config, Some(rejection)).unwrap()
@@ -463,3 +459,6 @@ fn checked_subset_positions_have_the_exact_transcript_rank() {
         }
     }
 }
+
+#[path = "hint_tests.rs"]
+mod hint_tests;

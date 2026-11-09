@@ -126,3 +126,28 @@ const EXPECTED: [[u128; 3]; 2] = [
         326177195468316913605597546064481269453u128,
     ],
 ];
+
+#[test]
+fn checked_hints_match_for_aligned_and_unaligned_messages_and_tapes() {
+    #[repr(align(8))]
+    struct Aligned<const N: usize>([u8; N]);
+    let mut message = Aligned([0u8; MESSAGE.len() + 8]);
+    let mut hints = Aligned([0u8; HINTS.len() + 8]);
+    let family = family();
+    let stream = family.stream(1024).unwrap();
+    let expected = stream.decode(MESSAGE).unwrap().unwrap();
+    for offset in [0, 1] {
+        message.0[offset..offset + MESSAGE.len()].copy_from_slice(MESSAGE);
+        hints.0[offset..offset + HINTS.len()].copy_from_slice(HINTS);
+        let bytes = &message.0[offset..offset + MESSAGE.len()];
+        assert_eq!(
+            bytes.as_ptr().align_offset(8),
+            if offset == 0 { 0 } else { 7 }
+        );
+        crate::install_checked_hints(&hints.0[offset..offset + HINTS.len()]).unwrap();
+        let packed = stream.decode_checked_hints(bytes).unwrap();
+        let actual = crate::Challenges::from_checked_quartets(packed, 1024, 1).unwrap();
+        assert_eq!(actual.as_slice(), expected);
+        crate::finish_checked_hints().unwrap();
+    }
+}
