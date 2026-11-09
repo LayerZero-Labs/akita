@@ -57,7 +57,6 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 type F = Prime128Offset275;
-type E = F;
 
 /// A narrow test-only hook around the actual fold sampler. Capture the first
 /// squeezed seed rather than inferring binding from later relation rejection.
