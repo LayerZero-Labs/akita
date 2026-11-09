@@ -34,8 +34,6 @@ mod generated_sis_table;
 pub(crate) use generated_sis_table::sis_max_widths as generated_sis_max_widths;
 pub mod honest_fold_policy;
 mod l2_table;
-#[cfg(feature = "labinius-sis")]
-pub mod labinius;
 pub mod norm_bound;
 mod onehot_source;
 mod physical_l2;
@@ -69,8 +67,6 @@ pub use l2_table::{
 };
 #[cfg(test)]
 pub(crate) use norm_bound::fold_witness_beta_inf;
-#[cfg(feature = "labinius-sis")]
-pub use norm_bound::source_comparison_inf_norm;
 pub use norm_bound::{
     certified_terminal_response_linf_cap, checked_centered_l2_sq, fold_witness_linf_cap,
     max_response_linf_for_role_a_collision, rademacher_proxy_variance,

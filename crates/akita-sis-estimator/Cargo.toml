@@ -27,7 +27,7 @@ default = ["transcript-keccak"]
 parallel = ["dep:rayon"]
 transcript-blake2b = ["akita-params/transcript-blake2b"]
 transcript-keccak = ["akita-params/transcript-keccak"]
-# Offline LaBinius width tables. They never touch a transcript, but
+# Offline binary-source width tables. They never touch a transcript, but
 # `akita-params` links one, so the tables build on the workspace default
 # backend. No crate forwards this feature.
 labinius-sis = [
@@ -46,15 +46,11 @@ name = "infinity_optimizer"
 harness = false
 
 [[example]]
-name = "labinius_infinity_width_table"
-required-features = ["labinius-sis"]
-
-[[example]]
 name = "q24_infinity_width_table"
 required-features = ["labinius-sis"]
 
 [[test]]
-name = "labinius_width_table"
+name = "q24_width_table"
 required-features = ["labinius-sis"]
 
 [lints]

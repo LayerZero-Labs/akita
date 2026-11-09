@@ -502,8 +502,9 @@ gates even when arithmetic and descriptor tests pass.
   [documentation policy](../docs/documentation.md).
 - [Field switch](labinius-field-switch.md),
   [packed F162 arithmetic](labinius-packed-f162.md) and
-  [root admission](labinius-root-admission.md).
+  [q24 SIS certificate](binary-source-q24-certificate.md).
 - Historical design records for the removed standalone crates:
+  [root admission](archive/2026-Q4/labinius-root-admission.md),
   [clear opening](archive/2026-Q4/labinius-clear-opening.md),
   [setup contract](archive/2026-Q4/labinius-setup-contract.md),
   [lowered root](archive/2026-Q4/labinius-lowered-root.md),

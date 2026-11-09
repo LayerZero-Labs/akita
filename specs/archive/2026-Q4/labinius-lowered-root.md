@@ -20,7 +20,7 @@ relation.
 
 This document is the normative definition of the lowered statement. The
 [clear opening](labinius-clear-opening.md),
-[root admission](../../labinius-root-admission.md) and
+[root admission](labinius-root-admission.md) and
 [field switch](../../labinius-field-switch.md) specifications give its surrounding
 contracts. `LabiniusRootEncoding` supplies the enforced ranges and the response
 and image table lengths; this document fixes the relation over those tables.
@@ -41,10 +41,10 @@ Let `m=setup.m()`, `M_rows=k*m`, `C=setup.columns()` and `n_A=setup.n_a()`.
 `LoweredRootLayout::new::<F,E,_,_>(setup, shape)` is where the field pair
 enters. It calls `shape.derive_encoding(P)`, which admits P by the unit
 condition on fold-challenge differences and the two no-wrap inequalities of
-[root admission](../../labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges);
+[root admission](labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges);
 a base field that fails cannot build a layout. It admits E exactly when
 every field-challenge site of the reduction can be priced
-([root admission](../../labinius-root-admission.md#challenge-field-admission)); a
+([root admission](labinius-root-admission.md#challenge-field-admission)); a
 challenge field that is too small cannot build one either. It then requires
 agreement with
 `LabiniusRootShape` on the commitment modulus, commitment and scalar degrees,
@@ -135,7 +135,7 @@ honest prover the integer remainder is divisible by q coefficientwise, because
 the identity modulo `(q,Phi_D)` is the commitment relation. The prover sends
 exactly D range-checked carry integers per row; there is no matrix-quotient
 message. The honest bound and the no-wrap condition are owned by
-[root admission](../../labinius-root-admission.md#commitment-row-carry).
+[root admission](labinius-root-admission.md#commitment-row-carry).
 
 The prover's `lowered::a_relation_carry` computes the matrix remainder with
 limb-prime transforms and signed CRT when D is 648, the middle coefficient is
@@ -618,7 +618,7 @@ makes `w* mod P` defined, so it is used twice: to say what is opened, and to
 prove it.
 
 **The lemma used.** Proof-prime admission condition 1 of
-[root admission](../../labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges):
+[root admission](labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges):
 `P^f > (6w)^(deg/2)`, with f the order of P modulo 243, makes every nonzero
 difference of two fold challenges a unit modulo P. Under it any two distinct
 challenges of one column give `(*)` with an invertible `iota(s)`. Two

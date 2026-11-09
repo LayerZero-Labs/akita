@@ -127,99 +127,47 @@ The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
 estimator at verification time.
 
-### Staged LaBinius binary-source cells
+### Binary-source q24 certificate
 
-Akita also carries an offline audit artifact for the binary commitment ring of
-the opt-in LaBinius extension. This artifact prepares exact SIS arithmetic and
-estimator cells; it does not add a planner route, a schedule, or a native
-power-of-two ring profile. LaBinius root admission (`LabiniusRootShape::derive`
-in `akita-params`, feature `labinius-sis`) admits a root geometry only against
-a checked-in cell. A missing cell is reported as missing. It is never
-synthesized by the live runtime.
-
-The staged commitment modulus is
+The binary-source commitment's A matrix has rank three over the degree-648
+trinomial ring `Z_q[Y]/(Y^648 - Y^324 + 1)` with commitment modulus
 
 ```text
-q25+14561 = 2^25 + 14561 = 33568993.
+q24 = 2^24 - 2523807 = 14253409.
 ```
 
-The binary ring degrees are 162, 324, and 648 over a degree-162 scalar
-component, and 486, 972, and 1944 over a degree-486 scalar component. Packing
-does not change estimator scalarization: for module rank `r` and ring width
-`w`, the estimator uses `n = r * D` and `m = w * D` for the actual ring degree
-`D`.
+An offline certificate prices that rank at three source-comparison bounds.
+No catalog or protocol reads it, and verifiers never run the estimator. Packing does not
+change estimator scalarization: for module rank `r` and ring width `w`, the
+estimator uses `n = r * 648` and `m = w * 648`.
 
-Source comparisons use one identity consisting of the commitment modulus, the
-actual binary ring degree, and a versioned digest of the matrix view and
-coefficient addressing. For an occurrence `u`, let `B_u` bound its numerator
-coefficients and let `K_u` bound coefficient-infinity-norm multiplication by
-its extracted slack. Comparing occurrences `u` and `v` uses the exact checked
-integer bound
+The certified bounds are source-comparison bounds. A binary extraction with
+response interval diameter `Delta` and challenge multiplication bound `Gamma`
+has the diagonal collision bound `eta = 4 * Gamma * Delta`. The certificate
+uses `Delta = 2^12 - 1` and `Gamma = 2w` for challenge weights `w` of 46, 64
+and 77, so `eta` is 1,506,960, 2,096,640 and 2,522,520.
 
-```text
-eta(u, v) = K_v * B_u + K_u * B_v.
-```
+The certificate uses the same `Quantum169BitADPS16` policy and
+`akita-infinity-width-v4` boundary evaluator as the production infinity table.
+At widths 4096, 8192 and 16384, ranks 3 and 4 are proven above the 169-bit
+target up to the search cap for every bound, and rank 2 has a finite attack
+below 128 bits. The per-cell results are in
+[`specs/binary-source-q24-certificate.md`](../../../specs/binary-source-q24-certificate.md).
 
-The source-class bound is the maximum over every pair, including each diagonal
-pair. A binary extraction with accepted response interval diameter `Delta` and
-independently certified challenge multiplication bound `Gamma` has
-`B = Delta` and `K = 2 * Gamma`; its diagonal is therefore
-`eta = 4 * Gamma * Delta`. A canonical known source with coefficient bound
-`B_0` has `K = 1`, so its comparison with that extraction is
-`Delta + 2 * Gamma * B_0`. Zero bounds remain valid inputs. All arithmetic is
-checked, and a comparison is valid only when the exact integer result satisfies
-the strict no-wrap condition `eta < q`. Thus `eta = q - 1` is valid and
-`eta = q` is rejected.
-
-The checked-in staged artifact uses the same
-`Quantum169BitADPS16` policy and `akita-infinity-width-v4` boundary evaluator as
-the production infinity table. It contains one source label, the bounded-weight
-challenge over the degree-162 scalar component with a 12-bit response
-diameter. The exact collision bound is:
-
-| Source label | `Gamma` | `Delta` | `eta = 4 * Gamma * Delta` |
-| --- | ---: | ---: | ---: |
-| `phi243-bounded-w46-delta12` | 92 | `2^12 - 1` | 1,506,960 |
-
-Challenge families, exact cardinalities, entropy checks, sign rules, and
-sampling remain the responsibility of `akita-challenges`; the SIS foundation
-accepts the certified multiplication bound and does not duplicate those
-rules.
-
-Every published row has a positive certified width and an accepted boundary
-certificate. The artifact covers degree 648 at ranks 2, 3, and 4. Each of these
-rows remains secure through the search cap, so its width is the cap and the
-row is recorded as a cap-limited lower bound, not as an exact boundary. A cost
-such as `above-target:128.26` is a certified lower bound from the pruned
-search, not an asserted exact attack cost. Zero-width candidates are omitted;
-rank 1 at degree 648 is one.
-
-Regenerate the staged artifact with bounded parallelism:
+Regenerate both CSV files with bounded parallelism:
 
 ```bash
 RAYON_NUM_THREADS=2 cargo run --release -p akita-sis-estimator \
-  --features parallel,labinius-sis --example labinius_infinity_width_table
+  --features parallel,labinius-sis --example q24_infinity_width_table
 ```
-
-The result is
-`crates/akita-sis-estimator/data/labinius_commitment_prime_infinity_width.csv`
-and the runtime cells generated from it,
-`crates/akita-params/src/sis/labinius/generated_commitment_prime_width_table.rs`.
-The offline lookup validates the evaluator identity, policy row values, and
-boundary certificates before returning a cell. With `--from-csv` the generator
-rewrites only the runtime cells from the checked-in rows, without a search. It
-accepts `--dims`, `--max-rank`, and `--search-cap` for focused audits. These
-flags do not enable a live schedule.
 
 **Implementation map**
 
-- Source identities and no-wrap accounting:
-  `crates/akita-params/src/sis/labinius.rs` and `norm_bound.rs`.
-- Offline generation and artifact lookup:
-  `crates/akita-sis-estimator/examples/labinius_infinity_width_table.rs` and
-  `src/labinius_width_table.rs`.
-- Certified staged rows:
-  `crates/akita-sis-estimator/data/labinius_commitment_prime_infinity_width.csv`.
+- Generator and certificate parser:
+  `crates/akita-sis-estimator/src/q24_width_table.rs` and
+  `examples/q24_infinity_width_table.rs`.
+- Certified rows: `crates/akita-sis-estimator/data/q24_commitment_prime_infinity_width.csv`
+  and `q24_infinity_cells.csv`.
 
 ### Quantum policy
 

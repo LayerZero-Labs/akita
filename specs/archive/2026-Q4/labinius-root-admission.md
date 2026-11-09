@@ -1,6 +1,10 @@
 # LaBinius binary-root parameter and shape admission
 
-Status: active
+Status: historical
+
+Archived 2026-Q4, when the q25 root-admission code in `akita-params` was removed.
+The live q24 certificate moved to
+[binary-source-q24-certificate.md](../../binary-source-q24-certificate.md).
 Book-chapter: book/src/foundations/security.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
@@ -11,7 +15,7 @@ profile, a certified-width lookup, and two admission functions:
 `LabiniusRootShape::derive` for the geometry and
 `LabiniusRootShape::derive_encoding` for a proof prime. The standalone prover,
 verifier and PCS crates that called them were removed in 2026-Q4; their
-records are under [`archive/2026-Q4/`](archive/2026-Q4/). Enabling
+records are under [`archive/2026-Q4/`](). Enabling
 the feature does not select the extension or change the ordinary protocol.
 
 | Profile item | `LabiniusRootProfile::D648Q25BoundedW46` |
@@ -112,7 +116,7 @@ power-of-two fold is 256 (log 8).
 `LabiniusFoldResponse::derive(challenge, C, m, degree, lambda_fold)` rejects a
 family below the fold budget, then states one binary fold
 `z = sum_{i < C} c_i * s_i` in the inputs of Akita's fold-response cap
-([`fold-linf-rejection.md`](fold-linf-rejection.md),
+([`fold-linf-rejection.md`](../../fold-linf-rejection.md),
 `crates/akita-params/src/sis/fold_linf_cap.rs`) and calls it. It derives no
 tail bound of its own:
 
@@ -152,7 +156,7 @@ The cap depends on `m * D` through the union bound, not on C alone. When
 bound is zero. Otherwise the cap is smaller than the worst case by design:
 `C * Gamma = 23552` at the sample geometry. Completeness is then
 probabilistic, and an honest prover must search a fold-response nonce, as
-the removed [clear opening](archive/2026-Q4/labinius-clear-opening.md#fold-response-nonce)
+the removed [clear opening](labinius-clear-opening.md#fold-response-nonce)
 did.
 Akita's tail bound conditions on the challenge supports and takes the signs of
 all `C * w` challenge monomials as independent and uniform. This family derives
@@ -289,7 +293,7 @@ relation: it isolates one column of the prime left opening by cancelling a
 difference of two fold challenges modulo P, and the object a prime claim is
 about, the extracted source reduced modulo P, is defined only when that
 difference is a unit
-([lowered relation](archive/2026-Q4/labinius-lowered-root.md#prime-opening-and-the-unit-condition)).
+([lowered relation](labinius-lowered-root.md#prime-opening-and-the-unit-condition)).
 The commitment rows and the parity row are lifted to the integers and do not
 use it. Admission checks it for every opening mode, so a proof prime admitted
 for a binary claim is admitted for a prime claim, which adds no condition.
@@ -348,7 +352,7 @@ prime_table_log_len = ceil_log2(padded_coefficient_len * C)
 
 A packed coefficient p with offset o is stored as
 `p + o = sum_{l < digit_count} digit_l * 16^l`; the offset rule is owned by
-[the lowered relation](archive/2026-Q4/labinius-lowered-root.md#response-and-image-tables).
+[the lowered relation](labinius-lowered-root.md#response-and-image-tables).
 Every table position, including digit slots `l >= digit_count`, coefficient
 positions `t >= D` and positions above the natural extent, is subject to the
 same alphabet check. Public relation weights are zero at every padding
@@ -377,12 +381,12 @@ encoding exposes only its length, `prime_table_log_len`.
 Challenge-field admission concerns the field E that a root reduction draws its
 challenges from, not P. It was implemented by the removed root reduction and
 is recorded with it in
-[the archived root reduction](archive/2026-Q4/labinius-root-reduction.md#challenge-field-admission).
+[the archived root reduction](labinius-root-reduction.md#challenge-field-admission).
 
 ## Derivation bias
 
 The removed admitted binary-root setup used exact rejection sampling modulo q
-([setup contract](archive/2026-Q4/labinius-setup-contract.md#typed-setup-streams)). It did not
+([setup contract](labinius-setup-contract.md#typed-setup-streams)). It did not
 reduce P-field setup samples modulo q, and `AdmittedRootSetup::derive::<P>`
 did not apply a derivation-bias gate. The q matrix and P-field setup streams
 have separate typed domains.
@@ -608,7 +612,7 @@ catalog integration remain separate work.
   `B_nu = 3 * m * D * (q - 1) * Delta + q * (2^e_KA - 1)`, belonged to the
   argument for an image table that was not range-checked. It is not needed
   and no code checks it; the reason is given with
-  [the lowered relation](archive/2026-Q4/labinius-lowered-root.md#source-binding-and-projection).
+  [the lowered relation](labinius-lowered-root.md#source-binding-and-projection).
   At the sample geometry its left side is about `2^70.1`, above `2^64 - 59`.
 - The image digits are not required to be those of canonical residues. Any
   alphabet-valid table satisfying the relation is accepted; only its residues
@@ -619,5 +623,5 @@ catalog integration remain separate work.
   It does not establish ring-ideal security.
 - Knowledge extraction across the fold challenges, the SIS reduction and
   Fiat-Shamir composition are open, as recorded in
-  [the root reduction](archive/2026-Q4/labinius-root-reduction.md#what-acceptance-proves-and-open-obligations).
+  [the root reduction](labinius-root-reduction.md#what-acceptance-proves-and-open-obligations).
   This is parameter admission, not protocol security admission.
