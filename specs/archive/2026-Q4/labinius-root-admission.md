@@ -1,12 +1,12 @@
 # LaBinius binary-root parameter and shape admission
 
 Status: historical
+Book-chapter: book/src/how/security.md
+Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 Archived 2026-Q4, when the q25 root-admission code in `akita-params` was removed.
 The live q24 certificate moved to
 [binary-source-q24-certificate.md](../../binary-source-q24-certificate.md).
-Book-chapter: book/src/foundations/security.md
-Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 ## Scope and profile
 
@@ -15,7 +15,7 @@ profile, a certified-width lookup, and two admission functions:
 `LabiniusRootShape::derive` for the geometry and
 `LabiniusRootShape::derive_encoding` for a proof prime. The standalone prover,
 verifier and PCS crates that called them were removed in 2026-Q4; their
-records are under [`archive/2026-Q4/`](). Enabling
+records are in this archive directory. Enabling
 the feature does not select the extension or change the ordinary protocol.
 
 | Profile item | `LabiniusRootProfile::D648Q25BoundedW46` |

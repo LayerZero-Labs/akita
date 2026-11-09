@@ -47,7 +47,8 @@ values are certified lower bounds, not actual attack optima; 638 is a
 block-size threshold, not a selected optimal attack. Under the width
 search's monotone-prefix precondition, they cover all requested widths.
 The exact cutoff above the cap remains unknown. Rank three therefore has
-certificate support for the 128-bit planning target. Rank two fails that
+certificate support for the 128-bit planning target at these three
+source-comparison bounds. Rank two fails that
 target at every requested cell; this conclusion comes from its finite
 fixed-width attacks, not merely failure of the stronger 169-bit policy.
 

@@ -132,7 +132,6 @@ dependencies = [
  "jolt-field",
  "jolt-transcript",
  "keccak 0.2.2",
- "num-bigint 0.5.1",
  "rand 0.8.8",
  "serde",
  "sha3",
@@ -256,7 +255,6 @@ dependencies = [
 name = "akita-sis-estimator"
 version = "0.1.0"
 dependencies = [
- "akita-challenges",
  "akita-params",
  "criterion",
  "libm",

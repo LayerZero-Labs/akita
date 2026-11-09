@@ -9,7 +9,6 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false, optional = true }
 akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
 libm = "0.2"
 num-bigint = "0.5.1"
@@ -33,8 +32,6 @@ transcript-keccak = ["akita-params/transcript-keccak"]
 labinius-sis = [
   "transcript-keccak",
   "akita-params/labinius-sis",
-  "dep:akita-challenges",
-  "akita-challenges/labinius-challenges",
 ]
 
 [[bench]]
