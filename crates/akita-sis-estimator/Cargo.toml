@@ -29,10 +29,7 @@ transcript-keccak = ["akita-params/transcript-keccak"]
 # Offline binary-source width tables. They never touch a transcript, but
 # `akita-params` links one, so the tables build on the workspace default
 # backend. No crate forwards this feature.
-labinius-sis = [
-  "transcript-keccak",
-  "akita-params/labinius-sis",
-]
+labinius-sis = ["transcript-keccak", "akita-params/labinius-sis"]
 
 [[bench]]
 name = "fixed_infinity"
