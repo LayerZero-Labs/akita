@@ -272,9 +272,9 @@ mod tests {
     use super::*;
 
     use akita_types::AkitaSetupDescriptor;
-    use jolt_field::{MulBaseUnreduced, Prime128Offset801F, Ring};
+    use jolt_field::{MulBaseUnreduced, Prime128Offset6A23801F, Ring};
 
-    type F = Prime128Offset801F;
+    type F = Prime128Offset6A23801F;
     const RING_D: usize = 64;
 
     #[test]

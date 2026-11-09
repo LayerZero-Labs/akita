@@ -75,11 +75,11 @@ impl<T> SetupPrefixCache<T> {
 /// ```compile_fail
 /// use akita_cpu_backend::CpuBackend;
 /// use akita_prover::ProverHandleFamily;
-/// use jolt_field::Prime128Offset801F;
+/// use jolt_field::Prime128Offset6A23801F;
 ///
-/// type Opening = <CpuBackend<Prime128Offset801F, Prime128Offset801F> as ProverHandleFamily<
-///     Prime128Offset801F,
-///     Prime128Offset801F,
+/// type Opening = <CpuBackend<Prime128Offset6A23801F, Prime128Offset6A23801F> as ProverHandleFamily<
+///     Prime128Offset6A23801F,
+///     Prime128Offset6A23801F,
 /// >>::PreparedOpeningHandle;
 ///
 /// fn require_clone<T: Clone>() {}

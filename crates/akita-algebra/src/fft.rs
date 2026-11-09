@@ -5,7 +5,7 @@
 //!
 //! # Setting
 //!
-//! The protocol prime [`jolt_field::Prime128Offset801F`] is pseudo-Mersenne, so
+//! The protocol prime [`jolt_field::Prime128Offset6A23801F`] is pseudo-Mersenne, so
 //! `p − 1` is not a power of two; each is instead chosen so it carries
 //! a large **smooth factor** — a product of small primes:
 //!
@@ -60,7 +60,7 @@
 //! FFT — see [`SmoothDomain::coset_forward`]
 //! and [`SmoothDomain::rs_extend_batch`].
 
-use jolt_field::{CanonicalEncoding, Field, Prime128Offset801F, PseudoMersenne};
+use jolt_field::{CanonicalEncoding, Field, Prime128Offset6A23801F, PseudoMersenne};
 
 /// Field with a precomputed primitive root of a supported smooth subgroup.
 ///
@@ -74,13 +74,13 @@ pub trait SmoothFftField: Field + CanonicalEncoding + PseudoMersenne {
     const SMOOTH_OMEGA: u128;
 }
 
-impl SmoothFftField for Prime128Offset801F {
+impl SmoothFftField for Prime128Offset6A23801F {
     const SMOOTH_SUBGROUP_ORDER: usize = 337_500_000;
     /// `g ^ ((p − 1) / 337_500_000)` where `g` is the smallest primitive root
     /// found by `find_primitive_nth_root` (note: `g = 2` is a quadratic
     /// residue mod `p` and therefore *not* a primitive root, so the
     /// scanner falls through to the next candidate). Verified by
-    /// `prime_801f_tests::smooth_omega_matches_search` below.
+    /// `prime_6a23801f_tests::smooth_omega_matches_search` below.
     const SMOOTH_OMEGA: u128 = 0x42e2_bddd_f9d0_2211_91f7_d7dc_1549_8d96;
 }
 
@@ -765,7 +765,7 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
 ///
 /// Verifies primitivity against every distinct prime factor of `n`, so
 /// it remains correct when a base lands in a strict subgroup (e.g.
-/// `g = 2` is a quadratic residue modulo `Prime128Offset801F`, so
+/// `g = 2` is a quadratic residue modulo `Prime128Offset6A23801F`, so
 /// `2^{(p−1)/n}` has order `n/2`).
 ///
 /// Used by per-prime tests as a drift guard on
@@ -940,16 +940,16 @@ mod test_support {
 }
 
 #[cfg(test)]
-mod prime_801f_tests {
-    //! `Prime128Offset801F` (`p = 2^128 - 1780711455`) has smooth
+mod prime_6a23801f_tests {
+    //! `Prime128Offset6A23801F` (`p = 2^128 - 1780711455`) has smooth
     //! multiplicative subgroup of order `2^5 * 3^3 * 5^8 = 337_500_000`, so
     //! sizes are drawn from the `{2, 3, 5}` lattice.
     use super::test_support::*;
     use super::*;
 
-    type F = Prime128Offset801F;
+    type F = Prime128Offset6A23801F;
 
-    /// Drift guard for the production 801F smooth-subgroup constants.
+    /// Drift guard for the production 6A23801F smooth-subgroup constants.
     #[test]
     fn smooth_omega_matches_search() {
         let p_minus_1 = u128::MAX - F::OFFSET;

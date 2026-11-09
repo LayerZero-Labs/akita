@@ -2,7 +2,7 @@ use rand::{rngs::StdRng, SeedableRng};
 
 use jolt_field::{
     pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, One, Prime128Offset275,
-    Prime128Offset801F, PrimeOffsetSpec, PseudoMersenne, Ring, Zero, PRIME_OFFSET_MAX,
+    Prime128Offset6A23801F, PrimeOffsetSpec, PseudoMersenne, Ring, Zero, PRIME_OFFSET_MAX,
     PRIME_OFFSET_SPECS,
 };
 
@@ -42,10 +42,10 @@ fn fp128_basic_arith() {
 #[test]
 fn fp128_primes_match_biguint_oracle() {
     const P275: u128 = 0xfffffffffffffffffffffffffffffeedu128;
-    // p_801F = 2^128 - 1780711455 = 2^128 - 0x6A23801F.
-    const P_801F: u128 = u128::MAX - 0x6A23801Fu128 + 1;
+    // p_6A23801F = 2^128 - 1780711455 = 2^128 - 0x6A23801F.
+    const P_6A23801F: u128 = u128::MAX - 0x6A23801Fu128 + 1;
     check_solinas_prime::<Prime128Offset275>(P275, 2_000, 275);
-    check_solinas_prime::<Prime128Offset801F>(P_801F, 2_000, 0x801F);
+    check_solinas_prime::<Prime128Offset6A23801F>(P_6A23801F, 2_000, 0x801F);
 }
 
 #[test]

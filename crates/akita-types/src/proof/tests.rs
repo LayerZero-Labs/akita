@@ -3,9 +3,9 @@ use akita_params::layout::tail_segments::{
     TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
 use akita_serialization::{Valid, DEFAULT_MAX_SEQUENCE_LEN};
-use jolt_field::{Prime128Offset275, Prime128Offset801F, Zero};
+use jolt_field::{Prime128Offset275, Prime128Offset6A23801F, Zero};
 
-type F = Prime128Offset801F;
+type F = Prime128Offset6A23801F;
 
 #[test]
 fn witness_emission_slice_sink_rejects_span_without_writing() {

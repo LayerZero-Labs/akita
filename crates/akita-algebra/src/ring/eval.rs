@@ -120,9 +120,9 @@ where
 mod tests {
     use super::*;
     use crate::poly::multilinear_eval;
-    use jolt_field::{CanonicalEncoding, One, Prime128Offset801F, Zero};
+    use jolt_field::{CanonicalEncoding, One, Prime128Offset6A23801F, Zero};
 
-    type F = Prime128Offset801F;
+    type F = Prime128Offset6A23801F;
     const D: usize = 64;
 
     fn sample(seed: u128) -> CyclotomicRing<F, D> {

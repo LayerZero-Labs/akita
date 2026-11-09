@@ -25,7 +25,7 @@ type F = fp128::Field;
 
 fn fp128_prime_label() -> String {
     match <F as PseudoMersenne>::OFFSET {
-        // Prime128Offset801F: p = 2^128 - 1780711455 = 2^128 - 0x6A23801F.
+        // Prime128Offset6A23801F: p = 2^128 - 1780711455 = 2^128 - 0x6A23801F.
         0x6A23801F => "q=2^128-1780711455".to_string(),
         offset => format!("q=2^128-{offset:#x}"),
     }

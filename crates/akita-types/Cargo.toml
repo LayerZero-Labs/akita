@@ -13,11 +13,11 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "eb3b0fb8be748284deba72c6855cf737d0394ae4", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "eb3b0fb8be748284deba72c6855cf737d0394ae4", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
@@ -61,7 +61,7 @@ akita-params = { version = "0.1.0", path = "../akita-params", default-features =
   "test-support",
 ] }
 criterion = { version = "0.8", features = ["html_reports"] }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "eb3b0fb8be748284deba72c6855cf737d0394ae4", default-features = false }
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false }
 rand = "0.8"
 spongefish = { version = "=0.8.0", default-features = false }
 

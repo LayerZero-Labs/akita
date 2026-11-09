@@ -155,7 +155,7 @@ pub enum SisModulusProfileId {
     Q64Offset59,
     /// Representative q = 2^128 - 1780711455.
     #[default]
-    Q128Offset801F,
+    Q128Offset6A23801F,
 }
 
 impl SisModulusProfileId {
@@ -164,7 +164,7 @@ impl SisModulusProfileId {
         match self {
             Self::Q32Offset99 => 4_294_967_197,
             Self::Q64Offset59 => 18_446_744_073_709_551_557,
-            Self::Q128Offset801F => 340_282_366_920_938_463_463_374_607_429_987_500_001,
+            Self::Q128Offset6A23801F => 340_282_366_920_938_463_463_374_607_429_987_500_001,
         }
     }
 
@@ -178,7 +178,7 @@ impl SisModulusProfileId {
         match self {
             Self::Q32Offset99 => 1,
             Self::Q64Offset59 => 2,
-            Self::Q128Offset801F => 3,
+            Self::Q128Offset6A23801F => 3,
         }
     }
 
@@ -187,7 +187,7 @@ impl SisModulusProfileId {
         match tag {
             1 => Some(Self::Q32Offset99),
             2 => Some(Self::Q64Offset59),
-            3 => Some(Self::Q128Offset801F),
+            3 => Some(Self::Q128Offset6A23801F),
             _ => None,
         }
     }
@@ -197,7 +197,7 @@ impl SisModulusProfileId {
         match self {
             Self::Q32Offset99 => "Q32Offset99",
             Self::Q64Offset59 => "Q64Offset59",
-            Self::Q128Offset801F => "Q128Offset801F",
+            Self::Q128Offset6A23801F => "Q128Offset6A23801F",
         }
     }
 

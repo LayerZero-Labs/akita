@@ -5,7 +5,7 @@ use akita_algebra::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDom
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::Prime128Offset801F;
+use jolt_field::Prime128Offset6A23801F;
 use jolt_field::{Field, One, Zero};
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -16,12 +16,12 @@ use rayon::prelude::*;
 #[cfg(feature = "parallel")]
 use std::fmt::Debug;
 
-type F = Prime128Offset801F;
+type F = Prime128Offset6A23801F;
 
 fn bench_forward(c: &mut Criterion) {
     let mut group = c.benchmark_group("fft_forward");
 
-    // Prime128Offset801F: smooth subgroup `337_500_000 = 2⁵·3³·5⁸`.
+    // Prime128Offset6A23801F: smooth subgroup `337_500_000 = 2⁵·3³·5⁸`.
     for &n in &[250, 864, 1000, 2000, 4000, 10000, 20000] {
         if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
             continue;
@@ -31,7 +31,7 @@ fn bench_forward(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(0xff00 + n as u64);
         let input: Vec<F> = (0..n).map(|_| Field::random(&mut rng)).collect();
 
-        let label = format!("801F/N={n}");
+        let label = format!("6A23801F/N={n}");
         group.bench_with_input(BenchmarkId::from_parameter(&label), &label, |b, _| {
             b.iter(|| black_box(domain.forward(black_box(&input))))
         });
@@ -147,14 +147,14 @@ fn run_rs_expand_256_par<Fld>(
 
 #[cfg(feature = "parallel")]
 fn bench_rs_expand_256_to_1024_par(c: &mut Criterion) {
-    // Prime128Offset801F: smooth subgroup of order `2⁵·3³·5⁸`. The smallest
+    // Prime128Offset6A23801F: smooth subgroup of order `2⁵·3³·5⁸`. The smallest
     // divisor covering the 256+1024 RS-extend budget is `1350 = 2·3³·5²`.
     {
         let domain_size = 1350usize;
         let omega = primitive_nth_root::<F>(domain_size);
         run_rs_expand_256_par::<F>(
             c,
-            "fft_rs_expand/256_to_1024_via_1350_x32768_par_801F",
+            "fft_rs_expand/256_to_1024_via_1350_x32768_par_6A23801F",
             omega,
             domain_size,
             0xff05,

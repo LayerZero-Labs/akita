@@ -30,7 +30,7 @@ test-support = []
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "eb3b0fb8be748284deba72c6855cf737d0394ae4", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
   "asm",
   "solinas",
 ] }
