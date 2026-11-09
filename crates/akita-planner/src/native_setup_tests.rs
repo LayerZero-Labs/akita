@@ -10,7 +10,8 @@ use akita_config::{
 use akita_params::{ChunkedWitnessCfg, OpeningScheduleSelection, ScheduleRowDigest};
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::binary_source::{
-    grouped_suffix_sources_fixture, GroupedNativeRootPlan, GroupedPrefixCapacity, GroupedTypedPrefix,
+    grouped_suffix_sources_fixture, GroupedNativeRootPlan, GroupedPrefixCapacity,
+    GroupedTypedPrefix,
 };
 use akita_types::AkitaSetupDescriptor;
 use std::sync::OnceLock;
@@ -257,9 +258,12 @@ fn native_setup_rejects_short_suffix_capacity() {
     let requirements = requirements(fixture);
     let mut setup = descriptor(&requirements);
     let local = fixture.bindings[0].1.matrix_capacity().num_field_elements;
+    // The native suffix shares the grouped root's padded typed prefix. Use the
+    // retained ordinary row's larger suffix to exercise the catalog envelope.
     let row = fixture
         .catalog
-        .resolve_selection(fixture.bindings[0].0)
+        .rows()
+        .find(|row| !row.is_native_root() && row.profiles().final_group.group.num_vars() == 27)
         .unwrap();
     let mut suffix = 1;
     for fold in &row.schedule().recursive_folds {
