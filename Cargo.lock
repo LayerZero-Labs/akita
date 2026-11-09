@@ -249,13 +249,18 @@ dependencies = [
 name = "akita-planner"
 version = "0.1.0"
 dependencies = [
+ "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-cpu-backend",
  "akita-error",
  "akita-params",
+ "akita-prover",
  "akita-schedules",
  "akita-sis-estimator",
+ "akita-transcript",
  "akita-types",
+ "akita-verifier",
  "libm",
 ]
 

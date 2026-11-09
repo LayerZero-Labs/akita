@@ -52,7 +52,7 @@ fn fixture() -> &'static Fixture {
         .unwrap();
         let schedule = find_native_root_schedule(
             seed,
-            transition,
+            transition.clone(),
             ordinary.policy(),
             Config::ring_challenge_config,
         )
@@ -80,7 +80,7 @@ fn fixture() -> &'static Fixture {
                     })
                     .map(|row| (row.profiles().clone(), row.schedule().clone())),
                 [
-                    (seed.profiles().clone(), schedule, transition),
+                    (seed.profiles().clone(), schedule, transition.clone()),
                     (second.profiles().clone(), second_schedule, transition),
                 ],
                 ordinary.policy(),
@@ -339,4 +339,148 @@ fn native_setup_rejects_successor_profile_mismatch() {
     assert!(required_native_setup_prefix_slot_ids_for_row(row, &changed).is_err());
     bindings[0].1 = changed;
     assert!(NativeSetupRequirements::from_catalog(&fixture.catalog, 32, 16, &bindings).is_err());
+}
+
+#[path = "native_actual_profiles.rs"]
+mod actual_profiles;
+
+#[test]
+fn native_setup_accepts_actual_eight_profiles() {
+    let fixture = actual_profiles::actual_fixture();
+    let row = fixture.catalog.resolve_selection(fixture.bindings[0].0).unwrap();
+    assert_eq!(row.profiles().precommitteds.len(), 7);
+    assert_eq!(row.profiles().final_group.inner.digits.num_digits, 12);
+    assert_eq!(fixture.catalog.policy().decomposition.log_commit_bound, 64);
+    assert_eq!(fixture.catalog.resolve_profiles(row.profiles(), 0).unwrap().selection(),
+        row.selection());
+    row.validate_opening_layout(&row.profiles().opening_layout().unwrap()).unwrap();
+    let old = super::setup_tests::fixture();
+    let retained = old.catalog.resolve_selection(old.bindings[0].0).unwrap().schedule();
+    assert_eq!(row.schedule().recursive_folds, retained.recursive_folds);
+    assert_eq!(row.schedule().terminal, retained.terminal);
+    let requirements = requirements(fixture);
+    let slots = required_native_setup_prefix_slot_ids_for_row(row, &fixture.bindings[0].1).unwrap();
+    assert!(slots.iter().all(|slot| requirements.requirements().prefix_slot_ids().contains(slot)));
+    let bound = requirements.bind_setup(descriptor(&requirements),
+        requirements.requirements().prefix_slot_ids()).unwrap();
+    bound[0].1.validate_plan(fixture.bindings[0].1.plan()).unwrap();
+    assert!(akita_schedules::ResolvedScheduleRow::try_new(
+        row.profiles().clone(), row.schedule().clone(), fixture.catalog.policy(),
+    ).is_err());
+}
+
+#[test]
+fn native_setup_rejects_carrier_only_profiles() {
+    let actual = actual_profiles::actual_fixture();
+    let old = fixture();
+    let carrier = old.catalog.resolve_selection(old.bindings[0].0).unwrap().profiles();
+    assert!(actual.catalog.resolve_profiles(carrier, 0).is_err());
+    let row = actual.catalog.resolve_selection(actual.bindings[0].0).unwrap();
+    assert!(row.validate_opening_layout(&carrier.opening_layout().unwrap()).is_err());
+}
+
+#[test]
+fn native_setup_rejects_swapped_source_profiles() {
+    let fixture = actual_profiles::actual_fixture();
+    let row = fixture.catalog.resolve_selection(fixture.bindings[0].0).unwrap();
+    let mut profiles = row.profiles().clone();
+    profiles.precommitteds.swap(4, 5);
+    assert_eq!(profiles.opening_layout().unwrap(), row.profiles().opening_layout().unwrap());
+    assert!(fixture.catalog.resolve_profiles(&profiles, 0).is_err());
+    let (mut binary, signed) = grouped_suffix_sources_fixture();
+    binary.swap(0, 1);
+    let capacity = &fixture.bindings[0].1;
+    let changed = GroupedNativeRootPlan::new(&binary, &signed,
+        capacity.plan().repacking().destination_ring_dimension()).unwrap();
+    let changed = GroupedPrefixCapacity::new(&changed, *capacity.successor(),
+        capacity.first().clone()).unwrap();
+    assert!(required_native_setup_prefix_slot_ids_for_row(row, &changed).is_err());
+}
+
+#[test]
+fn native_setup_rejects_changed_signed_width() {
+    let fixture = actual_profiles::actual_fixture();
+    let row = fixture.catalog.resolve_selection(fixture.bindings[0].0).unwrap();
+    let (binary, mut signed) = grouped_suffix_sources_fixture();
+    let original = signed[3].0;
+    signed[3].1 = akita_params::ordinary_source::OrdinarySourceWidth::new(34).unwrap();
+    signed[3].1.validate_profile(&original).unwrap();
+    let capacity = &fixture.bindings[0].1;
+    let changed = GroupedNativeRootPlan::new(&binary, &signed,
+        capacity.plan().repacking().destination_ring_dimension()).unwrap();
+    assert_eq!(*changed.ordinary().unwrap().plans()[3].profile(), original);
+    let changed = GroupedPrefixCapacity::new(&changed, *capacity.successor(),
+        capacity.first().clone()).unwrap();
+    assert!(required_native_setup_prefix_slot_ids_for_row(row, &changed).is_err());
+}
+
+#[test]
+fn native_setup_rejects_p128_source_profile() {
+    let fixture = actual_profiles::actual_fixture();
+    let row = fixture.catalog.resolve_selection(fixture.bindings[0].0).unwrap();
+    let mut profiles = row.profiles().clone();
+    profiles.final_group = akita_types::binary_source::binary_ordinary_profile_fixture(
+        akita_params::binary_setup::BinaryFieldProfile::P128, Some((33, 1)),
+    );
+    profiles.final_group.validate_frozen_precommit(128).unwrap();
+    assert!(fixture.catalog.resolve_profiles(&profiles, 0).is_err());
+    let sources = row.grouped_root().unwrap();
+    assert!(akita_schedules::native_root::NativeRootSources::new(
+        profiles, *sources.signed_widths(), sources.identity().to_vec(),
+    ).is_err());
+}
+
+#[path = "native_open_fixture.rs"]
+mod native_open_fixture;
+#[path = "native_open_controls.rs"]
+mod native_open_controls;
+
+#[test]
+fn native_open_accepts_staged_four_group_p64() {
+    let opening = native_open_fixture::opening();
+    assert!(!opening.proof.is_empty());
+    opening.verify(&opening.claims, &opening.setup, &opening.proof).unwrap();
+    let mut trailing = opening.proof.clone();
+    trailing.push(0);
+    assert!(opening.verify(&opening.claims, &opening.setup, &trailing).is_err());
+}
+
+#[test]
+fn native_open_rejects_foreign_prefix_context() {
+    native_open_controls::reject_foreign_context(false);
+}
+
+#[test]
+fn native_open_rejects_substituted_plan() {
+    native_open_controls::reject_substituted_plan();
+}
+
+#[test]
+fn native_open_rejects_source_order() {
+    native_open_controls::reject_source_order();
+}
+
+#[test]
+fn native_open_rejects_wrong_field() {
+    native_open_controls::reject_wrong_field();
+}
+
+#[test]
+fn native_open_rejects_short_setup_capacity() {
+    native_open_controls::reject_short_capacity();
+}
+
+#[test]
+fn native_open_rejects_tampered_value_point_0() {
+    native_open_controls::reject_values(0);
+}
+
+#[test]
+fn native_open_rejects_tampered_value_point_1() {
+    native_open_controls::reject_values(1);
+}
+
+#[test]
+fn native_open_rejects_tampered_typed_prefix_identity() {
+    native_open_controls::reject_foreign_context(true);
 }

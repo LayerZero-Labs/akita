@@ -22,6 +22,10 @@ libm = "0.2"
 [features]
 default = ["transcript-keccak"]
 transcript-blake2b = [
+  "akita-cpu-backend/transcript-blake2b",
+  "akita-prover/transcript-blake2b",
+  "akita-verifier/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
   "akita-challenges/transcript-blake2b",
   "akita-config?/transcript-blake2b",
   "akita-schedules/transcript-blake2b",
@@ -30,6 +34,10 @@ transcript-blake2b = [
   "akita-types?/transcript-blake2b",
 ]
 transcript-keccak = [
+  "akita-cpu-backend/transcript-keccak",
+  "akita-prover/transcript-keccak",
+  "akita-verifier/transcript-keccak",
+  "akita-transcript/transcript-keccak",
   "akita-challenges/transcript-keccak",
   "akita-config?/transcript-keccak",
   "akita-schedules/transcript-keccak",
@@ -42,6 +50,9 @@ catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
 labinius-trinomial = [
+  "akita-cpu-backend/labinius-trinomial",
+  "akita-prover/labinius-trinomial",
+  "akita-verifier/labinius-trinomial",
   "dep:akita-types",
   "akita-types/labinius-trinomial",
   "akita-params/labinius-trinomial",
@@ -51,6 +62,11 @@ labinius-trinomial = [
 dev-protocol = ["akita-params/dev-protocol"]
 
 [dev-dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra", default-features = false }
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
+akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
+akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
   "test-support",
 ] }
