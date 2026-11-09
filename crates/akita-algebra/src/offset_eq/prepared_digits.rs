@@ -53,6 +53,28 @@ fn invalid() -> AkitaError {
 }
 
 impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
+    /// Conservative preparation work, before any row visits.
+    ///
+    /// Counts the full residue/digit contraction and the materialized high
+    /// equality window, even when geometric digits make preparation cheaper.
+    /// Returns `None` for an unrepresentable shape or insufficient point arity.
+    /// This estimate does not replace the eligibility checks in [`Self::new`].
+    #[must_use]
+    pub fn preparation_work(
+        challenge_count: usize,
+        digit_count: usize,
+        low_count: usize,
+    ) -> Option<usize> {
+        let stride = checked::product([digit_count, low_count.max(1)])?;
+        let bits = checked::ceil_log2(stride)?;
+        let width = checked::pow2(bits)?;
+        let high_bits = challenge_count.checked_sub(bits)?;
+        checked::sum([
+            checked::product([width, stride])?,
+            OffsetEqWindow::<F>::materialized_len(high_bits).ok()?,
+        ])
+    }
+
     /// Prepare rows of `digits` and `low` lanes on `challenges`.
     ///
     /// Returns `None` when a row is wider than the prepared bound, the point is
@@ -307,17 +329,11 @@ where
         return Ok(None);
     }
     let rows = live_len / lanes;
-    let prepared_work = outer_stride.checked_mul(lanes).and_then(|stride| {
-        let width = stride.checked_next_power_of_two()?;
-        let high_point = challenges
-            .len()
-            .checked_sub(width.trailing_zeros() as usize)?;
-        checked::sum([
-            width.checked_mul(stride)?,
-            OffsetEqWindow::<F>::materialized_len(high_point).ok()?,
-            rows.checked_mul(base_offsets.len())?,
-        ])
-    });
+    let prepared_work =
+        PreparedDigits::<F, A>::preparation_work(challenges.len(), outer_stride, low_weights.len())
+            .and_then(|preparation| {
+                checked::sum([preparation, checked::product([rows, base_offsets.len()])?])
+            });
     if prepared_work.is_none_or(|work| work >= general_work) {
         return Ok(None);
     }
