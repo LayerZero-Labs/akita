@@ -4,6 +4,106 @@ use jolt_field::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
 
+fn check_equality_kernels<E: Field>(modulus: SetupStreamModulus, extension: E) {
+    use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
+    use akita_params::{RelationPolynomial, RelationRowGeometry};
+
+    // Short low tables, full columns, padding crossings, repeated low windows,
+    // and a final partial column crossing two differently sized segments.
+    for shape in [
+        vec![(8, 1)],
+        vec![(64, 2)],
+        vec![(648, 2)],
+        vec![(162, 9)],
+        vec![(648, 1), (162, 1), (8, 1)],
+    ] {
+        let segments = shape
+            .iter()
+            .map(|&(degree, elements)| {
+                let polynomial = if degree == 162 {
+                    RelationPolynomial::plus_trinomial(degree)
+                } else if degree == 648 {
+                    RelationPolynomial::minus_trinomial(degree)
+                } else {
+                    RelationPolynomial::negacyclic(degree)
+                }
+                .unwrap();
+                RootRepackingSegment {
+                    geometry: RelationRowGeometry::for_polynomial(
+                        polynomial,
+                        1,
+                        degree.next_power_of_two(),
+                    )
+                    .unwrap(),
+                    elements,
+                    digits: 1,
+                }
+            })
+            .collect();
+        let repacking = RootCoefficientRepacking::new(segments, 8).unwrap();
+        let lanes = (0..shape.len())
+            .map(|i| SegmentLanes::new(&repacking, i).unwrap())
+            .collect();
+        let count: usize = shape
+            .iter()
+            .map(|&(degree, elements)| degree * elements)
+            .sum();
+        let mut family = DigitAuthenticationWeights {
+            lanes,
+            columns: count.div_ceil(64),
+            table_len: repacking.domain_len(),
+            seed: [41; 32],
+            label: SetupStreamLabel {
+                modulus,
+                ..label(SetupStreamRole::WitnessCommitment)
+            },
+            alpha: E::zero(),
+            row_batches: vec![extension, E::from_u64(23)],
+        };
+        for alpha in [E::zero(), E::one(), -E::one(), extension] {
+            family.alpha = alpha;
+            let mut dense = vec![E::zero(); family.table_len];
+            family
+                .visit(|address, value| {
+                    dense[address] += value;
+                    Ok(())
+                })
+                .unwrap();
+            let n = family.table_len.trailing_zeros() as usize;
+            for point in [
+                vec![E::zero(); n],
+                vec![E::one(); n],
+                (0..n).map(|i| extension + E::from_u64(i as u64)).collect(),
+            ] {
+                let expected = dense
+                    .iter()
+                    .zip(akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap())
+                    .fold(E::zero(), |sum, (&weight, eq)| sum + weight * eq);
+                assert_eq!(
+                    family.evaluate(&RootEq::new(&point).unwrap()).unwrap(),
+                    expected
+                );
+            }
+        }
+        if family.table_len > 64 {
+            // A valid cached low window cannot hide an invalid high address.
+            assert!(family
+                .evaluate(&RootEq::new(&[E::one(); 6]).unwrap())
+                .is_err());
+        }
+    }
+}
+
+#[test]
+fn authentication_low_kernels_preserve_p128_and_extension_evaluations() {
+    use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
+    check_equality_kernels(SetupStreamModulus::Prime128Offset275, F::from_u64(17));
+    check_equality_kernels::<Ext2<Base>>(
+        SetupStreamModulus::Prime64Offset59,
+        Ext2::from_base_fn(|i| Base::from_u64(17 + i as u64)),
+    );
+}
+
 fn plan() -> BinaryRootWitnessPlan {
     let descriptor = BinarySourceDescriptor::new(
         BinaryIndexMap::new(128, 8, 8, 2).unwrap(),

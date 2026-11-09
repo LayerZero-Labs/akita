@@ -372,27 +372,58 @@ impl<E: Field> DigitAuthenticationWeights<E> {
         Ok(filled)
     }
 
-    /// Sum every setup column's contribution; columns run in parallel under
-    /// the `parallel` feature. Field addition is exact, so the order of the
-    /// partial sums does not change the result.
+    /// Sum every setup column's contribution. A contiguous column inside one
+    /// equality block has `K(eq) = high * K(low)`. Prepare those low kernels
+    /// once, and apply the high factor after the row dot products. Columns
+    /// crossing padding still gather their exact addresses before reduction.
+    /// Columns retain their existing parallel traversal under `parallel`.
     pub(crate) fn evaluate(&self, eq: &RootEq<E>) -> Result<E, AkitaError> {
         let kernel = ResidueKernelPoint::new(self.alpha, BINARY_DIGIT_COMMITMENT_DEGREE)?;
         let low = eq.low();
+        // RootEq bounds low to 1024 entries, hence at most 961 kernels. This
+        // scratch belongs to this point and alpha, never to a later evaluation.
+        let windows = low.windows(BINARY_DIGIT_COMMITMENT_DEGREE);
+        let mut low_kernels = Vec::new();
+        low_kernels
+            .try_reserve_exact(windows.len())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for window in windows {
+            let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+            kernel.field_kernel_into(window, &mut reduced)?;
+            low_kernels.push(reduced);
+        }
         let column_sum = |column: usize| -> Result<E, AkitaError> {
             let mut addresses = [0usize; BINARY_DIGIT_COMMITMENT_DEGREE];
             let filled = self.column_addresses(column, &mut addresses)?;
-            let mut equality = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-            for (slot, &address) in equality
-                .iter_mut()
-                .zip(addresses.get(..filled).ok_or(AkitaError::InvalidProof)?)
-            {
-                *slot = eq.high(address)?
-                    * *low
-                        .get(eq.low_offset(address))
-                        .ok_or(AkitaError::InvalidProof)?;
-            }
+            let addresses = addresses.get(..filled).ok_or(AkitaError::InvalidProof)?;
+            let first = *addresses.first().ok_or(AkitaError::InvalidProof)?;
+            let contiguous = filled == BINARY_DIGIT_COMMITMENT_DEGREE
+                && addresses
+                    .iter()
+                    .enumerate()
+                    .all(|(offset, &address)| checked::sum([first, offset]) == Some(address));
+            let cached = low_kernels.get(eq.low_offset(first)).filter(|_| contiguous);
+            let mut scale = E::one();
             let mut reduced = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
-            kernel.field_kernel_into(&equality, &mut reduced)?;
+            let reduced = if let Some(cached) = cached {
+                scale = eq.high(first)?;
+                cached
+            } else {
+                let mut equality = [E::zero(); BINARY_DIGIT_COMMITMENT_DEGREE];
+                let mut block = None;
+                let mut high = E::zero();
+                for (slot, &address) in equality.iter_mut().zip(addresses) {
+                    let offset = eq.low_offset(address);
+                    let current = address - offset;
+                    if block != Some(current) {
+                        high = eq.high(address)?;
+                        block = Some(current);
+                    }
+                    *slot = high * *low.get(offset).ok_or(AkitaError::InvalidProof)?;
+                }
+                kernel.field_kernel_into(&equality, &mut reduced)?;
+                &reduced
+            };
             let mut sum = E::zero();
             if self.label.rank == 2 {
                 let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
@@ -400,7 +431,7 @@ impl<E: Field> DigitAuthenticationWeights<E> {
                     sum += batch
                         * entry
                             .iter()
-                            .zip(&reduced)
+                            .zip(reduced)
                             .fold(E::zero(), |acc, (&m, &k)| acc + E::from_u128(m) * k);
                 }
             } else {
@@ -415,11 +446,11 @@ impl<E: Field> DigitAuthenticationWeights<E> {
                         * entry
                             .coefficients()
                             .iter()
-                            .zip(&reduced)
+                            .zip(reduced)
                             .fold(E::zero(), |acc, (&m, &k)| acc + m * k);
                 }
             }
-            Ok(sum)
+            Ok(scale * sum)
         };
         let sums = cfg_into_iter!(0..self.columns)
             .map(column_sum)
