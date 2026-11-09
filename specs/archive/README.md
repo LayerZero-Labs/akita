@@ -64,3 +64,9 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q2/sis-euclidean-estimator.md` | superseded | `book/src/how/security.md` | 2026-Q2 |
 | `2026-Q2/sis-infinity-estimator-implementation-plan.md` | superseded | _(slice plan superseded by cutover spec)_ | 2026-Q2 |
 | `2026-Q2/tiered-commitment.md` | superseded | `book/src/how/commitment.md` | 2026-Q2 |
+| `2026-Q4/labinius-clear-opening.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
+| `2026-Q4/labinius-lowered-root.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
+| `2026-Q4/labinius-pcs.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
+| `2026-Q4/labinius-root-reduction.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
+| `2026-Q4/labinius-root-sumcheck.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
+| `2026-Q4/labinius-setup-contract.md` | historical | _(removed crates; design record)_ | 2026-Q4 |

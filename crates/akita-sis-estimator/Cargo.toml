@@ -49,6 +49,10 @@ harness = false
 name = "labinius_infinity_width_table"
 required-features = ["labinius-sis"]
 
+[[example]]
+name = "q24_infinity_width_table"
+required-features = ["labinius-sis"]
+
 [[test]]
 name = "labinius_width_table"
 required-features = ["labinius-sis"]

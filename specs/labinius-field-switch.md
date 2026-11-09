@@ -10,7 +10,7 @@ The arithmetic implementation and scoped acceptance checks have landed in
 `akita-algebra`. This record preserves their arithmetic contract until it is
 folded into the Book. Native field-switch integration is described in
 [binary-source-opening.md](binary-source-opening.md); the standalone F192 host
-opening API is withdrawn.
+opening API was removed.
 
 This slice supplies accelerated host arithmetic and field-switch kernels for
 both F128-witness/F128-challenge and F64-witness/F192-challenge profiles. It

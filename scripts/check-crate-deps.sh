@@ -27,7 +27,6 @@ else
       ;;
     akita-cpu-backend)
       forbidden=(akita-planner akita-verifier akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
-      forbidden+=(akita-labinius-prover akita-labinius-verifier akita-labinius-pcs)
       ;;
     akita-config)
       forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
@@ -54,16 +53,6 @@ else
       # planner or setup dependency.
       forbidden=(akita-planner akita-prover akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover)
       ;;
-    akita-labinius-verifier)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-labinius-prover)
-      ;;
-    akita-labinius-prover)
-      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
-      ;;
-    akita-labinius-pcs)
-      # Offline artifact generation may opt into the planner; ordinary loading may not.
-      forbidden=(akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
-      ;;
     akita-zk-prover)
       # Prover-side zero-knowledge building blocks (#120). Like akita-prover,
       # they reach CPU kernels only through backend traits.
@@ -81,7 +70,7 @@ fi
 # Verifier tests must also remain independent of the prover and PCS layers;
 # otherwise test-only reverse edges can conceal a production layering error.
 edge_kinds="normal"
-if [ "${pkg}" = "akita-verifier" ] || [ "${pkg}" = "akita-zk-verifier" ] || [ "${pkg}" = "akita-labinius-verifier" ]; then
+if [ "${pkg}" = "akita-verifier" ] || [ "${pkg}" = "akita-zk-verifier" ]; then
   edge_kinds="normal,dev"
 fi
 default_tree="$(cargo tree -p "${pkg}" --edges "${edge_kinds}")"
@@ -93,10 +82,6 @@ for label in default all-features; do
     all-features) tree="${all_features_tree}" ;;
   esac
   for candidate in "${forbidden[@]}"; do
-    # The withdrawn standalone prover now calls the canonical CPU arithmetic.
-    if [ "$#" -eq 0 ] && [ "$pkg" = "akita-labinius-prover" ] && [ "$candidate" = "akita-cpu-backend" ]; then
-      continue
-    fi
     if grep -qE "(^|[[:space:]])${candidate}([[:space:]]|$)" <<<"${tree}"; then
       echo "forbidden dependency found in ${pkg} (${label}): ${candidate}" >&2
       exit 1
@@ -120,24 +105,6 @@ if [ "${pkg}" = "akita-prover" ]; then
     echo "backend transfer readers or codecs leaked into generic prover code" >&2
     exit 1
   fi
-fi
-
-if [ "${pkg}" = "akita-labinius-pcs" ]; then
-  # The union covers every runtime feature combination, including future features.
-  runtime_features="$(cargo metadata --format-version 1 --no-deps | python3 -c '
-import json
-import sys
-package = next(package for package in json.load(sys.stdin)["packages"]
-               if package["name"] == "akita-labinius-pcs")
-print(",".join(sorted(set(package["features"]) - {"labinius-catalog-gen"})))
-')"
-  for features in transcript-keccak labinius,transcript-keccak "$runtime_features"; do
-    runtime_tree="$(cargo tree -p "$pkg" --edges normal --no-default-features --features "$features")"
-    if grep -qE '(^|[[:space:]])akita-planner([[:space:]]|$)' <<<"$runtime_tree"; then
-      echo "planner dependency found in runtime LaBinius PCS ($features)" >&2
-      exit 1
-    fi
-  done
 fi
 
 if [ "${pkg}" = "akita-verifier" ]; then

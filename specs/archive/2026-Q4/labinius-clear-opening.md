@@ -1,8 +1,9 @@
 # Standalone clear binary opening
 
-Status: implemented
-Book-chapter: book/src/how/architecture.md
-Tracking: https://github.com/LayerZero-Labs/akita/issues/45
+Status: historical
+
+Archived 2026-Q4, when the `akita-labinius-pcs`, `-prover` and `-verifier` crates it
+described were removed. It is kept as the design record.
 
 ## Scope
 
@@ -19,7 +20,7 @@ It admits no production parameter set. It has no outer commitment, setup
 offloading, quotient or carry rows, bit dropping, recursion, performance
 contract, or zero knowledge. Its proof encoding is not the production Akita
 proof format. Native field-switch integration is implemented separately; see
-[the native binary-source specification](binary-source-opening.md). Arithmetic
+[the native binary-source specification](../../binary-source-opening.md). Arithmetic
 and protocol agreement in this retired oracle do not establish native protocol
 security.
 
@@ -82,7 +83,7 @@ It requires:
 
 The interval is an explicit argument. The admitted root setup passes the
 balanced digit range of its shape
-([root admission](labinius-root-admission.md#fold-response)); a test may pass
+([root admission](../../labinius-root-admission.md#fold-response)); a test may pass
 any interval that satisfies items 2 and 4. The source comparison identity
 binds the commitment modulus, ring degree, and matrix-view digest. These are
 geometry, entropy, and no-wrap checks, not SIS security admission.
@@ -166,7 +167,7 @@ have canonical encodings; unused offsets and extra bytes reject.
 
 The response interval is narrower than the worst-case fold, so an honest
 response can leave it. Step 6 is Akita's fold grinding
-([`fold-linf-rejection.md`](fold-linf-rejection.md)) with the same message and
+([`fold-linf-rejection.md`](../../fold-linf-rejection.md)) with the same message and
 constants. The nonce is one `NonceAtom`, a canonical unsigned LEB128 proof
 message, absorbed directly before the fold-challenge draw; the search domain
 is `FOLD_RESPONSE_ATTEMPTS = 2^FOLD_RESPONSE_NONCE_BITS = 4096`, so the

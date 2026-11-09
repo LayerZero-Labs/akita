@@ -9,7 +9,7 @@ Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 Implementation and scoped acceptance checks have landed in `akita-algebra`.
 This record preserves the packed arithmetic contract until it is folded into
 the Book. The native binary-source path uses this arithmetic independently of
-the withdrawn standalone opening APIs.
+the removed standalone opening APIs.
 
 The implementation supplies reusable computation storage and product-sumcheck
 arithmetic over `BinaryField162`. This slice depends on the scalar arithmetic in
