@@ -16,7 +16,7 @@ use std::hint::black_box;
 
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, Criterion};
-use jolt_field::{CanonicalEncoding, Ring};
+use jolt_algebra::{CanonicalEncoding, Ring};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;

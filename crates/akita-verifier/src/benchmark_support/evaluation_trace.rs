@@ -8,17 +8,17 @@ use crate::relation::evaluation_trace::{
 };
 use akita_error::AkitaError;
 use akita_params::BasisMode;
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 /// Exact synthetic trace fixture for production-kernel benchmarks.
 pub struct EvaluationTraceBenchmarkCase {
-    pub(crate) trace: PreparedEvaluationTrace<jolt_field::Prime128OffsetA7F7>,
-    pub(crate) point: Vec<jolt_field::Prime128OffsetA7F7>,
+    pub(crate) trace: PreparedEvaluationTrace<jolt_algebra::Prime128OffsetA7F7>,
+    pub(crate) point: Vec<jolt_algebra::Prime128OffsetA7F7>,
 }
 
 impl EvaluationTraceBenchmarkCase {
     /// Evaluate the prepared trace at its fixed benchmark point.
-    pub fn evaluate(&self) -> Result<jolt_field::Prime128OffsetA7F7, AkitaError> {
+    pub fn evaluate(&self) -> Result<jolt_algebra::Prime128OffsetA7F7, AkitaError> {
         self.trace.evaluate_at_point(&self.point)
     }
 }
@@ -31,7 +31,7 @@ pub fn evaluation_trace_benchmark_case(
     basis: BasisMode,
 ) -> Result<EvaluationTraceBenchmarkCase, AkitaError> {
     use akita_params::dyadic_block_ranges;
-    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128OffsetA7F7 as F;
 
     const SOURCE_RING_DIMENSION: usize = 128;
     const OPENING_RING_DIMENSION: usize = 128;

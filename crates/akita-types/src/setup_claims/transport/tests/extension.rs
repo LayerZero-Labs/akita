@@ -1,6 +1,6 @@
 use super::super::*;
 use crate::{derive_public_matrix_prefix, AkitaExpandedSetup, AkitaSetupDescriptor, FpExtEncoding};
-use jolt_field::{Ext2, FpExt4, FpExt8, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{Ext2, FpExt4, FpExt8, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 fn round_trip<F, E>()
 where

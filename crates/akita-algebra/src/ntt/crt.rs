@@ -495,7 +495,7 @@ mod capacity_tests {
     use super::CrtCapacity;
     use crate::ntt::tables::{I16_TAIL_PRIME, Q32_PRIMES};
     use crate::PrimeWidth;
-    use jolt_field::Prime32Offset99;
+    use jolt_algebra::Prime32Offset99;
 
     #[test]
     fn q32_capacity_matches_existing_exact_widths() {
@@ -531,7 +531,7 @@ mod garner_tests {
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::{I16_TAIL_PRIME, I32_RAW_PRIMES};
     use crate::Field;
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99};
+    use jolt_algebra::{Prime128OffsetA7F7, Prime32Offset99};
 
     /// Checks range and `sum_k d_k prod_{j<k} p_j == r_i (mod p_i)` for all i.
     fn mixed_radix<const K: usize>(garner: &GarnerData<K>, residues: [i64; K]) -> [i64; K] {

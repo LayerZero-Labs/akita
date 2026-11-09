@@ -16,7 +16,7 @@ use akita_types::{
     AkitaInstanceDescriptor, AkitaSetupDescriptor, AlgebraSection, CallSection, FpExtEncoding,
     PlanSection, SetupSection, TranscriptGrindingBinding,
 };
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Construct the canonical [`AkitaInstanceDescriptor`] bytes and grinding plan.
 ///

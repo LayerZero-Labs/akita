@@ -5,7 +5,7 @@ use super::{
 use crate::opaque::CommitInnerPlan;
 use crate::sources::signed_blocks::signed_extrema;
 use akita_error::{checked, AkitaError};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::sync::OnceLock;
 
 use compiler::checked_logical_len;

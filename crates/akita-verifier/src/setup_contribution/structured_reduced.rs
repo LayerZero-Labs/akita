@@ -278,7 +278,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
+    use jolt_algebra::{One, Prime128Offset275 as F, Ring, Zero};
 
     #[test]
     fn ambient_sparse_multiplier_is_not_scalarized_at_alpha() {

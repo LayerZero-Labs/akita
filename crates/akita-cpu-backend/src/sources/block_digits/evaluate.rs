@@ -4,8 +4,8 @@ use crate::sources::poly_helpers::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(crate) fn evaluate_and_fold_base<F, S, const D: usize>(
     source: &S,

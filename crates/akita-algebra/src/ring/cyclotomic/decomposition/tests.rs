@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{
+use jolt_algebra::{
     Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime40Offset195, Prime64Offset59,
 };
 use rand::rngs::StdRng;

@@ -42,7 +42,7 @@ use akita_prover::SelectedProverOpeningData;
 use akita_schedules::ResolvedScheduleRow;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{FpExtEncoding, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{
+use jolt_algebra::{
     CanonicalBytes, CanonicalEncoding, ExtField, Fold, PseudoMersenne, Ring, Unreduced,
     WithCommitAccumulator,
 };
@@ -244,9 +244,9 @@ where
         + Valid
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
-        + jolt_field::MulBaseUnreduced<Cfg::Field>
+        + jolt_algebra::MulBaseUnreduced<Cfg::Field>
         + 'static,
-    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_algebra::AdditiveGroup,
     S: GroupSource<Cfg>,
 {
     let profiles = row.profiles();
@@ -419,9 +419,9 @@ where
         + Valid
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
-        + jolt_field::MulBaseUnreduced<Cfg::Field>
+        + jolt_algebra::MulBaseUnreduced<Cfg::Field>
         + 'static,
-    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_field::AdditiveGroup,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + jolt_algebra::AdditiveGroup,
     S: GroupSource<Cfg>,
 {
     let scheme = load_workspace_scheme::<Cfg>(chunking).expect("workspace schedule catalog");

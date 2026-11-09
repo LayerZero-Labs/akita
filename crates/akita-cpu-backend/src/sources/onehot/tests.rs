@@ -3,8 +3,8 @@ use super::*;
 use crate::opaque::RootOpeningSource;
 use crate::DensePoly;
 use akita_params::FlatMatrix;
-use jolt_field::{Field, Ring};
-use jolt_field::{Fp64, Prime128Offset275, Prime24Offset3};
+use jolt_algebra::{Field, Ring};
+use jolt_algebra::{Fp64, Prime128Offset275, Prime24Offset3};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

@@ -3,7 +3,7 @@ use crate::commitment::{
     ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
 };
 use crate::{DensePoly, OneHotPoly};
-use jolt_field::{Fp64, Ring};
+use jolt_algebra::{Fp64, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type F = Fp64<4294967197>;

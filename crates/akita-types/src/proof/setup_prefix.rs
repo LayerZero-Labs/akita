@@ -12,7 +12,7 @@ use akita_params::CommittedGroupParams;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 

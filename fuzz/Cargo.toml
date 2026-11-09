@@ -29,7 +29,7 @@ parallel = [
   "akita-sumcheck/parallel",
   "akita-types/parallel",
   "akita-verifier/parallel",
-  "jolt-field/parallel",
+  "jolt-algebra/parallel",
 ]
 
 [dependencies]
@@ -73,11 +73,11 @@ akita-types = { path = "../crates/akita-types", default-features = false, featur
 akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = [
   "transcript-keccak",
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8f0f5b9edf4ef1b1b837a282357f1061c833dc62", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8f0f5b9edf4ef1b1b837a282357f1061c833dc62", default-features = false }
 libfuzzer-sys = "0.4.12"
 num-bigint = "0.4"
 rayon = "1.10"

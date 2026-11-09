@@ -11,7 +11,7 @@ use akita_algebra::ring::ResidueKernelPoint;
 use akita_challenges::Challenges;
 use akita_params::dispatch_for_field;
 use akita_types::RingMultiplierOpeningPoint;
-use jolt_field::{ExtField, MulBaseUnreduced};
+use jolt_algebra::{ExtField, MulBaseUnreduced};
 
 fn sparse_challenge_kernel<F, E>(
     challenges: &Challenges,

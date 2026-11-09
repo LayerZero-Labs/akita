@@ -8,7 +8,7 @@
 use akita_error::{checked, AkitaError};
 
 use crate::Field;
-use jolt_field::solinas::parallel::*;
+use jolt_algebra::solinas::parallel::*;
 
 mod prepared_digits;
 mod tensor_pair;

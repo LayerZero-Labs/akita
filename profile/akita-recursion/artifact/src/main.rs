@@ -31,7 +31,7 @@ use akita_types::{
 };
 use akita_verifier::AkitaVerifier;
 use clap::Parser;
-use jolt_field::{
+use jolt_algebra::{
     CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced,
     WithCommitAccumulator,
 };

@@ -2,7 +2,7 @@
 
 use akita_challenges::{Challenges, FoldChallengeDrawDomain, FoldDraw};
 use akita_error::AkitaError;
-use jolt_field::{ExtField, Field};
+use jolt_algebra::{ExtField, Field};
 
 use crate::CoefficientPackingChallenges;
 use akita_params::SubringCoefficientPackingGeometry;

@@ -56,7 +56,10 @@ pub use traits::{
 };
 
 /// Complete protocol capability implemented by a concrete prover backend.
-pub trait ProverBackend<F: jolt_field::Field + jolt_field::CanonicalEncoding, E: jolt_field::Field>:
+pub trait ProverBackend<
+    F: jolt_algebra::Field + jolt_algebra::CanonicalEncoding,
+    E: jolt_algebra::Field,
+>:
     ProofAdmission<F, E>
     + OpaqueOpeningKernel<F, E>
     + OpaqueEorKernel<F, E>
@@ -77,8 +80,8 @@ pub trait ProverBackend<F: jolt_field::Field + jolt_field::CanonicalEncoding, E:
 
 impl<F, E, B> ProverBackend<F, E> for B
 where
-    F: jolt_field::Field + jolt_field::CanonicalEncoding,
-    E: jolt_field::Field,
+    F: jolt_algebra::Field + jolt_algebra::CanonicalEncoding,
+    E: jolt_algebra::Field,
     B: ProofAdmission<F, E>
         + OpaqueOpeningKernel<F, E>
         + OpaqueEorKernel<F, E>

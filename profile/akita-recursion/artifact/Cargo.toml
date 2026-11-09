@@ -16,7 +16,7 @@ akita-recursion-glue = { path = "../glue" }
 akita-serialization = { path = "../../../crates/akita-serialization" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "8f0f5b9edf4ef1b1b837a282357f1061c833dc62", default-features = false, features = [
   "asm",
   "solinas",
 ] }
@@ -40,7 +40,7 @@ default = ["parallel"]
 parallel = [
   "dep:rayon",
   "akita-pcs/parallel",
-  "jolt-field/parallel",
+  "jolt-algebra/parallel",
   "akita-cpu-backend/parallel",
 ]
 

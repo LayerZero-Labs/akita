@@ -4,7 +4,7 @@ use crate::opaque::NttExecutionRequirements;
 use akita_error::AkitaError;
 use akita_params::FoldSchedule;
 
-impl<F: jolt_field::Field + jolt_field::CanonicalEncoding, E> CpuBackend<F, E> {
+impl<F: jolt_algebra::Field + jolt_algebra::CanonicalEncoding, E> CpuBackend<F, E> {
     /// Prepare the CPU cache union for a complete commit-and-prove workload.
     pub fn prewarm(&self, schedule: &FoldSchedule) -> Result<(), AkitaError> {
         let prepared = self.prepared()?;

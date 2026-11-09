@@ -111,6 +111,6 @@ use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::uniform_sumcheck_shape;
 #[cfg(test)]
-use jolt_field::CanonicalEncoding;
-use jolt_field::Field;
+use jolt_algebra::CanonicalEncoding;
+use jolt_algebra::Field;
 use std::io::{Read, Write};

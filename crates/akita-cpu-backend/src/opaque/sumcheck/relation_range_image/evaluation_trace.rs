@@ -8,8 +8,8 @@ use std::sync::Arc;
 use akita_error::AkitaError;
 
 use akita_params::{basis_weights_prefix, BasisMode};
-use jolt_field::solinas::parallel::*;
-use jolt_field::Field;
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::Field;
 
 use super::coefficient_packing_terms::{CpuCoefficientPackingSource, CpuCoefficientPackingTerms};
 

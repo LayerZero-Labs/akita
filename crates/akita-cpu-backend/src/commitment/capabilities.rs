@@ -1,7 +1,7 @@
 use super::{BackendKindId, PolynomialType};
 use akita_error::AkitaError;
 use akita_params::{RingRelationMode, RingRole};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Inner-operation capabilities used while compiling one request.
 pub(crate) struct CommitmentRequestCapabilities {

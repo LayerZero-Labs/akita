@@ -4,7 +4,7 @@ use super::{
     WitnessCommitmentOutput,
 };
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use jolt_poly::UnivariatePoly;
 
 /// Coherent opaque handles for a backend implementation.

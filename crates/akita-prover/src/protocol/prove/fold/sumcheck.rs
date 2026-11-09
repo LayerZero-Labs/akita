@@ -639,8 +639,8 @@ where
         + Ring
         + ExtField<F>
         + AkitaSerialize
-        + jolt_field::Unreduced
-        + jolt_field::MulBaseUnreduced<F>
+        + jolt_algebra::Unreduced
+        + jolt_algebra::MulBaseUnreduced<F>
         + ChallengeCodec,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
@@ -747,8 +747,8 @@ where
         + Ring
         + ExtField<F>
         + AkitaSerialize
-        + jolt_field::Unreduced
-        + jolt_field::MulBaseUnreduced<F>,
+        + jolt_algebra::Unreduced
+        + jolt_algebra::MulBaseUnreduced<F>,
     B: crate::backend::OpaqueStage3Kernel<F, E> + crate::backend::ProverHandleFamily<F, E>,
 {
     if setup_contribution_mode == SetupContributionMode::Direct {

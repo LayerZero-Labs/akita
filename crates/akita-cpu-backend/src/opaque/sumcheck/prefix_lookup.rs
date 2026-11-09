@@ -19,7 +19,7 @@
 //!   extension over the quad.
 //! - `Infinity` means "take the leading coefficient in that coordinate".
 
-use jolt_field::{Field, Unreduced};
+use jolt_algebra::{Field, Unreduced};
 
 pub(crate) const LOOKUP_PREFIX_INF: i64 = i64::MIN;
 
@@ -102,7 +102,7 @@ pub(crate) fn mul_linear_by_quadratic_coeffs<E: Field>(tau: E, quad: [E; 3]) -> 
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use jolt_field::Field;
+    use jolt_algebra::Field;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) enum PrefixPoint<E: Field> {

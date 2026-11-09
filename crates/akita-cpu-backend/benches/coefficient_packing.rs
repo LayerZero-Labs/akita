@@ -14,7 +14,7 @@ use akita_types::{
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 use std::time::Duration;
 
 fn prepared_tables<F, E, const D: usize>(

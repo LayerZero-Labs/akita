@@ -7,7 +7,7 @@ use akita_params::{lagrange_weights, BasisMode};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::{Ring, Zero};
+use jolt_algebra::{Ring, Zero};
 
 macro_rules! onehot_roundtrip {
     ($config:ty, $basis:expr) => {{

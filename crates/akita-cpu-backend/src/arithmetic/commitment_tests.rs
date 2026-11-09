@@ -8,7 +8,7 @@ use crate::opaque::{CommitInnerPlan, ComputeBackendSetup};
 use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
 use akita_error::AkitaError;
 use akita_params::SetupMatrixCapacity;
-use jolt_field::{CanonicalEncoding, Prime128Offset275, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
 const D: usize = 64;

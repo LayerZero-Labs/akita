@@ -3,7 +3,7 @@ use super::*;
 use akita_config::proof_optimized::fp32;
 use akita_params::ScheduleLookupKey;
 use akita_params::{basis_weights, OpeningMethod, PolynomialGroupLayout};
-use jolt_field::ExtField;
+use jolt_algebra::ExtField;
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
 type PackingField = <PackingCfg as CommitmentConfig>::Field;

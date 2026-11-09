@@ -13,8 +13,8 @@ use akita_algebra::{
 };
 use akita_error::AkitaError;
 #[allow(unused_imports)]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
 
 use akita_params::dispatch::compression_ring_dim_supported_for_tier;
 use akita_params::{

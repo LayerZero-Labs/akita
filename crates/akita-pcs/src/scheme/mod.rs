@@ -10,8 +10,8 @@ use akita_transcript::ProverChannel;
 use akita_types::AkitaVerifierSetup;
 use akita_types::FpExtEncoding;
 use akita_verifier::AkitaVerifier;
-use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
-use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_algebra::{Fold, Unreduced, WithCommitAccumulator};
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
@@ -146,7 +146,7 @@ where
     ) -> Result<Vec<u8>, AkitaError>
     where
         Cfg::Field: WithCommitAccumulator + 'static,
-        Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
+        Cfg::ExtField: jolt_algebra::MulBaseUnreduced<Cfg::Field> + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
         CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
             Cfg::Field,
@@ -197,7 +197,7 @@ where
     ) -> Result<(), AkitaError>
     where
         Cfg::Field: WithCommitAccumulator + 'static,
-        Cfg::ExtField: jolt_field::MulBaseUnreduced<Cfg::Field> + 'static,
+        Cfg::ExtField: jolt_algebra::MulBaseUnreduced<Cfg::Field> + 'static,
         <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
         CpuBackend<Cfg::Field, Cfg::ExtField>: ProverBackend<
             Cfg::Field,

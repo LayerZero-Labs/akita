@@ -18,7 +18,7 @@ use akita_types::{
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup,
     SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
 #[cfg(any(

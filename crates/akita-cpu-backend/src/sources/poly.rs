@@ -5,8 +5,8 @@ use crate::opaque::ComputeBackendSetup;
 use crate::opaque::RingSwitchRelationView;
 use crate::opaque::{FoldResponseKernel, RingSwitchRelationKernel};
 use akita_error::AkitaError;
-use jolt_field::Unreduced;
-use jolt_field::{CanonicalEncoding, Field, Ring};
+use jolt_algebra::Unreduced;
+use jolt_algebra::{CanonicalEncoding, Field, Ring};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -369,7 +369,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fp64;
+    use jolt_algebra::Fp64;
 
     type F = Fp64<4294967197>;
 

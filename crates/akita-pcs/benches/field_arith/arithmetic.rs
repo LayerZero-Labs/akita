@@ -4,8 +4,8 @@ use std::time::Instant;
 use std::hint::black_box;
 
 use criterion::{Criterion, Throughput};
-use jolt_field::Packed;
-use jolt_field::{Field, Ring};
+use jolt_algebra::Packed;
+use jolt_algebra::{Field, Ring};
 use rand::{rngs::StdRng, SeedableRng};
 
 use super::data::duration_per_logical_op;

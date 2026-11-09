@@ -6,7 +6,7 @@ use super::{
 use crate::offset_eq::OffsetEqWindow;
 use crate::Field;
 use akita_error::AkitaError;
-use jolt_field::solinas::parallel::*;
+use jolt_algebra::solinas::parallel::*;
 use std::ops::Range;
 
 /// Materialize the left-address weights induced by tensor families and one

@@ -12,7 +12,7 @@ use akita_transcript::{
 use akita_types::{AkitaVerifierSetup, PendingEof};
 use akita_verifier::SetupPolicy;
 use common::*;
-use jolt_field::One;
+use jolt_algebra::One;
 use jolt_transcript::BytesMsg;
 
 const NUM_VARS: usize = 14;

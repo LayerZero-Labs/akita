@@ -1,5 +1,5 @@
 use akita_error::AkitaError;
-use jolt_field::{solinas::parallel::*, Field};
+use jolt_algebra::{solinas::parallel::*, Field};
 
 const EXACT_PREFIX_SEQUENTIAL_LEN: usize = 1 << 12;
 
@@ -194,7 +194,7 @@ mod tests {
     use super::*;
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_algebra::split_eq::GruenSplitEq;
-    use jolt_field::{Prime128Offset275, Ring, Zero};
+    use jolt_algebra::{Prime128Offset275, Ring, Zero};
 
     type F = Prime128Offset275;
 

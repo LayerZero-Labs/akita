@@ -1,6 +1,6 @@
 use criterion::Criterion;
-use jolt_field::{FpExt2, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoNr};
-use jolt_field::{PackedFpExt2, WithPacking};
+use jolt_algebra::{FpExt2, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoNr};
+use jolt_algebra::{PackedFpExt2, WithPacking};
 
 use super::arithmetic::bench_arithmetic_case;
 use super::cases::Prime63Offset259;

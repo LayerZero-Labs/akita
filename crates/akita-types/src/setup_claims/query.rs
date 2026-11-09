@@ -17,8 +17,8 @@ use akita_algebra::{
 };
 use akita_error::{checked, AkitaError};
 use akita_serialization::AkitaSerialize;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
 #[derive(Clone)]

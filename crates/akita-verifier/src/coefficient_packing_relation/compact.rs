@@ -3,8 +3,8 @@ use akita_algebra::offset_eq::{
     EqPairTensorAxis, EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
 };
 use akita_error::AkitaError;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use std::ops::Range;
 use std::sync::Arc;
 

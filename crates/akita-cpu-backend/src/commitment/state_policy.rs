@@ -7,7 +7,7 @@ use crate::opaque::CommitInnerPlan;
 use akita_error::AkitaError;
 use akita_params::{CompressionChainPlan, CompressionChainWitness, RingRelationMode};
 use akita_types::RingVec;
-use jolt_field::Field;
+use jolt_algebra::Field;
 use std::sync::{Arc, Mutex};
 
 /// Canonical shared host material exported from one retained compression state.
@@ -650,7 +650,7 @@ pub(crate) trait InnerRelationMaterial<F: Field>: Send + 'static {
 
     fn terminal_message(&self) -> Result<TerminalTFieldsMessage<F>, AkitaError>
     where
-        F: jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize;
+        F: jolt_algebra::CanonicalEncoding + akita_serialization::AkitaSerialize;
 
     fn into_terminal_row(self) -> Result<RingVec<F>, AkitaError>
     where
@@ -668,7 +668,7 @@ impl<F: Field + 'static> InnerRelationMaterial<F> for InnerRelationStateMaterial
 
     fn terminal_message(&self) -> Result<TerminalTFieldsMessage<F>, AkitaError>
     where
-        F: jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize,
+        F: jolt_algebra::CanonicalEncoding + akita_serialization::AkitaSerialize,
     {
         let [row] = self.rows() else {
             return Err(AkitaError::Internal(
@@ -799,7 +799,7 @@ impl<F: Field + 'static> InnerRelationState<F> for ResidentCommitmentState<F> {
 
 impl<F> OuterCompressionState<F> for PortableCommitmentHandle<F>
 where
-    F: Field + jolt_field::CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
+    F: Field + jolt_algebra::CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
 {
     type Material = PortableCompressionState<F>;
     #[cfg(test)]
@@ -1033,7 +1033,7 @@ mod tests {
     use super::*;
     use crate::commitment::StateOwnerCapability;
     use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
-    use jolt_field::Prime64Offset59;
+    use jolt_algebra::Prime64Offset59;
 
     type F = Prime64Offset59;
 

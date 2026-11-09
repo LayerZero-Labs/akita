@@ -14,7 +14,7 @@ use akita_error::AkitaError;
 use akita_params::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
 use std::sync::Arc;
 
 /// An immutable imported source owned by one backend.
@@ -125,7 +125,7 @@ pub(super) struct OwnedPolynomials<P> {
 impl<F, E, P> PrivateSource<F, E> for OwnedPolynomials<P>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>
@@ -361,7 +361,7 @@ trait SourceImport<F: Field + CanonicalEncoding, E: Field>:
 impl<F, E, P> SourceImport<F, E> for P
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>
@@ -395,7 +395,7 @@ where
 impl<F, E> CpuBackend<F, E>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring + Unreduced + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>

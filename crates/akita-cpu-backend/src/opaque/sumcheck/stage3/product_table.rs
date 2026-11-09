@@ -6,8 +6,8 @@ use jolt_poly::UnivariatePoly;
 
 use akita_error::{checked, AkitaError};
 use akita_sumcheck::SumcheckKernel;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, MulBaseUnreduced, Ring, Zero};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{Field, MulBaseUnreduced, Ring, Zero};
 use std::sync::Arc;
 
 pub(in crate::opaque::sumcheck) enum SetupProductSource<F: Field> {
@@ -433,7 +433,7 @@ where
     let accumulators = cfg_fold_reduce!(
         0..required_rows,
         || (0..coefficient_len)
-            .map(|_| { <E as jolt_field::Unreduced>::Product::zero() })
+            .map(|_| { <E as jolt_algebra::Unreduced>::Product::zero() })
             .collect::<Vec<_>>(),
         |mut accumulators, setup_index| {
             let row_start = setup_index * coefficient_len;
@@ -485,7 +485,7 @@ where
 mod tests {
     use super::*;
     use akita_algebra::ring::scalar_powers;
-    use jolt_field::Prime128Offset275 as F;
+    use jolt_algebra::Prime128Offset275 as F;
 
     fn scalar(value: u64) -> F {
         F::from_u64(value)

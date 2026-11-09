@@ -2,7 +2,7 @@ use akita_cpu_backend::{AkitaProverSetup, CpuBackend};
 use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use akita_serialization::Valid;
-use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::collections::BTreeSet;
 
 pub(crate) fn validate_prefix_registry_complete<F: Field>(

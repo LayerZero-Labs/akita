@@ -6,7 +6,7 @@ use crate::CommittedGroup;
 use akita_error::{checked, AkitaError};
 use akita_params::layout::opening_layout::{OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_params::{GrindingSite, OpeningScheduleSelection};
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 
 /// Public claims and commitment payload for one polynomial group.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,7 +287,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 

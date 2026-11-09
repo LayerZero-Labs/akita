@@ -9,8 +9,8 @@ use akita_params::layout::CommitmentRingDims;
 use akita_params::witness::WitnessLayout;
 use akita_params::{CommittedGroupParams, SubringCoefficientPackingGeometry};
 use challenge_validation::validate_packing_challenge_weights;
-use jolt_field::Field;
-use jolt_field::{CanonicalEncoding, ExtField, Ring};
+use jolt_algebra::Field;
+use jolt_algebra::{CanonicalEncoding, ExtField, Ring};
 
 mod challenge_validation;
 

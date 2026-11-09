@@ -3,7 +3,7 @@
 use crate::opaque::openings::PreparedOpeningSource;
 use crate::opaque::{CpuPreparedOpeningHandle, OperationBinding};
 use akita_prover::backend::PreparedGroupOpening;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub(in crate::opaque) fn evaluation_trace<F, E>(
     binding: OperationBinding,

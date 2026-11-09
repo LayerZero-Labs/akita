@@ -4,7 +4,7 @@
 
 use akita_error::AkitaError;
 
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 use crate::proof::AkitaExpandedSetup;
 
@@ -33,7 +33,7 @@ pub fn ensure_setup_envelope<F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 

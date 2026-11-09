@@ -1,6 +1,6 @@
 use akita_error::AkitaError;
 use akita_params::{DigitRangePlan, FlatBooleanDomain};
-use jolt_field::{Field, Ring};
+use jolt_algebra::{Field, Ring};
 use std::sync::Arc;
 
 use crate::sources::packed_digits::PackedSignedDigits;

@@ -1,5 +1,5 @@
 use akita_algebra::CyclotomicRing;
-use jolt_field::{Fp32, Fp64, One, Ring, Zero};
+use jolt_algebra::{Fp32, Fp64, One, Ring, Zero};
 
 #[test]
 fn cyclotomic_ring_negacyclic_property() {

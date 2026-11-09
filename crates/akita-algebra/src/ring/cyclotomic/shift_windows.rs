@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::WithCommitAccumulator;
+use jolt_algebra::WithCommitAccumulator;
 
 /// Shifts summed per destination pass. Each pass streams the destination
 /// once and reads one contiguous window per shift, so a batch of `n` shifts

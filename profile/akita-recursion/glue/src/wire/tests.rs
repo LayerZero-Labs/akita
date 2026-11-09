@@ -11,7 +11,7 @@ use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, RingVec, SetupPrefixPublicCommitment,
     SetupPrefixVerifierSlot,
 };
-use jolt_field::Zero;
+use jolt_algebra::Zero;
 
 type TestCfg = fp128::OneHot;
 type TestF = fp128::Field;

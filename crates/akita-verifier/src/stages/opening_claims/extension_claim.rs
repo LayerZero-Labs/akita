@@ -14,7 +14,7 @@ use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     FpExtEncoding, PreparedOpeningPoint,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Ring};
 
 pub(crate) struct PreparedProtocolPoint<F: Field, E: Field> {
     pub(crate) prepared: PreparedOpeningPoint<F, E>,
@@ -462,7 +462,7 @@ mod tests {
     use akita_params::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use akita_sumcheck::SumcheckInstanceProver;
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::{FpExt4, Prime32Offset99, Zero};
+    use jolt_algebra::{FpExt4, Prime32Offset99, Zero};
     use jolt_poly::UnivariatePoly;
 
     type F = Prime32Offset99;

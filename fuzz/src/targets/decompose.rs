@@ -16,7 +16,7 @@ use akita_algebra::ring::cyclotomic::{
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 pub fn run(data: &[u8]) {
     let mut reader = Reader::new(data);

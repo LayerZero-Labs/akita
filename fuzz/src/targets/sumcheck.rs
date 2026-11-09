@@ -20,7 +20,7 @@ use akita_transcript::{
     ext_challenge, new_prover_channel, new_verifier_channel, ChallengeCodec, ProtocolSiteId,
     ProverChannel as ProverState, VerifierChannel as VerifierState, SITE_FAMILY_SUMCHECK,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
 use std::marker::PhantomData;
 

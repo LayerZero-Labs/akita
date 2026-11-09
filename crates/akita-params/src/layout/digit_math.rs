@@ -1,6 +1,6 @@
 //! Small digit-layout arithmetic helpers.
 
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Smallest integer `s` with `s^2 >= v`.
 #[inline]

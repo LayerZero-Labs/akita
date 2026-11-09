@@ -7,7 +7,7 @@ use akita_types::GrindingReplay;
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };
-use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced, Ring};
+use jolt_algebra::{CanonicalEncoding, Field, MulBaseUnreduced, Ring};
 
 pub(crate) enum NextWitnessState<F: Field> {
     OuterPayload(akita_types::RingVec<F>),

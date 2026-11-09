@@ -14,7 +14,7 @@ use akita_error::AkitaError;
 use akita_params::{
     basis_weights, basis_weights_prefix, lagrange_weights, monomial_weights, BasisMode,
 };
-use jolt_field::{CanonicalEncoding, ExtField, Field, Fold};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Fold};
 use jolt_poly::UnivariatePoly;
 
 pub fn run(data: &[u8]) {

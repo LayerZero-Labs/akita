@@ -7,7 +7,7 @@ use akita_cpu_backend::{
 use akita_params::{BasisMode, CommittedSourceEncoding};
 use akita_pcs::{batched_prove, BackendRegistry, FixedFoldRoute, SelectedProverOpeningData};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,

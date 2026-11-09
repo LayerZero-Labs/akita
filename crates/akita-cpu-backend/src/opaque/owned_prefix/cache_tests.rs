@@ -172,7 +172,7 @@ fn cold_setup_prefix_rayon_acquisitions_complete() {
     use crate::CpuBackend;
     use akita_params::test_fixtures::{retarget_group_role_dims_wide, sample_level_params};
     use akita_types::{NttCacheKey, NttTransformDomain};
-    use jolt_field::Prime32Offset99 as F;
+    use jolt_algebra::Prime32Offset99 as F;
     use rayon::prelude::*;
 
     watchdog(Duration::from_secs(120), || {

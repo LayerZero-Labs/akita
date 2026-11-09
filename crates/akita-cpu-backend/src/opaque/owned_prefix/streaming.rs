@@ -9,7 +9,7 @@ use akita_types::{
     derive_public_matrix_range, AkitaExpandedSetup, AkitaSetupDescriptor, RingVec,
     SetupPrefixPublicCommitment,
 };
-use jolt_field::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
+use jolt_algebra::{CanonicalEncoding, Field, Unreduced, WithCommitAccumulator};
 use std::{
     cmp::Reverse,
     ops::Range,

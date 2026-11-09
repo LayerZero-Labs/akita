@@ -7,7 +7,7 @@ use crate::opaque::{
 };
 use akita_error::{checked, AkitaError};
 use akita_types::{AkitaSetupDescriptor, NttCacheKey, NttTransformDomain};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

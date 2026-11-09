@@ -3,7 +3,7 @@ use crate::backend::OperationCtx;
 use crate::backend::{EvaluationTraceDescription, Stage2OpeningDescription};
 use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
-use jolt_field::AdditiveGroup;
+use jolt_algebra::AdditiveGroup;
 
 use akita_params::{InnerCommitSecurityRoute, OpeningClaimsLayout};
 use akita_types::{

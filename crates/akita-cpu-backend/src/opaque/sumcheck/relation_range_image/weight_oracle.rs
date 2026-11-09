@@ -2,7 +2,7 @@
 
 use crate::opaque::relation_weights::RelationWeightFactorization;
 use akita_error::AkitaError;
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// Complete padded relation weights for a quotient-free Stage-2 instance.
 pub(crate) struct DenseRelationWeights<E: Field> {
@@ -42,7 +42,7 @@ impl<E: Field> DenseRelationWeights<E> {
 
     pub(crate) fn bind(&mut self, challenge: E)
     where
-        E: jolt_field::Fold,
+        E: jolt_algebra::Fold,
     {
         akita_sumcheck::fold_evals_in_place(&mut self.evaluations, challenge);
         self.live_len = self.live_len.div_ceil(2);

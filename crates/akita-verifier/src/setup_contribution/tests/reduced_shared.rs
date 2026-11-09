@@ -1,6 +1,6 @@
 use super::fused_scan::reduced_direct_literal_oracle;
 use super::*;
-use jolt_field::Ring;
+use jolt_algebra::Ring;
 
 fn check_shared_reduced_scan<E>(blocks: usize, scalar: impl Fn(u64) -> E, zero_rows: bool)
 where
@@ -131,7 +131,7 @@ fn shared_reduced_scan_handles_zero_weights_and_boolean_points() {
 
 #[test]
 fn shared_reduced_scan_matches_literal_oracle_over_extension_field() {
-    type X = jolt_field::Ext2<F>;
+    type X = jolt_algebra::Ext2<F>;
     check_shared_reduced_scan(
         5,
         |value| X::from_base_slice(&[F::from_u64(value), F::from_u64(value + 10_000)]),

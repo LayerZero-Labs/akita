@@ -6,7 +6,7 @@ use akita_params::*;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
 use akita_types::*;
-use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use std::sync::Arc;
 type F = Prime128OffsetA7F7;
@@ -378,7 +378,7 @@ fn witness_level_transition_requires_one_successor_commitment() {
 mod extension_challenges {
     use super::*;
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::Prime64Offset59;
+    use jolt_algebra::Prime64Offset59;
 
     type F = Prime64Offset59;
     type E = Ext2<F>;

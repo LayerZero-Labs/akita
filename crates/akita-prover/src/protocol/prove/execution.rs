@@ -10,7 +10,7 @@ use akita_params::BasisMode;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{CommitmentDigest, ProverChannel};
 use akita_types::{AkitaSetupDescriptor, Commitment, FpExtEncoding, OpeningClaims, ProverGrinding};
-use jolt_field::{
+use jolt_algebra::{
     AdditiveGroup, CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
     Unreduced,
 };

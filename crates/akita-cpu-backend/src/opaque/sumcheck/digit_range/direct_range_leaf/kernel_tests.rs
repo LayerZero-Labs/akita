@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::Prime128Offset275 as F;
+use jolt_algebra::Prime128Offset275 as F;
 
 #[test]
 fn kernel_sequences_and_lookahead_match_live_geometry() {

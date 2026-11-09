@@ -24,9 +24,9 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
 use akita_params::RingMatrixView;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field};
-use jolt_field::{Unreduced, WithCommitAccumulator};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{AdditiveGroup, CanonicalEncoding, ExtField, Field};
+use jolt_algebra::{Unreduced, WithCommitAccumulator};
 use std::marker::PhantomData;
 
 use super::flat_blocks::FlatBlocks;

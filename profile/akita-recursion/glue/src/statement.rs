@@ -6,7 +6,7 @@ use akita_params::OpeningScheduleSelection;
 use akita_types::{
     AkitaVerifierSetup, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
-use jolt_field::Field;
+use jolt_algebra::Field;
 
 /// One ordered commitment group carried in a multi-group verifier statement.
 #[derive(Debug, Clone, PartialEq, Eq)]

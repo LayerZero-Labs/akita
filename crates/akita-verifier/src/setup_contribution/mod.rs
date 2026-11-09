@@ -51,8 +51,8 @@ use akita_types::{
     checked_slice, AkitaExpandedSetup, PhysicalBWeightSegment, PhysicalBWeightTerm,
     SetupContributionGroupPlan, SetupContributionPlan,
 };
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_algebra::solinas::parallel::*;
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 fn extension_gadget<F, E>(depth: usize, log_basis: u32) -> Vec<E>
 where

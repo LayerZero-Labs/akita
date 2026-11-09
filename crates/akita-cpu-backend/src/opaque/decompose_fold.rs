@@ -1,7 +1,7 @@
 //! CPU fold output retained for standalone kernels and backend implementations.
 
 use akita_error::AkitaError;
-use jolt_field::solinas::parallel::*;
+use jolt_algebra::solinas::parallel::*;
 
 /// Prover-side output of the decompose + challenge-fold step.
 ///

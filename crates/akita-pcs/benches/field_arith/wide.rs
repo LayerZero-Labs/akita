@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::Criterion;
-use jolt_field::{CanonicalEncoding, Prime128Offset275, Ring};
+use jolt_algebra::{CanonicalEncoding, Prime128Offset275, Ring};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::data::rand_u128;

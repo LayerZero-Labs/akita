@@ -8,7 +8,7 @@ use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::{ProofAdmission, ProofContext};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{AkitaSetupDescriptor, Commitment};
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 impl<F: Field, E> akita_prover::backend::ProofScopeConsumer for CpuBackend<F, E> {
     type ProofSessionHandle = CpuProofSessionHandle;
@@ -61,7 +61,7 @@ impl<F: Field, E> CpuBackend<F, E> {
 impl<F, E> ProofAdmission<F, E> for CpuBackend<F, E>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Send + Sync + 'static,
-    E: Field + jolt_field::ExtField<F> + Send + Sync + 'static,
+    E: Field + jolt_algebra::ExtField<F> + Send + Sync + 'static,
 {
     fn prepare_executor<Cfg>(
         &self,

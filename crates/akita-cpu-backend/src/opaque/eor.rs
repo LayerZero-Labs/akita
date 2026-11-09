@@ -10,7 +10,7 @@ use akita_error::AkitaError;
 use akita_params::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, Ring, Unreduced};
 
 pub(crate) trait ExtensionOpeningSession<E: Field>: Send {
     fn num_rounds(&self) -> usize;
@@ -72,11 +72,11 @@ where
     F: Field
         + CanonicalEncoding
         + AkitaSerialize
-        + jolt_field::PseudoMersenne
+        + jolt_algebra::PseudoMersenne
         + Ring
         + Unreduced
         + 'static,
-    F::Wide: From<F> + jolt_field::AdditiveGroup,
+    F::Wide: From<F> + jolt_algebra::AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
         + MulBaseUnreduced<F>

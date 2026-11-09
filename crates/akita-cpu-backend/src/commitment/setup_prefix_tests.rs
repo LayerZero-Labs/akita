@@ -2,10 +2,10 @@ use super::*;
 use akita_params::test_fixtures::{retarget_group_role_dims_wide, sample_level_params};
 use akita_params::*;
 use akita_types::*;
-use jolt_field::Zero;
+use jolt_algebra::Zero;
 #[test]
 fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
-    use jolt_field::Prime32Offset99 as F;
+    use jolt_algebra::Prime32Offset99 as F;
 
     // q32 compression starts at D=128, so the prefix B image must be D=128.
     let natural_len = 128;

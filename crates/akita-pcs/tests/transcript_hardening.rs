@@ -11,7 +11,7 @@ use common::mutations::{
     assert_ranges_match_context, representative_mutation_ranges, selected_sumcheck_protocols,
 };
 use common::*;
-use jolt_field::One;
+use jolt_algebra::One;
 
 const NUM_VARS: usize = 14;
 const LABEL: &[u8] = b"hardening/onehot/native";

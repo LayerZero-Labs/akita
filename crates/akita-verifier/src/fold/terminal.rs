@@ -12,7 +12,7 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{prepare_opening_point, FpExtEncoding, RingVec};
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
+use jolt_algebra::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 pub(super) fn verify_terminal_suffix<F, E>(
     terminal_ntt: &TerminalNttCache,

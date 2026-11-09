@@ -6,7 +6,7 @@ use super::{
 };
 use akita_error::AkitaError;
 use akita_types::AkitaExpandedSetup;
-use jolt_field::{CanonicalEncoding, Field};
+use jolt_algebra::{CanonicalEncoding, Field};
 
 /// Builder for independently registered commitment stage operations.
 pub(crate) struct CommitmentExecutorBuilder<'a, F, SP>
