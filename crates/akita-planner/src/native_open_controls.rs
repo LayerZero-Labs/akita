@@ -4,7 +4,7 @@ use super::*;
 use akita_algebra::{One, Zero};
 use akita_config::proof_optimized::fp64::ExtensionField as E;
 use akita_types::binary_source::{
-    binary_root_challenges, prime_plane_relation_weights, PrimePlaneManifest,
+    PrimePlaneManifest,
 };
 use akita_types::{AkitaVerifierSetup, OpeningClaims, PolynomialGroupClaims};
 use native_open_fixture::{ext, opening, Claims};
@@ -21,8 +21,12 @@ pub(super) fn reject_foreign_context(tamper: bool) {
     let setup = if tamper {
         ordinary.with_prefix_context(opening.binding.first().clone(), identity).unwrap()
     } else {
-        let (binary, mut signed) = grouped_suffix_sources_fixture();
-        signed[3].1 = akita_params::ordinary_source::OrdinarySourceWidth::new(34).unwrap();
+        let (mut binary, signed) = actual_profiles::sources();
+        let mut claims = binary[0].prime.claims().to_vec();
+        claims[0].point[0] = [5, 7].into();
+        binary[0].prime = PrimePlaneManifest::with_field_profile(
+            binary[0].manifest.descriptor(), claims, binary[0].manifest.field_profile(),
+        ).unwrap();
         let plan = GroupedNativeRootPlan::new(&binary, &signed,
             opening.binding.outgoing().destination_ring_dimension()).unwrap();
         let foreign = GroupedTypedPrefix::new(&plan, *opening.binding.successor(),
@@ -30,8 +34,11 @@ pub(super) fn reject_foreign_context(tamper: bool) {
         let backend = akita_cpu_backend::CpuBackend::<Field, E>::new(
             opening.setup.expanded().clone()).unwrap();
         let prepared = backend.prepare_grouped_typed_prefixes(&foreign, &[]).unwrap();
-        backend.prepare_grouped_typed_verifier_setup(&ordinary, &foreign,
-            &prepared.get(foreign.first()).unwrap().public).unwrap()
+        let setup = backend.prepare_grouped_typed_verifier_setup(&ordinary, &foreign,
+            &prepared.get(foreign.first()).unwrap().public).unwrap();
+        foreign.validate_verifier_setup(&setup).unwrap();
+        assert_eq!(foreign.outgoing(), opening.binding.outgoing());
+        setup
     };
     assert!(opening.binding.validate_verifier_setup(&setup).is_err());
     assert!(opening.verify(&opening.claims, &setup, &opening.proof).is_err());
@@ -39,17 +46,12 @@ pub(super) fn reject_foreign_context(tamper: bool) {
 
 pub(super) fn reject_substituted_plan() {
     let opening = opening();
-    let (binary, mut signed) = grouped_suffix_sources_fixture();
+    let (binary, mut signed) = actual_profiles::sources();
     signed[3].1 = akita_params::ordinary_source::OrdinarySourceWidth::new(34).unwrap();
     let changed = GroupedNativeRootPlan::new(
         &binary, &signed, opening.binding.outgoing().destination_ring_dimension(),
     ).unwrap();
     assert!(opening.binding.validate_plan(&changed).is_err());
-    let row = opening.fixture.catalog.resolve_selection(opening.fixture.bindings[0].0).unwrap();
-    let changed = GroupedPrefixCapacity::new(
-        &changed, *opening.binding.successor(), opening.binding.first().clone(),
-    ).unwrap();
-    assert!(required_native_setup_prefix_slot_ids_for_row(row, &changed).is_err());
 }
 
 pub(super) fn reject_source_order() {
@@ -103,32 +105,14 @@ pub(super) fn reject_values(point: usize) {
                         manifest, claim, prime,
                     } = original.kind() else { unreachable!() };
                     let mut readings = prime.claims().to_vec();
-                    let mut value = [0u128; 2];
-                    value[coordinate] = 1;
+                    let mut value: [u128; 2] = readings[point].evaluations[slot].value
+                        .coordinates().try_into().unwrap();
+                    value[coordinate] =
+                        (value[coordinate] + 1) % manifest.field_profile().modulus();
                     readings[point].evaluations[slot].value = value.into();
                     groups[group] = PolynomialGroupClaims::new_binary_planes(
                         original.commitment().clone(), claim.clone(), readings.clone(),
                     ).unwrap();
-                    let changed = PrimePlaneManifest::with_field_profile(
-                        manifest.descriptor(), readings, manifest.field_profile(),
-                    ).unwrap();
-                    let local = opening.binding.plan().binary()[group].local();
-                    let mut channel = akita_transcript::new_prover_channel(b"isolated-reading");
-                    let challenges = binary_root_challenges(
-                        &mut akita_challenges::ProverFoldDraw::new(&mut channel, 0, group as u32),
-                        2, 1,
-                    ).unwrap();
-                    let mut batches = vec![E::zero(); 4];
-                    batches[2 * point + 1] = E::one();
-                    let weights = |prime| prime_plane_relation_weights::<Field, E>(
-                        manifest.descriptor(), prime, local.repacking(), 0,
-                        local.prime_segment().unwrap(), &challenges, ext([5, 7]), &batches,
-                    ).unwrap();
-                    // The actual committed binary sources are zero. This checks
-                    // their isolated equation without any plan or transcript guard.
-                    let zero = vec![E::zero(); local.repacking().domain_len()];
-                    weights(prime).check_table(&zero).unwrap();
-                    assert!(weights(&changed).check_table(&zero).is_err());
                 } else {
                     let readings = original.point_evaluations().collect::<Vec<_>>();
                     let points = [readings[0].point.to_vec(), readings[1].point.to_vec()];

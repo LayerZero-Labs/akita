@@ -54,6 +54,10 @@ pub(crate) enum Fault {
     /// Honest witness; the caller binds a false ordinary reading.
     OrdinaryValue,
     Quotient,
+    GroupedSource { group: usize },
+    GroupedPrime { group: usize, point: usize, coordinate: usize },
+    GroupedSigned { group: usize, slot: usize },
+    GroupedValue,
 }
 
 impl Fault {
@@ -80,7 +84,9 @@ impl Fault {
     ) -> usize {
         let mut element = 0;
         let segment = match self {
-            Self::ForeignCommitment
+            Self::GroupedSource { .. } | Self::GroupedPrime { .. }
+            | Self::GroupedSigned { .. } | Self::GroupedValue
+            | Self::ForeignCommitment
             | Self::ForeignPartials
             | Self::PrimeValue { .. }
             | Self::OrdinaryValue => unreachable!(),
@@ -119,6 +125,11 @@ impl Fault {
             .coefficient_address(segment, element, 0, 0)
             .unwrap()
     }
+}
+
+struct GroupedPreparation {
+    native: Box<dyn Any + Send + Sync>,
+    binding: akita_types::binary_source::GroupedTypedPrefix,
 }
 
 struct FaultPreparation {
@@ -193,6 +204,13 @@ impl FaultBackend {
         {
             return Ok((payload, native));
         }
+        if let Some(request) = request.downcast_ref::<
+            akita_types::binary_source::GroupedRootWitnessRequest<C>,
+        >() {
+            return Ok((payload, Box::new(GroupedPreparation {
+                native, binding: request.binding.clone(),
+            })));
+        }
         let request = request
             .downcast_ref::<BinaryRootWitnessRequest<C>>()
             .unwrap();
@@ -236,6 +254,51 @@ impl FaultBackend {
         logical_len: usize,
         destination_ring_dimension: usize,
     ) -> Result<Option<W>, AkitaError> {
+        if let Some(prepared) = preparation.downcast_ref::<GroupedPreparation>() {
+            let Some(honest) = self.inner.build_root_group(
+                session, context, prepared.native.as_ref(), challenges, logical_len,
+                destination_ring_dimension,
+            )? else { return Ok(None); };
+            let mut digits = honest.coefficients_for_test();
+            digits.truncate(logical_len);
+            let target = match self.fault {
+                Fault::GroupedSource { group } => {
+                    let local = &prepared.binding.plan().binary()[group];
+                    Some(local.coefficient_offset()
+                        + local.local().repacking().coefficient_address(0, 0, 0, 0)?)
+                }
+                Fault::GroupedPrime { group, point, coordinate } => {
+                    let local = &prepared.binding.plan().binary()[group];
+                    let plane = local.source().prime.planes().iter().position(|plane| {
+                        plane.point == point && plane.coordinate == coordinate
+                    }).unwrap();
+                    let columns = local.source().manifest.descriptor().index_map().columns();
+                    Some(local.coefficient_offset() + local.local().repacking()
+                        .coefficient_address(local.local().prime_segment().unwrap(),
+                            plane * columns, 0, 0)?)
+                }
+                Fault::GroupedSigned { group, slot } => {
+                    let source = &prepared.binding.plan().ordinary().unwrap().plans()[group];
+                    let degree = source.profile().inner.matrix.ring_dimension();
+                    let element = slot * (1 << source.profile().group.num_vars()) / degree;
+                    Some(prepared.binding.outgoing().coefficient_address(
+                        source.first_segment(), element, 0, 0,
+                    )?)
+                }
+                Fault::GroupedValue => None,
+                _ => unreachable!(),
+            };
+            if let Some(address) = target {
+                let old = digits[address];
+                digits[address] = if old == 3 { 2 } else { old + 1 };
+                assert_ne!(digits[address], old);
+                assert!((-4..=3).contains(&digits[address]));
+            }
+            *self.digits.lock().unwrap() = Some(digits.clone());
+            return self.inner.import_root_witness(
+                session, context, digits, destination_ring_dimension,
+            ).map(Some);
+        }
         let preparation = preparation.downcast_ref::<FaultPreparation>().unwrap();
         let Some(honest) = self.inner.build_root_group(
             session,

@@ -7,24 +7,27 @@ use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
 use akita_params::{BasisMode, DecompositionParams, SisModulusProfileId};
 use akita_prover::{BackendRegistry, FixedFoldRoute, SelectedProverOpeningData};
-use akita_types::binary_source::{BinaryWordClaim};
 use akita_types::{
     AkitaVerifierSetup, CommittedGroup, FpExtEncoding, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims,
 };
 use std::sync::Arc;
 
-pub(super) type Claims = OpeningClaims<'static, E, CommittedGroup<Field>>;
+type Handle = akita_cpu_backend::CommitmentHandle<Field, E>;
+pub(crate) type Claims = OpeningClaims<'static, E, CommittedGroup<Field>>;
 
-pub(super) struct Opening {
-    pub(super) fixture: &'static Fixture,
-    pub(super) binding: GroupedTypedPrefix,
-    pub(super) setup: AkitaVerifierSetup<Field>,
-    pub(super) claims: Claims,
-    pub(super) proof: Vec<u8>,
+pub(crate) struct Opening {
+    pub(crate) fixture: &'static Fixture,
+    pub(crate) binding: GroupedTypedPrefix,
+    pub(crate) setup: AkitaVerifierSetup<Field>,
+    pub(crate) claims: Claims,
+    pub(crate) proof: Vec<u8>,
+    pub(crate) backend: Arc<CpuBackend<Field, E>>,
+    prefixes: akita_prover::SetupPrefixProverRegistry<Field, Handle>,
+    handles: Vec<Handle>,
 }
 
-pub(super) fn ext<T: FpExtEncoding<Field>>(coordinates: [u64; 2]) -> T {
+pub(crate) fn ext<T: FpExtEncoding<Field>>(coordinates: [u64; 2]) -> T {
     T::from_base_slice(&coordinates.map(Field::from_u64))
 }
 
@@ -81,7 +84,7 @@ impl<const BITS: u32> CommitmentConfig for Producer<BITS> {
     }
 }
 
-pub(super) fn opening() -> &'static Opening {
+pub(crate) fn opening() -> &'static Opening {
     static OPENING: OnceLock<Opening> = OnceLock::new();
     OPENING.get_or_init(|| {
         std::thread::Builder::new()
@@ -95,7 +98,6 @@ pub(super) fn opening() -> &'static Opening {
 
 fn build() -> Opening {
     let fixture = actual_profiles::actual_fixture();
-    let row = fixture.catalog.resolve_selection(fixture.bindings[0].0).unwrap();
     let requirements = NativeSetupRequirements::<Field>::from_catalog(
         &fixture.catalog, 22, 16, &fixture.bindings,
     ).unwrap();
@@ -132,11 +134,11 @@ fn build() -> Opening {
     let mut groups = Vec::new();
     let mut handles = Vec::new();
     let mut preceding = Vec::new();
-    for binary in binding.plan().binary() {
+    for (group, binary) in binding.plan().binary().iter().enumerate() {
         let source = binary.source();
         let descriptor = source.manifest.descriptor();
         let imported = backend.import_binary_source(
-            source.manifest.clone(), source.carrier, vec![vec![0; 8]],
+            source.manifest.clone(), source.carrier, vec![native_source_data::words(group)],
         ).unwrap();
         let frozen = (!preceding.is_empty()).then(|| {
             akita_params::PrecommittedGroupProfiles::from_profiles(preceding.clone()).unwrap()
@@ -148,10 +150,7 @@ fn build() -> Opening {
             None => GroupContext::explicit(&source.carrier),
         };
         let committed = backend.commit(&fixture.catalog, &imported, context).unwrap();
-        let split = descriptor.index_map().claim_variable_split();
-        let word = BinaryWordClaim::new(descriptor, descriptor.polynomials()[0],
-            vec![[7; 16]; split.intra_carrier + split.carrier_address], [0; 16],
-        ).unwrap();
+        let word = native_source_data::word(descriptor, &native_source_data::words(group));
         groups.push(PolynomialGroupClaims::new_binary_planes(
             committed.committed_group, Some(word), source.prime.claims().to_vec(),
         ).unwrap());
@@ -203,30 +202,42 @@ fn build() -> Opening {
         preceding.push(*profile);
     }
     let claims = OpeningClaims::from_groups(groups).unwrap();
-    let data = SelectedProverOpeningData::from_committed_claims::<Config>(
-        claims.clone(), handles, &fixture.catalog,
-    ).unwrap();
-    let mut registry = BackendRegistry::<Config>::new().unwrap();
-    let id = registry.register(backend.as_ref(), &prefixes).unwrap();
-    let mut route = FixedFoldRoute::new(vec![id; row.schedule().num_fold_levels()]);
-    let mut channel = akita_transcript::new_prover_channel(b"staged-four-group-p64");
-    akita_prover::batched_prove_embedded::<Config, _>(
-        setup.expanded.descriptor(), &fixture.catalog, &registry, data, &mut channel,
-        BasisMode::Lagrange, &mut route,
-    ).unwrap();
-    let opening = Opening {
-        fixture, binding, setup: verifier_setup, claims, proof: channel.narg_string().to_vec(),
+    let mut opening = Opening {
+        fixture, binding, setup: verifier_setup, claims, proof: Vec::new(),
+        backend, prefixes, handles,
     };
+    opening.proof = opening.prove_with(opening.backend.as_ref(), &opening.claims).unwrap();
     opening.verify(&opening.claims, &opening.setup, &opening.proof).unwrap();
     opening
 }
 
 impl Opening {
-    pub(super) fn verify(
+    pub(crate) fn prove_with<B>(
+        &self, backend: &B, claims: &Claims,
+    ) -> Result<Vec<u8>, AkitaError>
+    where
+        B: akita_prover::backend::ProverBackend<Field, E, CommitmentHandle = Handle> + 'static,
+    {
+        let data = SelectedProverOpeningData::from_committed_claims::<Config>(
+            claims.clone(), self.handles.clone(), &self.fixture.catalog,
+        )?;
+        let row = self.fixture.catalog.resolve_selection(data.selection())?;
+        let mut registry = BackendRegistry::<Config>::new()?;
+        let id = registry.register(backend, &self.prefixes)?;
+        let mut route = FixedFoldRoute::new(vec![id; row.schedule().num_fold_levels()]);
+        let mut channel = akita_transcript::new_prover_channel(b"staged-four-group-p64");
+        akita_prover::batched_prove_embedded::<Config, _>(
+            self.setup.expanded().descriptor(), &self.fixture.catalog, &registry, data,
+            &mut channel, BasisMode::Lagrange, &mut route,
+        )?;
+        Ok(channel.narg_string().to_vec())
+    }
+
+    pub(crate) fn verify(
         &self, claims: &Claims, setup: &AkitaVerifierSetup<Field>, proof: &[u8],
     ) -> Result<(), AkitaError> {
         let claims = OpeningClaims::from_groups(claims.groups().iter()
-            .map(|group| group.map_commitment(|commitment| commitment)).collect())?;
+            .map(|group| group.map_commitment(|_| group.commitment())).collect())?;
         let statement = GroupBatchStatement::new(self.fixture.bindings[0].0, claims)?;
         let verifier = akita_verifier::AkitaVerifier::<Config>::for_selection(
             setup.clone(), self.fixture.catalog.clone(), self.fixture.bindings[0].0, None,

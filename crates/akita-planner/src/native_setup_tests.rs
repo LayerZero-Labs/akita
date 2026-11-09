@@ -2,116 +2,9 @@
 
 use super::{find_native_root_schedule, NativeRootTransition};
 use crate::prime_planes::price_grouped_root;
-use akita_config::proof_optimized::fp64::{Dense, Field};
-use akita_config::{
-    required_native_setup_prefix_slot_ids_for_row, CommitmentConfig, NativeSetupRequirements,
-    RecursiveCommitmentConfig, SetupRequirements, TrustedScheduleCatalog,
-};
-use akita_params::{ChunkedWitnessCfg, OpeningScheduleSelection, ScheduleRowDigest};
-use akita_schedules::ValidatedScheduleCatalog;
-use akita_types::binary_source::{
-    grouped_suffix_sources_fixture, GroupedNativeRootPlan, GroupedPrefixCapacity,
-    GroupedTypedPrefix,
-};
-use akita_types::AkitaSetupDescriptor;
-use std::sync::OnceLock;
-
-type Config = RecursiveCommitmentConfig<Dense>;
-
-struct Fixture {
-    catalog: TrustedScheduleCatalog<Config>,
-    bindings: Vec<(OpeningScheduleSelection, GroupedPrefixCapacity)>,
-}
-
-fn fixture() -> &'static Fixture {
-    static FIXTURE: OnceLock<Fixture> = OnceLock::new();
-    FIXTURE.get_or_init(|| {
-        let chunking = ChunkedWitnessCfg::default_non_chunked();
-        let ordinary =
-            akita_config::test_support::workspace_schedule_catalog::<Config>(chunking).unwrap();
-        let seed = ordinary
-            .rows()
-            .find(|row| row.profiles().final_group.group.num_vars() == 25)
-            .unwrap();
-        let second = ordinary
-            .rows()
-            .find(|row| row.profiles().final_group.group.num_vars() == 29)
-            .unwrap();
-        assert_eq!(
-            seed.schedule().root.params.role_dims(),
-            second.schedule().root.params.role_dims()
-        );
-        let (binary, signed) = grouped_suffix_sources_fixture();
-        let plan = GroupedNativeRootPlan::new(&binary, &signed, 128).unwrap();
-        let price = price_grouped_root(&plan).unwrap();
-        let transition = NativeRootTransition::new(
-            price.outgoing_physical_cells,
-            3,
-            price.typed_prefix_natural_len,
-        )
-        .unwrap();
-        let schedule = find_native_root_schedule(
-            seed,
-            transition.clone(),
-            ordinary.policy(),
-            Config::ring_challenge_config,
-        )
-        .unwrap();
-        let first = &schedule.recursive_folds[0].params;
-        let plan = GroupedNativeRootPlan::new(&binary, &signed, first.d_a()).unwrap();
-        let capacity = GroupedPrefixCapacity::new(
-            &plan,
-            first.own_group().profile,
-            first.setup_prefix().unwrap().slot_id().unwrap(),
-        )
-        .unwrap();
-        let mut second_schedule = schedule.clone();
-        second_schedule.root = second.schedule().root.clone();
-        second_schedule.root.output_witness_len = price.outgoing_physical_cells;
-        // Retain ordinary rows too: their independent precommits and prefix slots
-        // must remain covered, even though the selected root uses a typed stream.
-        let catalog = TrustedScheduleCatalog::new(
-            ValidatedScheduleCatalog::try_new_native_root(
-                Config::schedule_family_name(),
-                ordinary
-                    .rows()
-                    .filter(|row| {
-                        row.selection() != seed.selection() && row.selection() != second.selection()
-                    })
-                    .map(|row| (row.profiles().clone(), row.schedule().clone())),
-                [
-                    (seed.profiles().clone(), schedule, transition.clone()),
-                    (second.profiles().clone(), second_schedule, transition),
-                ],
-                ordinary.policy(),
-                Config::ring_challenge_config,
-            )
-            .unwrap(),
-            chunking,
-        )
-        .unwrap();
-        let bindings = catalog
-            .rows()
-            .filter(|row| row.is_native_root())
-            .map(|row| (row.selection(), capacity.clone()))
-            .collect();
-        Fixture { catalog, bindings }
-    })
-}
-
-fn requirements(fixture: &Fixture) -> NativeSetupRequirements<Field> {
-    NativeSetupRequirements::from_catalog(&fixture.catalog, 32, 16, &fixture.bindings).unwrap()
-}
-
-fn descriptor(requirements: &NativeSetupRequirements<Field>) -> AkitaSetupDescriptor {
-    let requirements = requirements.requirements();
-    AkitaSetupDescriptor {
-        max_num_vars: requirements.max_num_vars(),
-        max_num_batched_polys: requirements.max_num_batched_polys(),
-        num_field_elements: requirements.matrix_capacity().num_field_elements,
-        setup_seed: [41; 32].into(),
-    }
-}
+#[path = "native_test_fixture.rs"]
+mod resources;
+use resources::*;
 
 #[test]
 fn native_setup_accepts_staged_four_group_p64() {
@@ -341,8 +234,6 @@ fn native_setup_rejects_successor_profile_mismatch() {
     assert!(NativeSetupRequirements::from_catalog(&fixture.catalog, 32, 16, &bindings).is_err());
 }
 
-#[path = "native_actual_profiles.rs"]
-mod actual_profiles;
 
 #[test]
 fn native_setup_accepts_actual_eight_profiles() {
@@ -387,7 +278,7 @@ fn native_setup_rejects_swapped_source_profiles() {
     profiles.precommitteds.swap(4, 5);
     assert_eq!(profiles.opening_layout().unwrap(), row.profiles().opening_layout().unwrap());
     assert!(fixture.catalog.resolve_profiles(&profiles, 0).is_err());
-    let (mut binary, signed) = grouped_suffix_sources_fixture();
+    let (mut binary, signed) = actual_profiles::sources();
     binary.swap(0, 1);
     let capacity = &fixture.bindings[0].1;
     let changed = GroupedNativeRootPlan::new(&binary, &signed,
@@ -400,8 +291,7 @@ fn native_setup_rejects_swapped_source_profiles() {
 #[test]
 fn native_setup_rejects_changed_signed_width() {
     let fixture = actual_profiles::actual_fixture();
-    let row = fixture.catalog.resolve_selection(fixture.bindings[0].0).unwrap();
-    let (binary, mut signed) = grouped_suffix_sources_fixture();
+    let (binary, mut signed) = actual_profiles::sources();
     let original = signed[3].0;
     signed[3].1 = akita_params::ordinary_source::OrdinarySourceWidth::new(34).unwrap();
     signed[3].1.validate_profile(&original).unwrap();
@@ -409,9 +299,11 @@ fn native_setup_rejects_changed_signed_width() {
     let changed = GroupedNativeRootPlan::new(&binary, &signed,
         capacity.plan().repacking().destination_ring_dimension()).unwrap();
     assert_eq!(*changed.ordinary().unwrap().plans()[3].profile(), original);
-    let changed = GroupedPrefixCapacity::new(&changed, *capacity.successor(),
-        capacity.first().clone()).unwrap();
-    assert!(required_native_setup_prefix_slot_ids_for_row(row, &changed).is_err());
+    let requirements = requirements(fixture);
+    let binding = requirements.bind_setup(
+        descriptor(&requirements), requirements.requirements().prefix_slot_ids(),
+    ).unwrap().remove(0).1;
+    assert!(binding.validate_plan(&changed).is_err());
 }
 
 #[test]
@@ -430,8 +322,6 @@ fn native_setup_rejects_p128_source_profile() {
     ).is_err());
 }
 
-#[path = "native_open_fixture.rs"]
-mod native_open_fixture;
 #[path = "native_open_controls.rs"]
 mod native_open_controls;
 
@@ -483,4 +373,17 @@ fn native_open_rejects_tampered_value_point_1() {
 #[test]
 fn native_open_rejects_tampered_typed_prefix_identity() {
     native_open_controls::reject_foreign_context(true);
+}
+
+#[path = "native_weight_controls.rs"]
+mod native_weight_controls;
+
+#[test]
+fn native_open_translated_weights_match_assembled_oracle() {
+    native_weight_controls::compare(false);
+}
+
+#[test]
+fn native_open_assembled_prime_readings_match_coefficient_oracle() {
+    native_weight_controls::compare(true);
 }
