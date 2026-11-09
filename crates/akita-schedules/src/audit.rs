@@ -678,7 +678,7 @@ pub(crate) fn audit_grouped_schedule(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Open,
-            params.d_d(),
+            params.role_dims().d_d(),
             params.open().digits.log_basis,
         ),
     )?;
