@@ -12,7 +12,7 @@ use akita_types::binary_source::{binary_root_matrix, PrimePlaneManifest, BINARY_
 use akita_types::root_repacking::RootCoefficientRepacking;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reconstruct(
+pub(super) fn reconstruct<F: Field + CanonicalEncoding>(
     manifest: &BinaryCommittedGroupManifest,
     claim: Option<&BinaryTerminalClaim>,
     prime: &PrimePlaneManifest,
@@ -125,7 +125,7 @@ fn source_rings(
     Ok(sources)
 }
 
-pub(super) fn foreign_partial_payload(
+pub(super) fn foreign_partial_payload<F: Field>(
     manifest: &BinaryCommittedGroupManifest,
     claim: &BinaryTerminalClaim,
     words: &[u128],

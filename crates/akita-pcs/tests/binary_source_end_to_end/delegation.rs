@@ -2,8 +2,12 @@
 #![allow(clippy::too_many_arguments)]
 use super::*;
 
-impl ProofScopeConsumer for FaultBackend {
-    type ProofSessionHandle = <NativeBackend as ProofScopeConsumer>::ProofSessionHandle;
+impl<F, E> ProofScopeConsumer for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + 'static,
+    E: Field + 'static,
+{
+    type ProofSessionHandle = <CpuBackend<F, E> as ProofScopeConsumer>::ProofSessionHandle;
     fn finish_scope(&self, session: &Self::ProofSessionHandle) -> Result<(), AkitaError> {
         self.inner.finish_scope(session)
     }
@@ -12,21 +16,27 @@ impl ProofScopeConsumer for FaultBackend {
     }
 }
 
-impl ProverHandleFamily<F, E> for FaultBackend {
-    type CommitmentHandle = <NativeBackend as ProverHandleFamily<F, E>>::CommitmentHandle;
-    type EorPreparationHandle = <NativeBackend as ProverHandleFamily<F, E>>::EorPreparationHandle;
-    type EorSessionHandle = <NativeBackend as ProverHandleFamily<F, E>>::EorSessionHandle;
-    type PreparedOpeningHandle = <NativeBackend as ProverHandleFamily<F, E>>::PreparedOpeningHandle;
+impl<F, E> ProverHandleFamily<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + 'static,
+    E: Field + 'static,
+{
+    type CommitmentHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::CommitmentHandle;
+    type EorPreparationHandle =
+        <CpuBackend<F, E> as ProverHandleFamily<F, E>>::EorPreparationHandle;
+    type EorSessionHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::EorSessionHandle;
+    type PreparedOpeningHandle =
+        <CpuBackend<F, E> as ProverHandleFamily<F, E>>::PreparedOpeningHandle;
     type CommitmentMaterialHandle =
-        <NativeBackend as ProverHandleFamily<F, E>>::CommitmentMaterialHandle;
-    type AcceptedFoldHandle = <NativeBackend as ProverHandleFamily<F, E>>::AcceptedFoldHandle;
+        <CpuBackend<F, E> as ProverHandleFamily<F, E>>::CommitmentMaterialHandle;
+    type AcceptedFoldHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::AcceptedFoldHandle;
     type AcceptedTerminalFoldHandle =
-        <NativeBackend as ProverHandleFamily<F, E>>::AcceptedTerminalFoldHandle;
-    type WitnessBuildHandle = <NativeBackend as ProverHandleFamily<F, E>>::WitnessBuildHandle;
-    type WitnessHandle = <NativeBackend as ProverHandleFamily<F, E>>::WitnessHandle;
-    type RelationHandle = <NativeBackend as ProverHandleFamily<F, E>>::RelationHandle;
-    type Stage1SessionHandle = <NativeBackend as ProverHandleFamily<F, E>>::Stage1SessionHandle;
-    type Stage2SessionHandle = <NativeBackend as ProverHandleFamily<F, E>>::Stage2SessionHandle;
+        <CpuBackend<F, E> as ProverHandleFamily<F, E>>::AcceptedTerminalFoldHandle;
+    type WitnessBuildHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::WitnessBuildHandle;
+    type WitnessHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::WitnessHandle;
+    type RelationHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::RelationHandle;
+    type Stage1SessionHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::Stage1SessionHandle;
+    type Stage2SessionHandle = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::Stage2SessionHandle;
     fn instance_identity(&self) -> akita_prover::backend::BackendInstanceIdentity
     where
         Self: 'static,
@@ -35,9 +45,25 @@ impl ProverHandleFamily<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueProverConsumer<F, E> for FaultBackend {}
+impl<F, E> OpaqueProverConsumer<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + 'static,
+    E: Field + 'static,
+{
+}
 
-impl ProofAdmission<F, E> for FaultBackend {
+impl<F, E> ProofAdmission<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn prepare_executor<Cfg>(
         &self,
         setup: &AkitaSetupDescriptor,
@@ -78,7 +104,18 @@ impl ProofAdmission<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueOpeningKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueOpeningKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn prepare_openings(
         &self,
         session: &Self::ProofSessionHandle,
@@ -96,7 +133,18 @@ impl OpaqueOpeningKernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueEorKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueEorKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn prepare_eor(
         &self,
         session: &Self::ProofSessionHandle,
@@ -135,7 +183,18 @@ impl OpaqueEorKernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueRecursiveWitnessBuildKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueRecursiveWitnessBuildKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn prepare_root_group(
         &self,
         _session: &Self::ProofSessionHandle,
@@ -207,7 +266,18 @@ impl OpaqueRecursiveWitnessBuildKernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueWitnessCommitKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueWitnessCommitKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn commit_witness(
         &self,
         witness_handle: Self::WitnessHandle,
@@ -226,7 +296,18 @@ impl OpaqueWitnessCommitKernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueRelationWitnessKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueRelationWitnessKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn prepare_relation_witness(
         &self,
         witness_handle: &Self::WitnessHandle,
@@ -236,7 +317,18 @@ impl OpaqueRelationWitnessKernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueStage1Kernel<F, E> for FaultBackend {
+impl<F, E> OpaqueStage1Kernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn begin_root_digit_range(
         &self,
         _witness: &Self::WitnessHandle,
@@ -298,7 +390,18 @@ impl OpaqueStage1Kernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueStage2Kernel<F, E> for FaultBackend {
+impl<F, E> OpaqueStage2Kernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn begin_root_relation(
         &self,
         _witness: &Self::WitnessHandle,
@@ -364,8 +467,19 @@ impl OpaqueStage2Kernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueStage3Kernel<F, E> for FaultBackend {
-    type Stage3SessionHandle = <NativeBackend as OpaqueStage3Kernel<F, E>>::Stage3SessionHandle;
+impl<F, E> OpaqueStage3Kernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
+    type Stage3SessionHandle = <CpuBackend<F, E> as OpaqueStage3Kernel<F, E>>::Stage3SessionHandle;
     fn begin_stage3(
         &self,
         request: Stage3Request<'_, F, E, Self::ProofSessionHandle>,
@@ -410,7 +524,18 @@ impl OpaqueStage3Kernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueTerminalFoldKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueTerminalFoldKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn probe_terminal_fold(
         &self,
         witness_handle: &Self::WitnessHandle,
@@ -427,7 +552,18 @@ impl OpaqueTerminalFoldKernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueWitnessOpeningKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueWitnessOpeningKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn prepare_native_witness_opening(
         &self,
         _witness_handle: &Self::WitnessHandle,
@@ -444,7 +580,18 @@ impl OpaqueWitnessOpeningKernel<F, E> for FaultBackend {
     }
 }
 
-impl OpaqueResourceReleaseKernel<F, E> for FaultBackend {
+impl<F, E> OpaqueResourceReleaseKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn release_witness_handle(
         &self,
         witness_handle: Self::WitnessHandle,
@@ -453,8 +600,19 @@ impl OpaqueResourceReleaseKernel<F, E> for FaultBackend {
     }
 }
 
-impl SuccessorExportKernel<F, E> for FaultBackend {
-    type ExportPacket = <NativeBackend as SuccessorExportKernel<F, E>>::ExportPacket;
+impl<F, E> SuccessorExportKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
+    type ExportPacket = <CpuBackend<F, E> as SuccessorExportKernel<F, E>>::ExportPacket;
     fn export_successor(
         &self,
         session: &Self::ProofSessionHandle,
@@ -467,8 +625,19 @@ impl SuccessorExportKernel<F, E> for FaultBackend {
     }
 }
 
-impl SuccessorImportKernel<F, E> for FaultBackend {
-    type ImportPacket = <NativeBackend as SuccessorImportKernel<F, E>>::ImportPacket;
+impl<F, E> SuccessorImportKernel<F, E> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
+    type ImportPacket = <CpuBackend<F, E> as SuccessorImportKernel<F, E>>::ImportPacket;
     fn import_successor(
         &self,
         session: &Self::ProofSessionHandle,
@@ -480,14 +649,28 @@ impl SuccessorImportKernel<F, E> for FaultBackend {
     }
 }
 
-impl TerminalCommitmentMaterialKernel<F, M> for FaultBackend {
+impl<F, E> TerminalCommitmentMaterialKernel<F, M<F, E>> for FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     fn terminal_message(
         &self,
-        material: &M,
+        material: &M<F, E>,
     ) -> Result<akita_prover::backend::TerminalTFieldsMessage<F>, AkitaError> {
         self.inner.terminal_message(material)
     }
-    fn consume_terminal_row(&self, material: M) -> Result<akita_types::RingVec<F>, AkitaError> {
+    fn consume_terminal_row(
+        &self,
+        material: M<F, E>,
+    ) -> Result<akita_types::RingVec<F>, AkitaError> {
         self.inner.consume_terminal_row(material)
     }
 }

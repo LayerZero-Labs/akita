@@ -1,6 +1,7 @@
 //! Complete malicious transcripts for the same bound grouped statement.
 
-use akita_config::proof_optimized::fp64::{ExtensionField as E, Field as F};
+use super::fault_backend::{Fault, FaultBackend};
+use akita_config::proof_optimized::fp64::ExtensionField as E;
 use akita_planner::native_root::find_native_root_schedule;
 use akita_planner::prime_planes::price_grouped_root;
 use akita_schedules::native_root::NativeRootTransition;
@@ -11,11 +12,6 @@ use tracing_subscriber::prelude::*;
 #[allow(dead_code)]
 #[path = "../../../akita-planner/src/native_test_fixture.rs"]
 mod resources;
-type BinaryTestSuffix = resources::Config;
-#[allow(dead_code)]
-#[path = "fault_backend.rs"]
-mod fault_backend;
-use fault_backend::{Fault, FaultBackend};
 use resources::native_open_fixture::{ext, opening, Claims};
 
 #[derive(Clone, Default)]

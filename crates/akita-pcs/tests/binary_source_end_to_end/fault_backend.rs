@@ -1,29 +1,32 @@
 //! Adversarial test backend; production exposes no witness mutation operation.
 
-use super::{E, F};
+use super::F as TerminalField;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_cpu_backend::CpuBackend;
 use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, OpeningClaimsLayout};
 use akita_prover::backend::*;
+use akita_serialization::AkitaSerialize;
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryRootWitnessRequest,
     BinaryTerminalClaim, PrimePlaneManifest,
 };
 use akita_types::native_root_relation::NativeRootWeights;
-use akita_types::{AkitaSetupDescriptor, Commitment};
-use jolt_field::{Field, Ring, Zero};
+use akita_types::{AkitaSetupDescriptor, Commitment, FpExtEncoding};
+use jolt_field::{
+    AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
+    Unreduced,
+};
 use jolt_poly::UnivariatePoly;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-type NativeBackend = CpuBackend<F, E>;
-type C = <NativeBackend as ProverHandleFamily<F, E>>::CommitmentHandle;
-type W = <NativeBackend as ProverHandleFamily<F, E>>::WitnessHandle;
-type M = <NativeBackend as ProverHandleFamily<F, E>>::CommitmentMaterialHandle;
-type Session = <NativeBackend as ProofScopeConsumer>::ProofSessionHandle;
-type Stage2 = <NativeBackend as ProverHandleFamily<F, E>>::Stage2SessionHandle;
+type C<F, E> = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::CommitmentHandle;
+type W<F, E> = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::WitnessHandle;
+type M<F, E> = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::CommitmentMaterialHandle;
+type Session<F, E> = <CpuBackend<F, E> as ProofScopeConsumer>::ProofSessionHandle;
+type Stage2<F, E> = <CpuBackend<F, E> as ProverHandleFamily<F, E>>::Stage2SessionHandle;
 
 #[path = "delegation.rs"]
 mod delegation;
@@ -151,30 +154,44 @@ struct FaultPreparation {
     plan: BinaryRootWitnessPlan,
 }
 
-pub(crate) struct FaultBackend {
-    inner: Arc<NativeBackend>,
+pub(crate) struct FaultBackend<F: Field, E> {
+    inner: Arc<CpuBackend<F, E>>,
     seed: [u8; 32],
     words: Vec<u128>,
     fault: Fault,
     digits: Mutex<Option<Vec<i8>>>,
 }
 
-impl FaultBackend {
+impl<F, E> FaultBackend<F, E>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F::Wide: From<F> + AdditiveGroup,
+    E: ExtField<F>
+        + FpExtEncoding<F>
+        + AkitaSerialize
+        + Unreduced
+        + Fold
+        + MulBaseUnreduced<F>
+        + 'static,
+{
     /// Complete an adversarial opening with its deliberately false public oracle.
-    pub(crate) fn prove_prime_fault(
+    pub(crate) fn prove_prime_fault<Cfg>(
         &self,
         setup: &akita_cpu_backend::AkitaProverSetup<F>,
-        schedules: &TrustedScheduleCatalog<super::BinaryTestSuffix>,
-        prefixes: &akita_prover::SetupPrefixProverRegistry<F, C>,
-        data: akita_prover::SelectedProverOpeningData<'_, E, C, F>,
+        schedules: &TrustedScheduleCatalog<Cfg>,
+        prefixes: &akita_prover::SetupPrefixProverRegistry<F, C<F, E>>,
+        data: akita_prover::SelectedProverOpeningData<'_, E, C<F, E>, F>,
         prover: &mut akita_transcript::ProverChannel,
-    ) -> Result<(), AkitaError> {
+    ) -> Result<(), AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = E>,
+    {
         let resolved = schedules.resolve_selection(data.selection())?;
-        let mut registry = akita_prover::BackendRegistry::<super::BinaryTestSuffix>::new()?;
+        let mut registry = akita_prover::BackendRegistry::<Cfg>::new()?;
         let root = registry.register(self, prefixes)?;
         let mut route =
             akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
-        akita_prover::batched_prove_embedded::<super::BinaryTestSuffix, _>(
+        akita_prover::batched_prove_embedded::<Cfg, _>(
             setup.expanded.descriptor(),
             schedules,
             &registry,
@@ -186,7 +203,7 @@ impl FaultBackend {
     }
 
     pub(crate) fn new(
-        inner: Arc<NativeBackend>,
+        inner: Arc<CpuBackend<F, E>>,
         seed: [u8; 32],
         words: Vec<u128>,
         fault: Fault,
@@ -202,9 +219,9 @@ impl FaultBackend {
 
     fn prepare_fault_root_group(
         &self,
-        session: &Session,
+        session: &Session<F, E>,
         context: &ProofContext,
-        handle: &C,
+        handle: &C<F, E>,
         request: &dyn Any,
     ) -> Result<(Vec<F>, Box<dyn Any + Send + Sync>), AkitaError> {
         let (mut payload, native) = self
@@ -216,7 +233,7 @@ impl FaultBackend {
             return Ok((payload, native));
         }
         if let Some(request) =
-            request.downcast_ref::<akita_types::binary_source::GroupedRootWitnessRequest<C>>()
+            request.downcast_ref::<akita_types::binary_source::GroupedRootWitnessRequest<C<F, E>>>()
         {
             return Ok((
                 payload,
@@ -227,7 +244,7 @@ impl FaultBackend {
             ));
         }
         let request = request
-            .downcast_ref::<BinaryRootWitnessRequest<C>>()
+            .downcast_ref::<BinaryRootWitnessRequest<C<F, E>>>()
             .unwrap();
         if matches!(self.fault, Fault::ForeignPartials) {
             let foreign = fault_witness::foreign_partial_payload(
@@ -262,13 +279,13 @@ impl FaultBackend {
 
     fn build_fault_root_group(
         &self,
-        session: &Session,
+        session: &Session<F, E>,
         context: &ProofContext,
         preparation: &dyn Any,
         challenges: &[akita_challenges::Challenges],
         logical_len: usize,
         destination_ring_dimension: usize,
-    ) -> Result<Option<W>, AkitaError> {
+    ) -> Result<Option<W<F, E>>, AkitaError> {
         if let Some(prepared) = preparation.downcast_ref::<GroupedPreparation>() {
             let Some(honest) = self.inner.build_root_group(
                 session,
@@ -357,7 +374,7 @@ impl FaultBackend {
             return Err(AkitaError::InvalidProof);
         };
         let mut digits = match preparation.manifest.field_profile() {
-            BinaryFieldProfile::P128 => fault_witness::reconstruct(
+            BinaryFieldProfile::P128 => fault_witness::reconstruct::<F>(
                 &preparation.manifest,
                 preparation.claim.as_ref(),
                 &preparation.prime,
@@ -397,14 +414,14 @@ impl FaultBackend {
     #[allow(clippy::too_many_arguments)]
     fn begin_fault_root_relation(
         &self,
-        witness: &W,
+        witness: &W<F, E>,
         weights: NativeRootWeights<E>,
         negative_binary_weights: Vec<(usize, E)>,
         claim: E,
         stage1_point: &[E],
         range_image_evaluation: E,
         batching: E,
-    ) -> Result<Stage2, AkitaError> {
+    ) -> Result<Stage2<F, E>, AkitaError> {
         // A malicious prover is allowed to use an incorrect public oracle. Make
         // its own sumcheck consistent so it emits a complete proof; the real
         // verifier must detect the wrong relation at its final oracle check.
@@ -477,7 +494,7 @@ pub(super) fn authenticate_terminal(
         true,
         0,
     )?;
-    fault_witness::reconstruct(
+    fault_witness::reconstruct::<TerminalField>(
         manifest,
         Some(claim),
         &PrimePlaneManifest::with_field_profile(
@@ -510,7 +527,7 @@ pub(super) fn authenticate_terminal_relation(
         true,
         0,
     )?;
-    let digits = fault_witness::reconstruct(
+    let digits = fault_witness::reconstruct::<TerminalField>(
         manifest,
         Some(honest),
         &PrimePlaneManifest::with_field_profile(
@@ -533,13 +550,13 @@ pub(super) fn authenticate_terminal_relation(
             value_carry: 4,
         },
         challenges,
-        F::from_u64(1),
-        [F::from_u64(1); 2],
+        TerminalField::from_u64(1),
+        [TerminalField::from_u64(1); 2],
         u128::MAX - 274,
     )?;
     let table = digits
         .into_iter()
-        .map(|digit| F::from_i64(i64::from(digit)))
+        .map(|digit| TerminalField::from_i64(i64::from(digit)))
         .collect::<Vec<_>>();
     weights.check_table(&table)
 }
