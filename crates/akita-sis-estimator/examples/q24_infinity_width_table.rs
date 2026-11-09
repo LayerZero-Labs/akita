@@ -2,9 +2,9 @@
 //! certificates as CSV files.
 //!
 //! Output goes to `crates/akita-sis-estimator/data` unless `--output-dir PATH`
-//! names a comparison directory. The q25 files and runtime table are untouched.
+//! names a comparison directory.
 
-use akita_sis_estimator::labinius_width_table::q24;
+use akita_sis_estimator::q24_width_table as q24;
 use std::{
     env, fs,
     path::{Path, PathBuf},

@@ -14,13 +14,6 @@ pub enum AkitaModulusProfileId {
     Q32Offset99,
     /// `2^64 - 59`.
     Q64Offset59,
-    /// LaBinius commitment prime `2^25 + 14561 = 1 + 23328 * 1439`.
-    ///
-    /// This profile is available to the offline estimator. It is deliberately
-    /// absent from Akita's native power-of-two runtime dispatch: the binary
-    /// protocol uses non-native cyclotomic degrees.
-    #[cfg(feature = "labinius-sis")]
-    Q25Plus14561,
     /// Extension seam: q24 modulus variant registration for
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
     ///
@@ -48,8 +41,6 @@ impl AkitaModulusProfileId {
             "q32" | "Q32Offset99" => Ok(Self::Q32Offset99),
             "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
             #[cfg(feature = "labinius-sis")]
-            "q25-labinius" | "Q25Plus14561" => Ok(Self::Q25Plus14561),
-            #[cfg(feature = "labinius-sis")]
             "q24" | "Q24Minus2523807" => Ok(Self::Q24Minus2523807),
             "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
             "q128_offset275" | "Q128Offset275" => Ok(Self::Q128Offset275),
@@ -70,11 +61,7 @@ impl AkitaModulusProfileId {
             Self::Q32Offset99 => akita_q32(),
             Self::Q64Offset59 => akita_q64(),
             #[cfg(feature = "labinius-sis")]
-            Self::Q25Plus14561 => BigUint::from(33_568_993u32),
-            #[cfg(feature = "labinius-sis")]
-            Self::Q24Minus2523807 => BigUint::from(
-                akita_params::sis::labinius::LabiniusCommitmentModulus::Q24Minus2523807.modulus(),
-            ),
+            Self::Q24Minus2523807 => BigUint::from((1u32 << 24) - 2_523_807),
             Self::Q128OffsetA7F7 => akita_q128(),
             Self::Q128Offset275 => {
                 BigUint::from(akita_params::sis::SisModulusProfileId::Q128Offset275.modulus())
@@ -91,8 +78,6 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => "q32",
             Self::Q64Offset59 => "q64",
-            #[cfg(feature = "labinius-sis")]
-            Self::Q25Plus14561 => "q25-labinius",
             #[cfg(feature = "labinius-sis")]
             Self::Q24Minus2523807 => "q24",
             Self::Q128OffsetA7F7 => "q128",
@@ -234,22 +219,10 @@ pub fn scalar_sis_from_ring_euclidean(
 mod tests {
     use super::*;
 
-    #[cfg(feature = "labinius-sis")]
-    #[test]
-    fn commitment_prime_has_an_exact_feature_gated_identity() {
-        let profile = AkitaModulusProfileId::Q25Plus14561;
-        assert_eq!(profile.label(), "q25-labinius");
-        assert_eq!(profile.modulus(), BigUint::from(33_568_993u32));
-        assert_eq!(
-            AkitaModulusProfileId::parse(profile.label()).unwrap(),
-            profile
-        );
-    }
-
     #[cfg(not(feature = "labinius-sis"))]
     #[test]
-    fn commitment_prime_is_absent_without_the_feature() {
-        assert!(AkitaModulusProfileId::parse("q25-labinius").is_err());
+    fn q24_profile_is_absent_without_the_feature() {
+        assert!(AkitaModulusProfileId::parse("q24").is_err());
     }
 
     #[test]

@@ -47,7 +47,6 @@ parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]
-num-bigint = "0.5.1"
 rand = "0.8"
 shake = "0.1.0"
 

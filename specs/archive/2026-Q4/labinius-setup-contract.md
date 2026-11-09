@@ -15,11 +15,11 @@ they appear in all capitals.
 selected `LabiniusRootProfile`, `log_num_cells`, `log_fold_width`, and
 `lambda_fold`. It MUST use the shape's certified rank `n_A`, ring elements per
 column `m`, fold width `C` and response interval, the balanced base-16 digit
-range of [root admission](../../labinius-root-admission.md#fold-response), with the
+range of [root admission](labinius-root-admission.md#fold-response), with the
 profile's challenge family, commitment modulus `q` and commitment degree.
 The matrix MUST use exact q sampling, so this path MUST NOT apply the legacy
 P-to-q derivation-bias gate
-([root admission](../../labinius-root-admission.md#derivation-bias)).
+([root admission](labinius-root-admission.md#derivation-bias)).
 `BinaryClearSetup::new` MUST check the degree, trinomial sign and commitment
 modulus against those identities and MUST reject a matrix coefficient at
 least `q`.

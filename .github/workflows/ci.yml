@@ -461,7 +461,7 @@ jobs:
           --test-threads=1
 
   test-labinius-sis:
-    name: LaBinius SIS foundations
+    name: Binary-source setup and q24 certificate
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -469,11 +469,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           components: clippy
-      - name: Test opt-in source bounds and certified table
+      - name: Test binary setup and the q24 certificate
         run: |
-          cargo test -p akita-params --lib --no-default-features --features labinius-sis,transcript-keccak sis::labinius
-          cargo test -p akita-sis-estimator --lib --test labinius_width_table --no-default-features --features labinius-sis
-          cargo test -p akita-sis-estimator --example labinius_infinity_width_table --no-default-features --features labinius-sis
+          cargo test -p akita-params --lib --no-default-features --features labinius-sis,transcript-keccak binary_setup
+          cargo test -p akita-sis-estimator --lib --test q24_width_table --no-default-features --features labinius-sis
       - name: Check opt-in estimator targets
         run: cargo clippy -p akita-params -p akita-sis-estimator --all-targets --no-default-features --features labinius-sis,transcript-keccak -- -D warnings
 

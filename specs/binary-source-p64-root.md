@@ -544,8 +544,9 @@ K is absent from D, but its outgoing witness and all induced setup-prefix
 commitments still require SIS repricing.
 
 Keep A's degree 648, rank three and modulus q for this projection design.
-The visible generated commitment-prime certificate table concerns the old q25
-profile. It does not certify this q24 root.
+The offline [q24 certificate](binary-source-q24-certificate.md) prices A at
+rank three for three source-comparison bounds only. It is not an admission
+certificate for this root.
 Experimental rank-three tests do not establish security admission.
 Certify the q24 instance, B/D instances, ordinary suffix and induced setup
 instances under the current policy before a production claim.

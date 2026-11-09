@@ -83,7 +83,7 @@ It requires:
 
 The interval is an explicit argument. The admitted root setup passes the
 balanced digit range of its shape
-([root admission](../../labinius-root-admission.md#fold-response)); a test may pass
+([root admission](labinius-root-admission.md#fold-response)); a test may pass
 any interval that satisfies items 2 and 4. The source comparison identity
 binds the commitment modulus, ring degree, and matrix-view digest. These are
 geometry, entropy, and no-wrap checks, not SIS security admission.

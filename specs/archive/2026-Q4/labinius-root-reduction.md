@@ -39,7 +39,7 @@ stored base-16 digits; there is no digit-base parameter.
 The lowered relation runs over a field pair. The base field F is a prime
 field (`F: Field + CanonicalEncoding`) whose characteristic P passes
 `LabiniusRootShape::derive_encoding`
-([root admission](../../labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges)).
+([root admission](labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges)).
 The committed tables hold small integers of F. The challenge field E
 (`E: ExtField<F>`) holds every Fiat-Shamir field challenge, every sumcheck
 round message, every evaluation point and value, the message `y_Y` and all
@@ -668,7 +668,7 @@ The 64-bit field as its own challenge field would need 65 to
 
 The KA term has degree below D, so it does not change the alpha bound. The
 derivation bias, an additive term of the SIS reduction, is owned by
-[root admission](../../labinius-root-admission.md#derivation-bias). Neither closes
+[root admission](labinius-root-admission.md#derivation-bias). Neither closes
 the composition obligations below.
 
 ## What acceptance proves, and open obligations
@@ -755,7 +755,7 @@ the deterministic envelope `C*Gamma` (23552 against `[-2184, 1911]` at the
 sample geometry), so a candidate can be rejected. Akita's cap derivation
 bounds by 7/8 the probability that one candidate's response exceeds the cap
 1266, under the sign model stated in
-[root admission](../../labinius-root-admission.md#fold-response), and the interval
+[root admission](labinius-root-admission.md#fold-response), and the interval
 contains `[-1266, 1266]`. If the 4096 candidates were independent at that bound, all
 would fail with probability at most `(7/8)^4096 < 2^-789`. The prover returns
 `InvalidInput` in that event. In a measurement over 40 seeds at the sample
