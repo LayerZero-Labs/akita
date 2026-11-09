@@ -312,70 +312,6 @@ pub fn binary_root_challenges(
         .ok_or_else(|| AkitaError::Internal("binary root family has no rejection".into()))
 }
 
-#[cfg(test)]
-mod p64_tests {
-    use super::*;
-    use jolt_field::{Ext2, Prime64Offset59, Ring};
-    type F = Prime64Offset59;
-    type E = Ext2<F>;
-
-    #[test]
-    fn binary_source_p64_batch_rejects_noncanonical_candidates_and_keeps_both_coordinates() {
-        let mut calls = 0;
-        let values = p64_batch_from_blocks::<F, E>(2, || {
-            calls += 1;
-            Ok(if calls == 1 {
-                [BINARY_SETUP_P64, u64::MAX, BINARY_SETUP_P64 - 1, 3]
-            } else {
-                [4, 5, 6, 7]
-            }
-            .map(u64::to_le_bytes)
-            .concat()
-            .try_into()
-            .unwrap())
-        })
-        .unwrap();
-        assert_eq!(calls, 2);
-        assert_eq!(
-            values,
-            vec![
-                E::from_base_fn(|i| F::from_u64([BINARY_SETUP_P64 - 1, 3][i])),
-                E::from_base_fn(|i| F::from_u64([4, 5][i]))
-            ]
-        );
-    }
-
-    #[test]
-    fn binary_source_p64_batch_caps_each_coordinate_at_256_attempts() {
-        for coordinate in 0..2 {
-            let mut calls = 0;
-            let result = p64_batch_from_blocks::<F, E>(1, || {
-                calls += 1;
-                let mut words = [u64::MAX; 4];
-                if calls == 1 && coordinate == 1 {
-                    words[0] = 1;
-                }
-                Ok(words.map(u64::to_le_bytes).concat().try_into().unwrap())
-            });
-            assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
-            assert_eq!(calls, (256usize + coordinate).div_ceil(4));
-        }
-        // The 256th attempt is accepted, rather than rejecting one attempt early.
-        let mut calls = 0;
-        let values = p64_batch_from_blocks::<F, E>(1, || {
-            calls += 1;
-            let words = match calls {
-                64 => [u64::MAX, u64::MAX, u64::MAX, 7],
-                65 => [9; 4],
-                _ => [u64::MAX; 4],
-            };
-            Ok(words.map(u64::to_le_bytes).concat().try_into().unwrap())
-        })
-        .unwrap();
-        assert_eq!(values, vec![E::from_base_fn(|i| F::from_u64([7, 9][i]))]);
-    }
-}
-
 /// Bind the entire ordered grouped statement before any root challenge.
 /// The legacy statement atom and its message order remain independent.
 pub fn grouped_root_statement<F, E, S, C>(
@@ -500,4 +436,68 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod p64_tests {
+    use super::*;
+    use jolt_field::{Ext2, Prime64Offset59, Ring};
+    type F = Prime64Offset59;
+    type E = Ext2<F>;
+
+    #[test]
+    fn binary_source_p64_batch_rejects_noncanonical_candidates_and_keeps_both_coordinates() {
+        let mut calls = 0;
+        let values = p64_batch_from_blocks::<F, E>(2, || {
+            calls += 1;
+            Ok(if calls == 1 {
+                [BINARY_SETUP_P64, u64::MAX, BINARY_SETUP_P64 - 1, 3]
+            } else {
+                [4, 5, 6, 7]
+            }
+            .map(u64::to_le_bytes)
+            .concat()
+            .try_into()
+            .unwrap())
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(
+            values,
+            vec![
+                E::from_base_fn(|i| F::from_u64([BINARY_SETUP_P64 - 1, 3][i])),
+                E::from_base_fn(|i| F::from_u64([4, 5][i]))
+            ]
+        );
+    }
+
+    #[test]
+    fn binary_source_p64_batch_caps_each_coordinate_at_256_attempts() {
+        for coordinate in 0..2 {
+            let mut calls = 0;
+            let result = p64_batch_from_blocks::<F, E>(1, || {
+                calls += 1;
+                let mut words = [u64::MAX; 4];
+                if calls == 1 && coordinate == 1 {
+                    words[0] = 1;
+                }
+                Ok(words.map(u64::to_le_bytes).concat().try_into().unwrap())
+            });
+            assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
+            assert_eq!(calls, (256usize + coordinate).div_ceil(4));
+        }
+        // The 256th attempt is accepted, rather than rejecting one attempt early.
+        let mut calls = 0;
+        let values = p64_batch_from_blocks::<F, E>(1, || {
+            calls += 1;
+            let words = match calls {
+                64 => [u64::MAX, u64::MAX, u64::MAX, 7],
+                65 => [9; 4],
+                _ => [u64::MAX; 4],
+            };
+            Ok(words.map(u64::to_le_bytes).concat().try_into().unwrap())
+        })
+        .unwrap();
+        assert_eq!(values, vec![E::from_base_fn(|i| F::from_u64([7, 9][i]))]);
+    }
 }

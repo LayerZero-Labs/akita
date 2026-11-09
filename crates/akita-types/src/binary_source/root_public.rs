@@ -477,10 +477,10 @@ impl BinaryRootPublic {
     }
 }
 
-#[cfg(test)]
-#[path = "reference_weights.rs"]
-pub(crate) mod reference;
-
 #[path = "grouped_public.rs"]
 mod grouped;
 pub use grouped::{GroupedBinaryRelation, GroupedRootPublic};
+
+#[cfg(test)]
+#[path = "reference_weights.rs"]
+pub(crate) mod reference;

@@ -231,10 +231,6 @@ impl GroupedNativeRootPlan {
     }
 }
 
-#[cfg(test)]
-#[path = "grouped_root_tests.rs"]
-mod tests;
-
 impl GroupedNativeRootPlan {
     /// Reconstruct the plan from ordered public claims and trusted source contracts.
     pub fn from_claims<E: Clone, C>(
@@ -287,3 +283,7 @@ impl GroupedNativeRootPlan {
         Self::new(&binary, &signed, destination)
     }
 }
+
+#[cfg(test)]
+#[path = "grouped_root_tests.rs"]
+mod tests;

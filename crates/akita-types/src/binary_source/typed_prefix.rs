@@ -867,9 +867,9 @@ pub(crate) fn paired_offset_eq_sum<E: Field>(
 mod weights;
 pub use weights::TypedPrefixWeights;
 
+#[path = "translated_prefix_weights.rs"]
+mod translated_weights;
+
 #[cfg(test)]
 #[path = "typed_prefix_tests.rs"]
 mod tests;
-
-#[path = "translated_prefix_weights.rs"]
-mod translated_weights;
