@@ -1,10 +1,10 @@
-//! Bounded q24 root witnesses using the canonical trinomial relation kernel.
+//! Bounded q24 root witnesses for the canonical trinomial relation.
 //!
-//! The selected proof field need not have a degree-648 smooth transform.
-//! Convolution uses the existing kernel over an auxiliary smooth field, with
-//! a checked integer no-wrap bound, then embeds the recovered integers into
-//! the proof field. A q-divisible residual is retained explicitly: it is never
-//! asserted to vanish over the proof field.
+//! The selected path folds packed sources and recovers integer residuals by
+//! limb-prime CRT. The expanded reference uses an auxiliary smooth field to
+//! recover both remainders and quotients. Both enforce integer no-wrap bounds;
+//! neither requires a degree-648 transform in the proof field. A q-divisible
+//! residual is retained explicitly, never asserted to vanish in the proof field.
 
 pub(crate) mod prime;
 pub use prime::prime_plane_digits;
@@ -33,6 +33,9 @@ pub(crate) mod evaluation;
 mod residual;
 mod setup_prefix;
 pub use evaluation::{binary_row_partials, BinaryEvaluationWitness};
+pub use setup_prefix::{
+    CompositePrefixPreparationCost, PreparedCompositePrefix, TrustedCompositePrefixDefinition,
+};
 
 /// An integer identity `sum A*z - sum iota(c)*T = remainder + Psi*quotient`.
 /// These values are construction witnesses, not unauthenticated proof messages.
@@ -146,9 +149,9 @@ impl BinaryRootRelation {
         challenges: &Challenges,
         family: FoldChallengeDistribution,
     ) -> Result<Self, AkitaError> {
-        let (polynomials, columns, source_rows) = dimensions(descriptor, matrix)?;
+        let ((polynomials, columns, source_rows), product_bound) =
+            validate_relation_operands(descriptor, matrix, &response, images, family)?;
         let rank = matrix.len();
-        let product_bound = relation_bound(descriptor, matrix, &response, images, family)?;
         let embedded_challenges = embed_challenges(descriptor, challenges, family)?;
         let auxiliary_modulus = (-Prime128OffsetA7F7::one())
             .to_u128_checked()
@@ -242,13 +245,13 @@ impl BinaryRootRelation {
             .map_err(|_| invalid("binary response digit allocation failed"))?;
         response_digits.resize(response_len, 0);
         let split = |(digits, element): (&mut [i8], &[i128; D])| -> Result<(), AkitaError> {
-            for (digit, digits) in digits.chunks_exact_mut(D).enumerate() {
-                for (slot, &coefficient) in digits.iter_mut().zip(element) {
-                    let word = coefficient
-                        .checked_sub(i128::from(BINARY_RESPONSE_INTERVAL.0))
-                        .filter(|&x| (0..4096).contains(&x))
-                        .ok_or_else(|| invalid("binary response digit decomposition failed"))?;
-                    *slot = ((word >> (3 * digit)) & 7) as i8 - 4;
+            for (index, &coefficient) in element.iter().enumerate() {
+                let word = coefficient
+                    .checked_sub(i128::from(BINARY_RESPONSE_INTERVAL.0))
+                    .filter(|&x| (0..4096).contains(&x))
+                    .ok_or_else(|| invalid("binary response digit decomposition failed"))?;
+                for (digit, lane) in digits.chunks_exact_mut(D).enumerate() {
+                    lane[index] = ((word >> (3 * digit)) & 7) as i8 - 4;
                 }
             }
             Ok(())
@@ -278,13 +281,12 @@ impl BinaryRootRelation {
         image_digits
             .try_reserve_exact(image_len)
             .map_err(|_| invalid("binary image digit allocation failed"))?;
-        for element in images {
-            for digit in 0..8 {
-                image_digits.extend(
-                    element
-                        .iter()
-                        .map(|coefficient| coefficient.digits()[digit]),
-                );
+        image_digits.resize(image_len, 0);
+        for (element, output) in images.iter().zip(image_digits.chunks_exact_mut(8 * D)) {
+            for (index, coefficient) in element.iter().enumerate() {
+                for (lane, digit) in output.chunks_exact_mut(D).zip(coefficient.digits()) {
+                    lane[index] = digit;
+                }
             }
         }
         Ok(image_digits)
@@ -387,20 +389,21 @@ fn dimensions(
     Ok((descriptor.polynomials().len(), columns, rows))
 }
 
-/// Validate a root relation's operand counts and response interval, and
-/// return the integer bound on every unreduced and remainder coefficient.
+/// Validate a root relation's operands and return its geometry together with
+/// the integer bound on every unreduced and remainder coefficient.
 ///
 /// Each unreduced product coefficient contains at most D products. Division
 /// by Psi combines at most two such coefficients in Q and at most three in the
 /// remainder. This conservative bound covers both.
-fn relation_bound(
+fn validate_relation_operands(
     descriptor: &BinarySourceDescriptor,
     matrix: &[Vec<[i128; D]>],
     response: &[[i128; D]],
     images: &[[Q24Image; D]],
     family: FoldChallengeDistribution,
-) -> Result<u128, AkitaError> {
-    let (polynomials, columns, source_rows) = dimensions(descriptor, matrix)?;
+) -> Result<((usize, usize, usize), u128), AkitaError> {
+    let geometry = dimensions(descriptor, matrix)?;
+    let (polynomials, columns, source_rows) = geometry;
     let rank = matrix.len();
     let expected_response = checked::product([polynomials, source_rows])
         .ok_or_else(|| invalid("binary response count overflow"))?;
@@ -432,6 +435,7 @@ fn relation_bound(
             )
         })
         .and_then(|x| x.checked_mul(3))
+        .map(|bound| (geometry, bound))
         .ok_or_else(|| invalid("binary relation integer bound overflow"))
 }
 

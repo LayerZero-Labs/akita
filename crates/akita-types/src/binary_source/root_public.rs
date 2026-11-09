@@ -6,11 +6,11 @@ use akita_params::binary_setup::{derive_centered_q_matrix, BinaryFieldProfile};
 use akita_params::{witness_commitment_domain_len, GroupCommitPhaseParams};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, Field};
+use jolt_field::{cfg_chunks, cfg_iter_mut, cfg_join, ExtField, Field};
 
 use super::{
     binary_digit_authentication_weights, BinaryCommittedGroupManifest, BinaryRootWitnessPlan,
-    BinaryTerminalClaim, OrdinaryNativeRootPlan,
+    BinaryScalarChallengeSource, BinaryTerminalClaim, OrdinaryNativeRootPlan,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::AkitaSetupDescriptor;
@@ -132,17 +132,21 @@ impl BinaryRootPublic {
             ));
         }
         let batch_count = checked::sum([
-            plan.coefficient_batch_count()?,
-            if claim.is_some() { 2 } else { 0 },
-            checked::product([2, prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
-            manifest.b_rows(),
-            manifest
-                .d_label(claim.is_some(), prime.planes().len())?
-                .rank as usize,
+            plan.row_counts(
+                manifest.b_rows(),
+                manifest
+                    .d_label(claim.is_some(), prime.planes().len())?
+                    .rank as usize,
+            )?
+            .total()?,
             ordinary
                 .as_ref()
                 .map_or(0, OrdinaryNativeRootPlan::linear_batch_count),
-            negative_binary_addresses.len(),
+            ordinary
+                .as_ref()
+                .map(OrdinaryNativeRootPlan::negative_binary_count)
+                .transpose()?
+                .unwrap_or(0),
         ])
         .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
@@ -163,28 +167,24 @@ impl BinaryRootPublic {
 
     /// Seven P128 projections or the P64 coefficient coordinates, then word
     /// parity/value, B/D, ordinary rows, negative bits and two batches per prime
-    /// plane. No row
+    /// claim. No row
     /// reads a padding address, and none constrains one.
     pub fn batch_count(&self) -> usize {
         self.batch_count
     }
 
     /// Batch ranges: terminal, B, D, ordinary rows, negative bits, prime rows.
-    fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
-        let terminal = checked::range(
-            self.plan.coefficient_batch_count()?,
-            if self.claim.is_some() { 2 } else { 0 },
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-        let b =
-            checked::range(terminal.end, self.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
-        let d = checked::range(
-            b.end,
+    pub(super) fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
+        let counts = self.plan.row_counts(
+            self.manifest.b_rows(),
             self.manifest
                 .d_label(self.claim.is_some(), self.prime.planes().len())?
                 .rank as usize,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
+        )?;
+        let terminal =
+            checked::range(counts.coefficients, counts.word).ok_or(AkitaError::InvalidProof)?;
+        let b = checked::range(terminal.end, counts.b).ok_or(AkitaError::InvalidProof)?;
+        let d = checked::range(b.end, counts.d).ok_or(AkitaError::InvalidProof)?;
         let ordinary_rows = checked::range(
             d.end,
             self.ordinary
@@ -194,11 +194,11 @@ impl BinaryRootPublic {
         .ok_or(AkitaError::InvalidProof)?;
         let negative_bits = checked::range(ordinary_rows.end, self.negative_binary_addresses.len())
             .ok_or(AkitaError::InvalidProof)?;
-        let prime_rows = checked::range(
-            negative_bits.end,
-            checked::product([2, self.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
+        let prime_rows =
+            checked::range(negative_bits.end, counts.prime).ok_or(AkitaError::InvalidProof)?;
+        if prime_rows.end != self.batch_count {
+            return Err(AkitaError::InvalidProof);
+        }
         Ok([terminal, b, d, ordinary_rows, negative_bits, prime_rows])
     }
 
@@ -266,7 +266,7 @@ impl BinaryRootPublic {
     /// `rho` batches the public J rows. For P64, supply empty `rho` and y slices;
     /// the independent coefficient weights come directly from `batches`.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-    pub fn relation<E: Field>(
+    pub fn relation<F: Field, E: ExtField<F>>(
         &self,
         challenges: &Challenges,
         alpha: E,
@@ -284,6 +284,7 @@ impl BinaryRootPublic {
                 actual: batches.len(),
             });
         }
+        let challenges = challenges.prepare(self.manifest.descriptor())?;
         let (rho, projection_claim) = self.coefficient_inputs(batches, rho, projected_values)?;
         let [terminal, b, d, ordinary_rows, negative_bits, prime_rows] = self.batch_ranges()?;
         // The A image and terminal, prime-plane and ordinary components are
@@ -294,7 +295,7 @@ impl BinaryRootPublic {
             self.plan.relation_weights(
                 self.claim.as_ref(),
                 matrix,
-                challenges,
+                challenges.as_ref(),
                 alpha,
                 rho.as_ref(),
                 batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
@@ -305,13 +306,13 @@ impl BinaryRootPublic {
             self.plan
                 .prime_segment()
                 .map(|segment| {
-                    super::prime_plane_relation_weights(
+                    super::prime_plane_relation_weights::<F, E>(
                         self.manifest.descriptor(),
                         &self.prime,
                         self.plan.repacking(),
                         0,
                         segment,
-                        challenges,
+                        challenges.as_ref(),
                         alpha,
                         batches.get(prime_rows).ok_or(AkitaError::InvalidProof)?,
                     )

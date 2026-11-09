@@ -2,6 +2,7 @@
 use super::config::F;
 use akita_algebra::binary::BinaryField128;
 use akita_error::{checked, AkitaError};
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary_source::{
     BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
     PrimeGroupClaim, PrimePlaneClaim,
@@ -22,7 +23,8 @@ pub(super) fn descriptor(log_carriers: usize) -> Result<BinarySourceDescriptor, 
     // retain the specified C=256 and rank three.
     let columns = if log_carriers == 10 { 2 } else { 256 };
     let index = BinaryIndexMap::new(128, count, count, columns)?;
-    let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0)?;
+    let profiles =
+        BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, BinaryFieldProfile::P128)?;
     BinarySourceDescriptor::new(index, vec![[29; 32]], profiles)
 }
 
@@ -129,10 +131,10 @@ impl Claims {
     }
     pub(super) fn prime(&self) -> Option<PrimeGroupClaim> {
         self.prime.as_ref().map(|(point, value)| PrimeGroupClaim {
-            point: point.clone(),
+            point: point.iter().copied().map(Into::into).collect(),
             evaluations: vec![PrimePlaneClaim {
                 polynomial: 0,
-                value: *value,
+                value: (*value).into(),
             }],
         })
     }

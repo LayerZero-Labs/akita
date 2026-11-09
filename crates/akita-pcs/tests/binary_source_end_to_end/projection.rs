@@ -2,8 +2,8 @@
 use super::*;
 use akita_transcript::{ext_challenge, ProofChannel, ProtocolSiteId};
 use akita_types::binary_source::{
-    binary_projection_values, decode_binary_projection, BinaryProjectionBounds,
-    BinaryProjectionRows, BINARY_SOURCE_Q,
+    binary_projection_values, decode_binary_projection, BinaryProjectionRows, BinaryResidualBounds,
+    BINARY_SOURCE_Q,
 };
 
 pub(super) fn mutate_values(
@@ -23,7 +23,7 @@ pub(super) fn mutate_values(
         + 1;
     let outgoing = nonce_start + nonce_len;
     let start = outgoing + successor_coefficients * 16;
-    let bounds = BinaryProjectionBounds::new(1, 2, 3, polynomials, u128::MAX - 274).unwrap();
+    let bounds = BinaryResidualBounds::new(1, 2, 3, polynomials, u128::MAX - 274).unwrap();
     let signed_bytes = |value: i128| {
         let mut bytes = value.unsigned_abs().to_le_bytes()[..12].to_vec();
         if value < 0 {
@@ -98,7 +98,7 @@ const MU_SITE: ProtocolSiteId = ProtocolSiteId {
 
 #[test]
 fn projection_challenges_bind_commitment_and_every_output() {
-    let bounds = BinaryProjectionBounds::new(1, 2, 3, 1, u128::MAX - 274).unwrap();
+    let bounds = BinaryResidualBounds::new(1, 2, 3, 1, u128::MAX - 274).unwrap();
     let run = |commitment: u8, values: [i128; 7]| {
         let mut prover = new_prover_channel(b"binary-projection-fixation");
         // Stand in for the outgoing commitment atom; test the production sampler
@@ -140,29 +140,65 @@ fn projection_challenges_bind_commitment_and_every_output() {
     }
 }
 
-#[test]
-fn projection_orchestrators_fix_witness_then_rows_then_outputs_then_batches() {
-    // Complement channel sensitivity with a guard on both actual drivers. This
-    // catches paired reorderings too, even if prover and verifier still agree.
-    for (source, commitment) in [
-        (
-            include_str!("../../../akita-prover/src/protocol/prove/binary_root.rs"),
-            "let committed =",
-        ),
-        (
-            include_str!("../../../akita-verifier/src/fold/binary_root.rs"),
-            "let next_witness =",
-        ),
-    ] {
-        let fixed = source.find(commitment).unwrap();
-        let rows = source.find("let projections =").unwrap();
-        let values = source.find("let projected_values =").unwrap();
-        let batches = source.find("let batches =").unwrap();
-        assert!(
-            fixed < rows && rows < values && values < batches,
-            "projection fixation order must be commitment, J, all y, mu"
+/// Observe the contexts emitted by each complete driver, including the shared
+/// exchanger that sends/reads all seven projection values before it returns.
+pub(super) fn assert_driver_order(role: &str) {
+    use akita_transcript::{ProtocolMessageKind, TranscriptEvent, SITE_FAMILY_ROOT_STATEMENT};
+    let events = akita_transcript::thread_events();
+    let position = |site: ProtocolSiteId, kind: ProtocolMessageKind| {
+        let positions = events
+            .iter()
+            .enumerate()
+            .filter_map(|(i, event)| {
+                let TranscriptEvent::Context(record) = event;
+                (record.site_id == site.to_bytes() && record.kind == kind as u32).then_some(i)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            positions.len(),
+            1,
+            "{role}: expected exactly one {site:?} context"
         );
-    }
+        positions[0]
+    };
+    let outgoing = position(
+        akita_types::FoldSite::NextWitnessPayload { level: 0 }
+            .id()
+            .unwrap(),
+        ProtocolMessageKind::ProofAtoms,
+    );
+    let rows = position(
+        ProtocolSiteId {
+            family: SITE_FAMILY_ROOT_STATEMENT,
+            stage: 5,
+            ..ProtocolSiteId::default()
+        },
+        ProtocolMessageKind::PublicValue,
+    );
+    let values = position(
+        ProtocolSiteId {
+            family: SITE_FAMILY_ROOT_STATEMENT,
+            stage: 6,
+            ..ProtocolSiteId::default()
+        },
+        ProtocolMessageKind::PublicValue,
+    );
+    // Mixed roots can split their coefficients across several Tau1 messages.
+    let batches = events
+        .iter()
+        .position(|event| {
+            let TranscriptEvent::Context(record) = event;
+            record.site_id
+                == akita_params::GrindingSite::Tau1Point { level: 0 }
+                    .site_id(0)
+                    .to_bytes()
+                && record.kind == ProtocolMessageKind::Challenge as u32
+        })
+        .expect("driver must draw Tau1 batching coefficients");
+    assert!(
+        outgoing < rows && rows < values && values < batches,
+        "{role}: projection fixation order must be outgoing payload, J, all y, Tau1"
+    );
 }
 
 /// Only the scheduled Tau1 site is consumed at this isolated order-seven

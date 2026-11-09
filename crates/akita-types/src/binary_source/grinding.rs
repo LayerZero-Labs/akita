@@ -7,6 +7,9 @@ use akita_params::{
     DigitRangePlan, GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol,
 };
 
+mod multigroup;
+pub use multigroup::{BinaryColumnGroupPlan, BinaryColumnPlan};
+
 /// Replace the ordinary root queries while preserving every ordinary suffix query.
 ///
 /// This is an experimental execution plan, not catalog or security admission.

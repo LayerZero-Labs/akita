@@ -18,11 +18,8 @@ use std::io::{Cursor, Read};
 
 /// Maximum encoded manifest accepted before allocating a descriptor buffer.
 pub const MAX_BINARY_COMMITTED_MANIFEST_BYTES: usize = 132_000;
-/// Legacy P128 payload length; new code derives the count from the manifest.
-pub const BINARY_COMMITTED_PAYLOAD_COEFFICIENTS: usize = B_ROWS * B_DEGREE;
 const A_RANK: usize = 3;
 const A_DEGREE: usize = 648;
-const B_ROWS: usize = 2;
 const B_DEGREE: usize = 64;
 
 /// Frozen, explicitly selected experimental binary commitment contract.
@@ -42,19 +39,6 @@ pub struct BinaryCommittedGroupManifest {
 }
 
 impl BinaryCommittedGroupManifest {
-    pub fn new(
-        descriptor: BinarySourceDescriptor,
-        setup_group: u64,
-        carrier_profile: &GroupCommitPhaseParams,
-    ) -> Result<Self, AkitaError> {
-        Self::with_field_profile(
-            descriptor,
-            setup_group,
-            carrier_profile,
-            BinaryFieldProfile::P128,
-        )
-    }
-
     /// Define a paired profile manifest without selecting an executable root.
     pub fn with_field_profile(
         descriptor: BinarySourceDescriptor,
@@ -106,7 +90,15 @@ impl BinaryCommittedGroupManifest {
     /// D setup for the selected word U and base-coordinate prime planes.
     /// Each role selects its own least rank from its actual compact width.
     pub fn d_label(&self, word: bool, planes: usize) -> Result<SetupStreamLabel, AkitaError> {
-        if planes > self.descriptor.polynomials().len() || (!word && planes == 0) {
+        if planes
+            > checked::product([
+                self.descriptor.polynomials().len(),
+                self.field_profile.extension_degree(),
+            ])
+            .ok_or(AkitaError::InvalidProof)?
+            || !planes.is_multiple_of(self.field_profile.extension_degree())
+            || (!word && planes == 0)
+        {
             return Err(AkitaError::InvalidInput(
                 "invalid binary D selection".into(),
             ));
@@ -133,15 +125,6 @@ impl BinaryCommittedGroupManifest {
             ..self.b_label()
         })
     }
-    /// Compute the identities of the actual typed A/B setup contracts.
-    pub fn commitment_profiles(
-        index: &BinaryIndexMap,
-        polynomials: usize,
-        setup_group: u64,
-    ) -> Result<BinaryCommitmentProfiles, AkitaError> {
-        Self::profiles_for_field(index, polynomials, setup_group, BinaryFieldProfile::P128)
-    }
-
     /// A retains its q-valued identity; B binds the paired field and admitted rank.
     pub fn profiles_for_field(
         index: &BinaryIndexMap,
@@ -220,17 +203,6 @@ impl BinaryCommittedGroupManifest {
     }
 
     pub fn validate(&self) -> Result<(), AkitaError> {
-        if self.b_rank
-            != self.field_profile.digit_commitment_rank(
-                SetupStreamRole::ImageCommitment,
-                b_columns(
-                    self.descriptor.index_map(),
-                    self.descriptor.polynomials().len(),
-                )?,
-            )?
-        {
-            return Err(AkitaError::InvalidInput("binary B rank mismatch".into()));
-        }
         if self.descriptor.profiles()
             != &Self::profiles_for_field(
                 self.descriptor.index_map(),

@@ -13,7 +13,7 @@ use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
 use akita_params::RelationPolynomial;
-use jolt_field::Field;
+use jolt_field::{ExtField, Field};
 
 use super::super::authentication::{setup_entry, validate_digit_commitment_label};
 use super::super::{
@@ -24,6 +24,89 @@ use super::super::{
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
+
+/// Integer residual envelope from monomial long division, independent of the
+/// compiler's closed-form coefficient row-sum bound.
+pub(crate) fn residual_envelope(source_rows: usize, columns: usize) -> u128 {
+    use akita_challenges::FoldChallengeDistribution;
+    use std::sync::OnceLock;
+
+    static ROW_SUM: OnceLock<u128> = OnceLock::new();
+    let row_sum = *ROW_SUM.get_or_init(|| {
+        let degree = 648;
+        let mut row_sums = vec![0u128; degree];
+        for power in 0..2 * degree - 1 {
+            let mut remainder = vec![0i32; 2 * degree - 1];
+            remainder[power] = 1;
+            // Divide X^power by X^648 - X^324 + 1.
+            for high in (degree..=power).rev() {
+                let coefficient = remainder[high];
+                remainder[high] = 0;
+                remainder[high - degree] -= coefficient;
+                remainder[high - degree / 2] += coefficient;
+            }
+            let products = (power + 1).min(2 * degree - 1 - power) as u128;
+            for (sum, coefficient) in row_sums.iter_mut().zip(remainder) {
+                *sum += products * u128::from(coefficient.unsigned_abs());
+            }
+        }
+        row_sums.into_iter().max().unwrap()
+    });
+    let reach = |digits: u32, digit: u128| (0..digits).map(|i| digit * 8u128.pow(i)).sum::<u128>();
+    let matrix = u128::from(super::super::BINARY_SOURCE_Q - 1) / 2;
+    let response = reach(4, 4);
+    let image = reach(8, 4);
+    assert_eq!(
+        super::super::BINARY_RESPONSE_INTERVAL,
+        (-(response as i32), reach(4, 3) as i32)
+    );
+    assert_eq!(
+        super::super::ENFORCED_IMAGE_WINDOW,
+        (-(image as i32), reach(8, 3) as i32)
+    );
+    // A trinomial monomial contributes to at most two output coordinates.
+    let challenge = 2 * FoldChallengeDistribution::BinaryRoot.weight() as u128;
+    row_sum * source_rows as u128 * matrix * response + columns as u128 * challenge * image
+}
+
+/// Check a selected digit rank against explicit role-specific matrix admission,
+/// including failure of its predecessor, using the independently derived width.
+pub(crate) fn assert_digit_rank<R: akita_params::sis::LinfMatrixRole>(
+    label: SetupStreamLabel,
+    width: usize,
+) {
+    use akita_params::sis::{
+        LinfCommitMatrix, SisMatrixRole, SisModulusProfileId, SisTableDigest,
+        DEFAULT_SIS_SECURITY_POLICY,
+    };
+    assert_eq!(
+        label.role,
+        match R::ROLE {
+            SisMatrixRole::Outer => SetupStreamRole::ImageCommitment,
+            SisMatrixRole::Open => SetupStreamRole::WitnessCommitment,
+            SisMatrixRole::Inner => unreachable!(),
+        }
+    );
+    assert_eq!(
+        label.modulus,
+        akita_params::binary_setup::SetupStreamModulus::Prime64Offset59
+    );
+    assert_eq!(label.degree, 64);
+    let admit = |rank| {
+        LinfCommitMatrix::<R>::try_new(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q64Offset59,
+            rank,
+            width,
+            7,
+            64,
+        )
+    };
+    let rank = label.rank as usize;
+    assert!(admit(rank).is_ok());
+    assert!(admit(rank - 1).is_err());
+}
 
 pub(crate) fn direct_a_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
@@ -61,39 +144,7 @@ pub(crate) fn direct_a_weights<E: Field>(
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let adjoint = TrinomialAdjoint::<648, MinusTrinomial>::new()?;
-    let response_digits = plan
-        .repacking()
-        .segments()
-        .first()
-        .ok_or(AkitaError::InvalidProof)?
-        .digits;
-    let image_digits = plan
-        .repacking()
-        .segments()
-        .get(1)
-        .ok_or(AkitaError::InvalidProof)?
-        .digits;
-    let response_terms = if matrix.is_some() {
-        checked::product([owners, plan.rank(), rows, 648, response_digits])
-            .ok_or(AkitaError::InvalidProof)?
-    } else {
-        0
-    };
-    let image_terms = checked::product([owners, plan.rank(), columns, 648, image_digits])
-        .ok_or(AkitaError::InvalidProof)?;
-    let quotient_terms = plan
-        .projection_bounds()
-        .quotient()
-        .map_or(Some(0), |bounds| {
-            checked::product([rho.len(), 648, bounds.digits])
-        })
-        .ok_or(AkitaError::InvalidProof)?;
-    let term_count = checked::sum([response_terms, image_terms, quotient_terms])
-        .ok_or(AkitaError::InvalidProof)?;
     let mut terms = Vec::new();
-    terms
-        .try_reserve_exact(term_count)
-        .map_err(|_| AkitaError::InvalidProof)?;
     for owner in 0..owners {
         for i in 0..plan.rank() {
             let row_index =
@@ -318,7 +369,7 @@ pub(crate) fn terminal_weights<E: Field>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prime_plane_weights<E: Field>(
+pub(crate) fn prime_plane_weights<F: Field, E: ExtField<F>>(
     descriptor: &BinarySourceDescriptor,
     manifest: &PrimePlaneManifest,
     repacking: &RootCoefficientRepacking,
@@ -328,9 +379,15 @@ pub(crate) fn prime_plane_weights<E: Field>(
     alpha: E,
     batches: &[E],
 ) -> Result<NativeRootWeights<E>, AkitaError> {
-    if E::from_u128(manifest.field_profile().modulus()) != E::zero()
+    if F::from_u128(manifest.field_profile().modulus()) != F::zero()
+        || (manifest.field_profile() == akita_params::binary_setup::BinaryFieldProfile::P64
+            && E::DEGREE != 2)
         || batches.len()
-            != checked::product([manifest.planes().len(), 2]).ok_or(AkitaError::InvalidProof)?
+            != checked::product([
+                manifest.claim().map_or(0, |claim| claim.evaluations.len()),
+                2,
+            ])
+            .ok_or(AkitaError::InvalidProof)?
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -376,24 +433,38 @@ pub(crate) fn prime_plane_weights<E: Field>(
     terms
         .try_reserve_exact(term_count)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let (rows, column_weights, omega) = manifest
-        .claim()
-        .ok_or(AkitaError::InvalidProof)?
-        .weights::<E>(descriptor)?;
+    manifest.validate(descriptor)?;
+    let claim = manifest.claim().ok_or(AkitaError::InvalidProof)?;
+    let (rows, column_weights, omega) = claim.field_weights::<F, E>(descriptor)?;
+    let degree = manifest.field_profile().extension_degree();
     let mut target = E::zero();
-    for (plane_index, claim) in manifest.planes().iter().enumerate() {
-        let batch_index = checked::product([plane_index, 2]).ok_or(AkitaError::InvalidProof)?;
+    for (index, value) in claim.evaluations.iter().enumerate() {
+        let batch = *batches.get(2 * index + 1).ok_or(AkitaError::InvalidProof)?;
+        target += batch
+            * E::from_base_fn(|i| {
+                F::from_u128(value.value.coordinates().get(i).copied().unwrap_or(0))
+            });
+    }
+    for (plane_index, plane) in manifest.planes().iter().enumerate() {
+        let batch_index =
+            checked::product([plane_index / degree, 2]).ok_or(AkitaError::InvalidProof)?;
         let relation_batch = *batches.get(batch_index).ok_or(AkitaError::InvalidProof)?;
         let reading_batch = *batches
-            .get(checked::sum([batch_index, 1]).ok_or(AkitaError::InvalidProof)?)
+            .get(batch_index + 1)
             .ok_or(AkitaError::InvalidProof)?;
+        let basis = E::from_base_fn(|i| F::from_bool(i == plane.coordinate));
+        let response_batch = if plane.coordinate == 0 {
+            relation_batch
+        } else {
+            E::zero()
+        };
         for (row, row_weight) in rows.iter().copied().enumerate() {
             if row_weight == E::zero() {
                 continue;
             }
-            let element = checked::mul_add(claim.polynomial, ring_rows, row / 4)
+            let element = checked::mul_add(plane.polynomial, ring_rows, row / 4)
                 .ok_or(AkitaError::InvalidProof)?;
-            let mut power = relation_batch * row_weight;
+            let mut power = response_batch * row_weight;
             for coefficient in 0..162 {
                 let packed =
                     checked::mul_add(coefficient, 4, row % 4).ok_or(AkitaError::InvalidProof)?;
@@ -407,8 +478,8 @@ pub(crate) fn prime_plane_weights<E: Field>(
                 power *= alpha;
             }
         }
-        for (column, column_weight) in column_weights.iter().copied().enumerate() {
-            let challenge_index = checked::mul_add(claim.polynomial, columns, column)
+        for column in 0..columns {
+            let challenge_index = checked::mul_add(plane.polynomial, columns, column)
                 .ok_or(AkitaError::InvalidProof)?;
             let multiplier = scalar_challenges
                 .get(challenge_index)
@@ -420,10 +491,9 @@ pub(crate) fn prime_plane_weights<E: Field>(
             let element =
                 checked::mul_add(plane_index, columns, column).ok_or(AkitaError::InvalidProof)?;
             for (coefficient, relation) in kernel.into_iter().enumerate() {
-                let weight = reading_batch
-                    * column_weight
-                    * *omega.get(coefficient).ok_or(AkitaError::InvalidProof)?
-                    - relation_batch * relation;
+                let product = *column_weights.get(column).ok_or(AkitaError::InvalidProof)?
+                    * *omega.get(coefficient).ok_or(AkitaError::InvalidProof)?;
+                let weight = basis * (reading_batch * product - relation_batch * relation);
                 terms.extend(repacking.coefficient_weights(
                     plane_segment,
                     element,
@@ -432,7 +502,6 @@ pub(crate) fn prime_plane_weights<E: Field>(
                 )?);
             }
         }
-        target += reading_batch * E::from_u128(claim.value);
     }
     NativeRootWeights::new(repacking.domain_len(), terms, target)
 }
@@ -571,7 +640,7 @@ pub(crate) fn plan_weights<E: Field>(
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub(crate) fn root_relation<E: Field>(
+pub(crate) fn root_relation<F: Field, E: ExtField<F>>(
     public: &BinaryRootPublic,
     challenges: &Challenges,
     alpha: E,
@@ -617,7 +686,14 @@ pub(crate) fn root_relation<E: Field>(
         .ok_or(AkitaError::InvalidProof)?;
     let prime_rows = checked::range(
         negative_bits.end,
-        checked::product([2, public.prime.planes().len()]).ok_or(AkitaError::InvalidProof)?,
+        checked::product([
+            2,
+            public
+                .prime
+                .claim()
+                .map_or(0, |claim| claim.evaluations.len()),
+        ])
+        .ok_or(AkitaError::InvalidProof)?,
     )
     .ok_or(AkitaError::InvalidProof)?;
     let algebra = plan_weights(
@@ -630,7 +706,7 @@ pub(crate) fn root_relation<E: Field>(
         batches.get(terminal).ok_or(AkitaError::InvalidProof)?,
     )?;
     let prime_weights = if let Some(segment) = public.plan.prime_segment() {
-        Some(prime_plane_weights(
+        Some(prime_plane_weights::<F, E>(
             public.manifest.descriptor(),
             &public.prime,
             public.plan.repacking(),

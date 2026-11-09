@@ -753,8 +753,8 @@ target. They are, in order:
    index, `row`, `q0`, `b`, `first`, `e`, region index and `base`;
 5. `natural_len`.
 
-The test `typed_prefix_identity_bytes_are_pinned` pins these bytes for one
-geometry.
+The test `typed_prefix_identity_encodes_tail_as_little_endian_u64s` checks
+the tail's portable encoding for one geometry.
 
 ## Checked fixture bounds
 
@@ -941,10 +941,10 @@ Typed Stage 3 acceptance coverage is explicit:
 
 | Mutation or property | Test |
 | --- | --- |
-| Every quadratic round coefficient, setup product claim, and prefix evaluation | `stage3_binary_group_opens_once_inside_the_callers_transcript`; `stage3_binary_and_ordinary_groups_share_one_opening` |
-| A different typed prefix table; the ordinary stream's prefix commitment | `stage3_binary_group_opens_once_inside_the_callers_transcript`, through `reject_foreign_prefixes` |
+| Every quadratic round coefficient, setup product claim, and prefix evaluation | `projection_binary_group_opens_once_inside_the_callers_transcript`; `binary_and_ordinary_groups_share_one_opening` |
+| A different typed prefix table; the ordinary stream's prefix commitment | `projection_binary_group_opens_once_inside_the_callers_transcript`, through `reject_foreign_prefixes` |
 | Same-geometry manifest swap; missing typed installation identity | `stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof` |
-| No online A read, including an accessor negative control | Both successful `stage3_binary_*` openings |
+| No online A read, including an accessor negative control | Both successful binary-only and mixed openings |
 | Rank-one/rank-three differential, one/two polynomials, rows 1/2/3/5, independent signed reduction | `stage3_a_product_matches_independent_signed_remainder_and_response_digits` |
 | Zero equality coordinates, odd live-row cutoffs, larger padded prefixes | `stage3_a_product_terminal_matches_dense_factors_with_zero_coordinates_and_odd_cutoff` |
 | Malformed rho, point, and prefix geometry reject without panic | `stage3_a_product_rejects_malformed_rho_point_and_prefix_without_panic` |
@@ -1252,8 +1252,10 @@ the two benchmark sizes use N ordinary coefficients.
 Binary carriers use a fixed integer mixer; the ordinary fixture alternates
 zero and one.
 
-The driver selects the default-off `binary-source-measurements` feature, which
-enables `labinius-trinomial` and the offline plane planner. It accepts:
+The driver selects the default-off `binary-source-measurements` alias for
+`labinius-trinomial`. The example also builds when `labinius-trinomial` is
+selected directly; that feature enables the offline plane planner used by the
+example. It accepts:
 
 ```sh
 scripts/binary-source-full-size.sh --log-carriers 10 --shape binary-and-prime-claims-plus-ordinary
@@ -1314,14 +1316,12 @@ verification passing. Only prime-bearing shapes were re-pinned. All five
 remaining prime-bearing rows, including the mixed 2^10 smoke shape, passed
 verification with their new pins.
 
-### Proof digest pins
+### Proof size and digest measurements
 
-[`scripts/binary-source-full-size-digests.tsv`](../scripts/binary-source-full-size-digests.tsv)
-pins the proof size and Blake2b-256 digest of every full-size and smoke shape.
-The driver fails when a proof differs from its row. The dev protocol now equals
-the current protocol, so the file has one row per `(log_carriers, shape)` and
-`--dev-protocol` checks the same row. Before the single-point cutover, the
-`--dev-protocol` smoke reproduced the 82,308-byte pin.
+The full-size driver prints each proof's size and Blake2b-256 digest as
+measurement output, then reloads and verifies the proof in a separate process.
+These measurements describe the selected protocol at the measured revision;
+the driver does not require equality with historical outputs.
 
 The single-point prime pins were re-captured at `31e0f9c40`; the two
 `binary-claim` rows reproduce unchanged. The pre-cutover pins were
@@ -4387,9 +4387,9 @@ is likewise released after its last use.
 
 The intermediate current-protocol `binary-and-prime-claims` runs in
 `$CARGO_TARGET_DIR/n22-parity-lifetime.txt` and
-`$CARGO_TARGET_DIR/n23-parity-lifetime.txt` both report
-`proof_digest_pin matched=True` and `verification passed=true`. Their exact
-proof bytes and digests match the initial full-size pins. The drivers logged
+`$CARGO_TARGET_DIR/n23-parity-lifetime.txt` both report successful verification.
+At those measured revisions, their proof bytes and digests matched the initial
+full-size measurements. The drivers logged
 dirty HEADs `f6c1b1b45` and `082dd6278`, respectively; these are combined-change
 measurements, not isolated timing attribution to one optimization.
 

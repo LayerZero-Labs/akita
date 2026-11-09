@@ -402,12 +402,7 @@ where
         AkitaError::InvalidInput("binary root typed prefix was not prepared".into())
     })?;
     let phase = tracing::info_span!("binary_root_stage3_layout").entered();
-    let typed = akita_types::binary_source::BinaryTypedPrefix::new(
-        manifest,
-        claim.is_some(),
-        prime.planes().len(),
-        next.params.d_a(),
-    )?;
+    let typed = akita_types::binary_source::BinaryTypedPrefix::from_plan(manifest, public.plan())?;
     let product = akita_types::binary_source::BinaryAProduct::new(
         public.plan(),
         &rho,

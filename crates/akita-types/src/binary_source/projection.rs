@@ -18,7 +18,7 @@ const MAGNITUDE_LIMIT: u128 = 1u128 << 95;
 /// Enforced residual envelope and profile-selected exact-lift admission.
 /// A quotient selection has no projection messages or encoding-based owner cap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BinaryProjectionBounds {
+pub struct BinaryResidualBounds {
     residual_bound: u128,
     projection_bound: u128,
     rank: usize,
@@ -27,7 +27,7 @@ pub struct BinaryProjectionBounds {
     quotient: Option<BinaryQuotientBounds>,
 }
 
-impl BinaryProjectionBounds {
+impl BinaryResidualBounds {
     /// Admit geometry only when `2 U_J < P` and `U_J < 2^95`.
     ///
     /// `L_R = 972 m B_A B_Z + C Gamma B_T`, where the trinomial
@@ -216,7 +216,7 @@ impl BinaryQuotientBounds {
 /// The high bit is the sign; zero has its sign bit clear.
 pub fn encode_binary_projection(
     value: i128,
-    bounds: &BinaryProjectionBounds,
+    bounds: &BinaryResidualBounds,
 ) -> Result<[u8; BINARY_PROJECTION_BYTES], AkitaError> {
     if bounds.quotient().is_some()
         || value.unsigned_abs() > bounds.projection_bound()
@@ -241,7 +241,7 @@ pub fn encode_binary_projection(
 /// Decode one canonical, bounded multiple of q, rejecting negative zero.
 pub fn decode_binary_projection(
     bytes: &[u8],
-    bounds: &BinaryProjectionBounds,
+    bounds: &BinaryResidualBounds,
 ) -> Result<i128, AkitaError> {
     if bounds.quotient().is_some() || bytes.len() != BINARY_PROJECTION_BYTES {
         return Err(AkitaError::InvalidProof);
@@ -271,7 +271,7 @@ pub fn decode_binary_projection(
 /// Verifier callers supply seven zero placeholders, which the channel replaces.
 pub fn binary_projection_values(
     channel: &mut impl ProofChannel,
-    bounds: &BinaryProjectionBounds,
+    bounds: &BinaryResidualBounds,
     values: &[i128; BINARY_PROJECTION_COUNT],
 ) -> Result<[i128; BINARY_PROJECTION_COUNT], AkitaError> {
     if bounds.quotient().is_some() {

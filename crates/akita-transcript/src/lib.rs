@@ -62,3 +62,5 @@ pub type ProverChannel = jolt_transcript::ProverState<TranscriptSponge>;
 /// [`reject`] all poison the state, so `check_eof` fails afterwards even when
 /// the caller drops the error.
 pub type VerifierChannel<'proof> = spongefish::VerifierState<'proof, TranscriptSponge>;
+
+pub use proof_stream::{receive_indexed_nonces, send_indexed_nonces, IndexedTranscriptPrefix};

@@ -1,28 +1,7 @@
 //! Observe order-zero binding before any witness-dependent message or challenge.
 use super::*;
-use akita_challenges::{FoldDraw, ProverFoldDraw, VerifierFoldDraw};
+use akita_challenges::{ProverFoldDraw, VerifierFoldDraw};
 use akita_types::binary_source::{binary_root_challenges, binary_root_statement};
-
-/// A narrow test-only hook around the actual fold sampler. Capture the first
-/// squeezed seed rather than inferring binding from later relation rejection.
-struct FirstSqueeze<D> {
-    inner: D,
-    first: Option<Vec<u8>>,
-}
-
-impl<D: FoldDraw> FoldDraw for FirstSqueeze<D> {
-    fn draw_message<T>(
-        &mut self,
-        len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
-    ) -> Result<Option<T>, AkitaError> {
-        let first = &mut self.first;
-        self.inner.draw_message(len, |message| {
-            first.get_or_insert_with(|| message.to_vec());
-            decode(message)
-        })
-    }
-}
 
 #[test]
 fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides() {
@@ -40,10 +19,17 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
     let descriptor = BinarySourceDescriptor::new(
         index.clone(),
         vec![[29; 32], [30; 32]],
-        BinaryCommittedGroupManifest::commitment_profiles(&index, 2, 0).unwrap(),
+        BinaryCommittedGroupManifest::profiles_for_field(&index, 2, 0, BinaryFieldProfile::P128)
+            .unwrap(),
     )
     .unwrap();
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     let claim = BinaryWordClaim::new(
         &descriptor,
         [29; 32],
@@ -69,8 +55,12 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
             &mut prover,
             manifest,
             Some(claim),
-            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), None)
-                .unwrap(),
+            &akita_types::binary_source::PrimePlaneManifest::with_field_profile(
+                manifest.descriptor(),
+                None,
+                BinaryFieldProfile::P128,
+            )
+            .unwrap(),
             binary,
             Some((64, ordinary, point, values)),
         )
@@ -79,8 +69,12 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
             &mut verifier,
             manifest,
             Some(claim),
-            &akita_types::binary_source::PrimePlaneManifest::new(manifest.descriptor(), None)
-                .unwrap(),
+            &akita_types::binary_source::PrimePlaneManifest::with_field_profile(
+                manifest.descriptor(),
+                None,
+                BinaryFieldProfile::P128,
+            )
+            .unwrap(),
             binary,
             Some((64, ordinary, point, values)),
         )
@@ -121,10 +115,17 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
     let other_descriptor = BinarySourceDescriptor::new(
         index.clone(),
         vec![[29; 32], [30; 32]],
-        BinaryCommittedGroupManifest::commitment_profiles(&index, 2, 1).unwrap(),
+        BinaryCommittedGroupManifest::profiles_for_field(&index, 2, 1, BinaryFieldProfile::P128)
+            .unwrap(),
     )
     .unwrap();
-    let other_manifest = BinaryCommittedGroupManifest::new(other_descriptor, 1, &carrier).unwrap();
+    let other_manifest = BinaryCommittedGroupManifest::with_field_profile(
+        other_descriptor,
+        1,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     changed(
         "manifest",
         &other_manifest,

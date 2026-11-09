@@ -31,6 +31,7 @@ use akita_config::{
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{
     sis::CommittedSourceClass, BasisMode, ChunkedWitnessCfg, DecompositionParams,
     PolynomialGroupLayout, ScheduleLookupKey, SisModulusProfileId,
@@ -52,6 +53,27 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 type F = Prime128Offset275;
+
+/// A narrow test-only hook around the actual fold sampler. Capture the first
+/// squeezed seed rather than inferring binding from later relation rejection.
+struct FirstSqueeze<D> {
+    inner: D,
+    first: Option<Vec<u8>>,
+}
+
+impl<D: akita_challenges::FoldDraw> akita_challenges::FoldDraw for FirstSqueeze<D> {
+    fn draw_message<T>(
+        &mut self,
+        len: usize,
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
+        let first = &mut self.first;
+        self.inner.draw_message(len, |message| {
+            first.get_or_insert_with(|| message.to_vec());
+            decode(message)
+        })
+    }
+}
 
 /// Existing ordinary suffix catalog, explicitly selected only by this test.
 /// The small binary source's rank-three A and rank-two B have no security claim.
@@ -120,57 +142,75 @@ fn honest_claim(descriptor: &BinarySourceDescriptor, words: &[u128]) -> BinaryWo
 }
 
 #[test]
-fn stage3_binary_group_opens_once_inside_the_callers_transcript() {
-    init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 128));
-}
-
-#[test]
 fn projection_binary_group_opens_once_inside_the_callers_transcript() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 128));
-}
-
-#[test]
-fn stage3_binary_and_ordinary_groups_share_one_opening() {
-    init_rayon_pool();
-    run_on_large_stack(|| run_fixture(true, None, 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, None, 128, None);
+    });
 }
 
 #[test]
 fn binary_and_ordinary_groups_share_one_opening() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(true, None, 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(true, None, 128, None);
+    });
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn mixed_grouped_opening_is_independent_of_prover_thread_count() {
+    let run = |threads, expected| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .stack_size(common::STACK_SIZE)
+            .build()
+            .unwrap()
+            .install(|| run_fixture(true, None, 128, expected).unwrap())
+    };
+    let serial = run(1, None);
+    let _ = run(4, Some(&serial));
 }
 
 #[test]
 fn field_switch_binary_root_rejects_a_foreign_source_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignCommitment), 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, Some(Fault::ForeignCommitment), 128, None);
+    });
 }
 
 #[test]
 fn binary_root_rejects_a_foreign_partial_commitment() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, Some(Fault::ForeignPartials), 128));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, Some(Fault::ForeignPartials), 128, None);
+    });
 }
 
 #[test]
 fn field_switch_narrow_source_mutations_authenticate() {
     init_rayon_pool();
-    run_on_large_stack(|| run_fixture(false, None, 8));
+    run_on_large_stack(|| {
+        let _ = run_fixture(false, None, 8, None);
+    });
 }
 
 #[test]
 fn packed_bit_and_halfword_imports_preserve_commitment_and_proof_bytes() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        run_fixture(false, None, 1);
-        run_fixture(false, None, 16);
+        let _ = run_fixture(false, None, 1, None);
+        let _ = run_fixture(false, None, 16, None);
     });
 }
 
-fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usize) {
+fn run_fixture(
+    mixed: bool,
+    authentication_fault: Option<Fault>,
+    word_width: usize,
+    expected: Option<&(Vec<u8>, [u8; 32])>,
+) -> Option<(Vec<u8>, [u8; 32])> {
     let catalog = test_catalog();
     let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(catalog);
     let singleton_carrier = scheme
@@ -212,9 +252,17 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         .unwrap();
     let backend = Arc::new(CpuBackend::new(setup.expanded.clone()).unwrap());
     let index = BinaryIndexMap::new(word_width, 8 * (128 / word_width), 8, 2).unwrap();
-    let profiles = BinaryCommittedGroupManifest::commitment_profiles(&index, 1, 0).unwrap();
+    let profiles =
+        BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, BinaryFieldProfile::P128)
+            .unwrap();
     let descriptor = BinarySourceDescriptor::new(index, vec![[29; 32]], profiles).unwrap();
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
+    let manifest = BinaryCommittedGroupManifest::with_field_profile(
+        descriptor.clone(),
+        0,
+        &carrier,
+        BinaryFieldProfile::P128,
+    )
+    .unwrap();
     let words = vec![
         0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
         0x8000_0000_0000_0000_0000_0000_0000_0001,
@@ -246,7 +294,13 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         forged_profiles,
     )
     .unwrap();
-    assert!(BinaryCommittedGroupManifest::new(forged, 0, &carrier).is_err());
+    assert!(BinaryCommittedGroupManifest::with_field_profile(
+        forged,
+        0,
+        &carrier,
+        BinaryFieldProfile::P128
+    )
+    .is_err());
     let packed = backend
         .import_packed_binary_source(
             manifest.clone(),
@@ -418,11 +472,11 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     )
     .unwrap();
     let prefixes = backend
-        .prepare_binary_a_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
+        .prepare_binary_typed_prefixes(&manifest, &typed, &first_prefix, &later_prefixes)
         .unwrap();
     let ordinary_verifier_setup = scheme.setup_verifier(&setup).unwrap();
     let verifier_setup = backend
-        .prepare_binary_a_verifier_setup(
+        .prepare_binary_typed_verifier_setup(
             &ordinary_verifier_setup,
             &manifest,
             &typed,
@@ -509,7 +563,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     };
     if let Some(fault) = authentication_fault {
         prove_fault(fault);
-        return;
+        return None;
     }
     akita_transcript::clear_thread_events();
     let mut prover = new_prover_channel(b"binary-source-end-to-end-v1");
@@ -528,6 +582,7 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         &mut route,
     )
     .unwrap();
+    projection::assert_driver_order("prover");
     akita_transcript::finish_proof_ranges(&prover);
     let stage3_ranges = akita_transcript::thread_proof_ranges();
     akita_transcript::clear_thread_events();
@@ -547,12 +602,6 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     .unwrap();
     assert_eq!(packed_prover.narg_string(), prover.narg_string());
     let proof = prover.narg_string().to_vec();
-    // The fixed digests were captured with Keccak only. Blake2b is compared
-    // with an independently executed dev baseline by the Linux gates.
-    #[cfg(feature = "transcript-keccak")]
-    if matches!(word_width, 8 | 128) {
-        compatibility::assert_base_bytes(&proof, mixed, word_width);
-    }
     byte_contract::compare_baseline(&proof, &format!("binary-root-{mixed}-{word_width}.bin"));
     eprintln!(
         "{} ordinary grouped proof (word width {}): {} bytes",
@@ -566,9 +615,8 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     );
     prover.public_message(&BytesMsg(b"application-suffix"));
     let continuation: [u8; 32] = prover.verifier_message();
-    // Compared against the immutable pinned dev commit by the Linux golden
-    // gate in scripts/check-binary-root-bytes.sh. The hook is applied verbatim
-    // to that archived source; candidate runs require its captured records.
+    // An optional external observation record compares the complete proof,
+    // commitment and caller continuation for this fixture.
     let golden = format!(
         "binary-golden:{mixed}:{word_width}:{}:{}:{}:{continuation:?}",
         proof.len(),
@@ -585,6 +633,10 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
     eprintln!("{golden}");
     packed_prover.public_message(&BytesMsg(b"application-suffix"));
     assert_eq!(packed_prover.verifier_message::<[u8; 32]>(), continuation);
+    if let Some((expected_proof, expected_continuation)) = expected {
+        assert_eq!(&proof, expected_proof);
+        assert_eq!(&continuation, expected_continuation);
+    }
     let verifier = scheme.verifier(verifier_setup.clone()).unwrap();
     let mismatch = catch_unwind(AssertUnwindSafe(|| {
         let mut groups = vec![PolynomialGroupClaims::new(
@@ -643,25 +695,22 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
         ),
         "the no-A-read guard must reject an actual matrix accessor call"
     );
+    akita_transcript::clear_thread_events();
     let mut replay = new_verifier_channel(b"binary-source-end-to-end-v1", &proof);
     replay.public_message(&BytesMsg(b"application-prefix"));
-    let (pending, root_a_elapsed) = stage3::measure_root_a(|| {
-        verifier
-            .batched_verify_embedded(
-                &mut replay,
-                statement(&claim, &ordinary_point, ordinary_value),
-                BasisMode::Lagrange,
-                SetupPolicy::Check(None),
-            )
-            .unwrap()
-    });
-    eprintln!(
-        "stage3 root A online verifier mixed={mixed} word_width={word_width} product_and_transcript_replay_us={}",
-        root_a_elapsed.as_micros(),
-    );
+    let pending = verifier
+        .batched_verify_embedded(
+            &mut replay,
+            statement(&claim, &ordinary_point, ordinary_value),
+            BasisMode::Lagrange,
+            SetupPolicy::Check(None),
+        )
+        .unwrap();
     replay.public_message(&BytesMsg(b"application-suffix"));
     assert_eq!(replay.verifier_message::<[u8; 32]>(), continuation);
     pending.check_eof(replay).unwrap();
+    projection::assert_driver_order("verifier");
+    akita_transcript::clear_thread_events();
     drop(no_a_reads);
 
     let rejects = |bytes: &[u8], claim: &BinaryWordClaim, point: &[F], value: F| {
@@ -743,28 +792,5 @@ fn run_fixture(mixed: bool, authentication_fault: Option<Fault>, word_width: usi
             prove_fault(fault);
         }
     }
-}
-
-/// Scan the two root orchestration modules; helpers are outside this guard.
-#[test]
-fn binary_root_orchestrators_do_not_invoke_a_nested_driver() {
-    for source in [
-        include_str!("../../akita-prover/src/protocol/prove/binary_root.rs"),
-        include_str!("../../akita-verifier/src/fold/binary_root.rs"),
-    ] {
-        for forbidden in [
-            "akita_labinius_pcs::",
-            "akita_labinius_prover::",
-            "akita_labinius_verifier::",
-            "new_prover_channel(",
-            "new_verifier_channel(",
-            "batched_prove(",
-            "batched_verify(",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "nested root invocation: {forbidden}"
-            );
-        }
-    }
+    Some((proof, continuation))
 }

@@ -1,156 +1,9 @@
 //! Differential tests: structured root weights against the flat reference.
 
 use super::*;
-use crate::binary_source::{
-    BinaryAOperand, BinaryCommittedGroupManifest, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
-};
-use crate::AkitaSetupDescriptor;
-use akita_challenges::SparseChallenge;
-use akita_params::sis::{
-    sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
-    SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
-};
-use akita_params::{
-    BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits,
-    GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SisModulusProfileId,
-};
-use jolt_field::{Prime128Offset275 as F, Ring, Zero};
-use rand::{rngs::StdRng, Rng, SeedableRng};
-
-/// One small ordinary group with real audited table cells, as the mixed root
-/// end-to-end tests select.
-fn ordinary_profile() -> GroupCommitPhaseParams {
-    let key = |role, degree| {
-        sis_table_key_for_linf_bound(
-            DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128Offset275,
-            role,
-            degree,
-            8,
-        )
-        .unwrap()
-    };
-    let inner =
-        InnerCommitMatrixParams::try_new_with_min_rank(key(SisMatrixRole::Inner, 128), 2).unwrap();
-    let geometry = CommitmentSliceGeometry::try_new(
-        CommitmentSliceCount::ONE,
-        4,
-        1,
-        inner.output_rank(),
-        43,
-        128,
-        64,
-    )
-    .unwrap();
-    let outer = OuterCommitMatrixParams::try_new_with_min_rank(
-        key(SisMatrixRole::Outer, 64),
-        geometry.physical_input_width(),
-    )
-    .unwrap();
-    let profile = GroupCommitPhaseParams {
-        version: GroupCommitPhaseParams::VERSION,
-        group: PolynomialGroupLayout::singleton(10),
-        blocks: BlockGeometry::new(8, 2, 4),
-        outer_slice_count: CommitmentSliceCount::ONE,
-        inner: RoleParams::new(GadgetDigits::new(3, 1), inner),
-        outer: RoleParams::new(GadgetDigits::new(3, 43), outer),
-    };
-    profile.validate_frozen_precommit(128).unwrap();
-    profile
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Shape {
-    word_width: usize,
-    carriers: usize,
-    columns: usize,
-    owners: usize,
-    word_claim: bool,
-    prime_planes: usize,
-    extra_rings: usize,
-    mixed: bool,
-}
-
-fn field(rng: &mut StdRng) -> F {
-    F::from_u128(rng.gen::<u128>() >> 1)
-}
-
-fn binary_field_bytes(rng: &mut StdRng) -> [u8; 21] {
-    let mut bytes: [u8; 21] = rng.gen();
-    bytes[20] &= 0x03;
-    bytes
-}
-
-fn public(shape: Shape, rng: &mut StdRng) -> BinaryRootPublic {
-    let index = BinaryIndexMap::new(
-        shape.word_width,
-        shape.carriers * (128 / shape.word_width),
-        shape.carriers,
-        shape.columns,
-    )
-    .unwrap();
-    let profiles =
-        BinaryCommittedGroupManifest::commitment_profiles(&index, shape.owners, 0).unwrap();
-    let polynomials = (0..shape.owners)
-        .map(|owner| [29 + owner as u8; 32])
-        .collect::<Vec<_>>();
-    let descriptor = BinarySourceDescriptor::new(index, polynomials.clone(), profiles).unwrap();
-    let carrier = ordinary_profile();
-    let manifest = BinaryCommittedGroupManifest::new(descriptor.clone(), 0, &carrier).unwrap();
-    let rows = descriptor.index_map().padded_carriers() / descriptor.index_map().columns();
-    let claim = shape.word_claim.then(|| {
-        BinaryTerminalClaim::new(
-            &descriptor,
-            polynomials[shape.owners - 1],
-            (0..rows.trailing_zeros())
-                .map(|_| binary_field_bytes(rng))
-                .collect(),
-            (0..descriptor.index_map().columns().trailing_zeros())
-                .map(|_| binary_field_bytes(rng))
-                .collect(),
-            binary_field_bytes(rng),
-        )
-        .unwrap()
-    });
-    let arity = descriptor.index_map().padded_carriers().trailing_zeros() as usize + 8;
-    let claims = (shape.prime_planes > 0).then(|| PrimeGroupClaim {
-        point: (0..arity).map(|_| rng.gen::<u128>() >> 1).collect(),
-        evaluations: (0..shape.prime_planes)
-            .map(|polynomial| PrimePlaneClaim {
-                polynomial,
-                value: rng.gen::<u128>() >> 1,
-            })
-            .collect(),
-    });
-    let prime = PrimePlaneManifest::new(&descriptor, claims).expect("fixture prime planes");
-    let setup = AkitaSetupDescriptor {
-        max_num_vars: 0,
-        max_num_batched_polys: 0,
-        num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-        setup_seed: [41u8; 32].into(),
-    };
-    let ordinary = shape.mixed.then(ordinary_profile);
-    let build = |logical_len| {
-        BinaryRootPublic::new(
-            &manifest,
-            claim.as_ref(),
-            &prime,
-            &setup,
-            logical_len,
-            64,
-            ordinary,
-        )
-    };
-    let natural_end = build(1 << 22)
-        .unwrap()
-        .plan()
-        .repacking()
-        .natural_end()
-        .unwrap();
-    assert!(build(natural_end - 1).is_err());
-    build(natural_end + shape.extra_rings * 64).unwrap()
-}
+use crate::binary_source::root_weight_fixtures::{RootWeightScenario, Shape};
+use crate::binary_source::BinaryAOperand;
+use jolt_field::{Prime128Offset275 as F, Zero};
 
 /// One structured and one flat compilation of a root relation.
 struct Compiled {
@@ -163,78 +16,29 @@ struct Compiled {
 /// Compile one shape's root relation both ways, without and with A, and draw
 /// two evaluation points on its domain.
 fn compile(shape: Shape, seed: u64) -> (BinaryRootPublic, Vec<Compiled>, Vec<Vec<F>>) {
-    let mut rng = StdRng::seed_from_u64(seed);
-    let public = public(shape, &mut rng);
-    let descriptor = public.plan().descriptor().clone();
-    let index = descriptor.index_map();
-    let owners = descriptor.polynomials().len();
-    let columns = index.columns();
-    let challenges = Challenges::from_sparse(
-        (0..columns * owners)
-            .map(|_| {
-                let mut positions = Vec::new();
-                while positions.len() < 46 {
-                    let position = rng.gen_range(0..162u32);
-                    if !positions.contains(&position) {
-                        positions.push(position);
-                    }
-                }
-                positions.sort_unstable();
-                SparseChallenge {
-                    positions: positions.into(),
-                    coeffs: (0..46)
-                        .map(|_| if rng.gen() { 1i8 } else { -1 })
-                        .collect::<Vec<_>>()
-                        .into(),
-                }
-            })
-            .collect(),
-        columns,
-        owners,
-    )
-    .unwrap();
-    let alpha = field(&mut rng);
-    let batches = (0..public.batch_count())
-        .map(|_| field(&mut rng))
-        .collect::<Vec<_>>();
-    let rho = (0..owners * public.plan().rank())
-        .map(|_| std::array::from_fn(|_| field(&mut rng)))
-        .collect::<Vec<[F; 648]>>();
-    let projected: [i128; 7] = std::array::from_fn(|_| rng.gen::<i64>().into());
-    let payload_len = public.manifest.b_rows() * public.manifest.b_ring_dimension();
-    let commitment = (0..payload_len)
-        .map(|_| field(&mut rng))
-        .collect::<Vec<_>>();
-    let d_payload = (0..payload_len)
-        .map(|_| field(&mut rng))
-        .collect::<Vec<_>>();
-    let ordinary = ordinary_profile();
-    let ordinary_point = (0..ordinary.group.num_vars())
-        .map(|_| field(&mut rng))
-        .collect::<Vec<_>>();
-    let ordinary_payload = (0..ordinary
-        .outer_compression_plan()
-        .unwrap()
-        .terminal_coefficients())
-        .map(|_| field(&mut rng))
-        .collect::<Vec<_>>();
-    let ordinary_claim = shape
-        .mixed
-        .then(|| (&ordinary_point[..], field(&mut rng), &ordinary_payload[..]));
-    let a_rows = index.padded_carriers() / (4 * columns);
-    let matrix = (0..public.plan().rank())
-        .map(|_| {
-            (0..a_rows)
-                .map(|_| std::array::from_fn(|_| rng.gen_range(-7_126_704i128..=7_126_704)))
-                .collect()
-        })
-        .collect::<Vec<Vec<[i128; 648]>>>();
-    let domain_len = public.plan().repacking().domain_len();
-    let num_vars = domain_len.trailing_zeros() as usize;
+    let scenario = RootWeightScenario::new(shape, seed);
+    let RootWeightScenario {
+        public,
+        challenges,
+        alpha,
+        batches,
+        rho,
+        projected,
+        commitment,
+        d_payload,
+        ordinary_claim,
+        matrix,
+        mut stream,
+        ..
+    } = scenario;
+    let ordinary_claim = ordinary_claim
+        .as_ref()
+        .map(|(point, value, payload)| (point.as_slice(), *value, payload.as_slice()));
+    let num_vars = public.plan().repacking().domain_len().trailing_zeros() as usize;
     let points = (0..2)
-        .map(|_| (0..num_vars).map(|_| field(&mut rng)).collect::<Vec<_>>())
+        .map(|_| (0..num_vars).map(|_| stream.field()).collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    let compiled = [None, Some(BinaryAOperand::from_canonical(&matrix))]
+    let compiled = [None, Some(BinaryAOperand::new::<F>(&matrix))]
         .into_iter()
         .map(|matrix| {
             let (structured, negative) = public
@@ -472,8 +276,9 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
     use akita_params::binary_setup::{SetupStreamLabel, SetupStreamRole};
     for (seed, mut shape) in shapes().into_iter().enumerate() {
         shape.owners = shape.owners.max(shape.prime_planes);
-        let mut rng = StdRng::seed_from_u64(1000 + seed as u64);
-        let public = public(shape, &mut rng);
+        let scenario = RootWeightScenario::new(shape, 1000 + seed as u64);
+        let public = scenario.public;
+        let mut stream = scenario.stream;
         let plan = public.plan();
         let manifest = &public.manifest;
         let prefix = BinaryTypedPrefix::from_plan(manifest, plan).unwrap();
@@ -484,10 +289,10 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
         );
         let prefix_len = prefix.domain_len;
         let root_point = (0..plan.repacking().domain_len().trailing_zeros())
-            .map(|_| field(&mut rng))
+            .map(|_| stream.field())
             .collect::<Vec<_>>();
-        let alpha = field(&mut rng);
-        let batches = [0, 1].map(|_| (0..2).map(|_| field(&mut rng)).collect::<Vec<_>>());
+        let alpha = stream.field();
+        let batches = [0, 1].map(|_| (0..2).map(|_| stream.field()).collect::<Vec<_>>());
         let seed_bytes = public.setup.setup_seed.seed;
         let labels = [
             manifest.b_label(),
@@ -511,10 +316,7 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
             .evaluate(&root_point)
             .unwrap();
         }
-        let owners = plan.descriptor().polynomials().len();
-        let rho = (0..owners * plan.rank())
-            .map(|_| core::array::from_fn(|_| field(&mut rng)))
-            .collect::<Vec<[F; 648]>>();
+        let rho = scenario.rho;
         let a = BinaryAProduct::new(plan, &rho, &root_point, prefix_len).unwrap();
         let setup = prefix
             .setup_coefficients::<F>(&seed_bytes, manifest, prefix_len)
@@ -558,7 +360,7 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
         assert_eq!(expanded, weights, "{shape:?}");
         assert_eq!(live_setup, setup, "{shape:?}");
         // Binding a bit folds the blocks as it folds the dense table.
-        let challenge = field(&mut rng);
+        let challenge = stream.field();
         let mut bound = blocks.clone();
         bound.bind(challenge).unwrap();
         for (live, &block) in bound.blocks().iter().enumerate() {
@@ -577,7 +379,7 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
             }
         }
         let point = (0..prefix_len.trailing_zeros())
-            .map(|_| field(&mut rng))
+            .map(|_| stream.field())
             .collect::<Vec<_>>();
         let extension = EqPolynomial::evals(&point)
             .unwrap()
