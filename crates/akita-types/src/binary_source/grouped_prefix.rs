@@ -12,7 +12,7 @@ use super::{
 use crate::root_repacking::RootCoefficientRepacking;
 use crate::{AkitaSetupDescriptor, AkitaVerifierSetup};
 
-/// One immutable setup/capacity binding. No opening admission is represented.
+/// Immutable setup/capacity binding authenticated by the grouped opening drivers.
 #[derive(Clone, Debug)]
 pub struct GroupedTypedPrefix {
     capacity: GroupedPrefixCapacity,

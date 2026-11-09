@@ -80,7 +80,6 @@ impl DigitSegment {
     }
 
     /// Root address of slot `t` of column `j` of period `q`, if a digit is there.
-    #[cfg(any(test, feature = "test-support"))]
     fn address(&self, q: usize, j: usize, t: usize) -> Option<usize> {
         let local = checked::mul_add(j, SLOTS, t)?.checked_sub(self.offset % SLOTS)?;
         let degree = self.lanes.degree();

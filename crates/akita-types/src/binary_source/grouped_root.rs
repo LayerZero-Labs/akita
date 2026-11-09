@@ -50,7 +50,7 @@ impl GroupedBinaryPlan {
     }
 }
 
-/// Research geometry only: this cannot select a native opening or certify extraction.
+/// Ordered geometry consumed by the explicitly selected grouped opening drivers.
 #[derive(Clone, Debug)]
 pub struct GroupedNativeRootPlan {
     binary: Vec<GroupedBinaryPlan>,

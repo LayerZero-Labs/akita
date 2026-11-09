@@ -13,7 +13,7 @@ use super::{BinaryTypedPrefix, GroupedNativeRootPlan};
 use crate::root_repacking::RootCoefficientRepacking;
 
 /// Validated native resources before choosing the shared setup descriptor.
-/// This is capacity metadata, not native opening or security admission.
+/// The grouped opening drivers bind this geometry before executing the root.
 #[derive(Clone, Debug)]
 pub struct GroupedPrefixCapacity {
     pub(super) plan: GroupedNativeRootPlan,

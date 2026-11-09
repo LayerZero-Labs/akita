@@ -1,4 +1,4 @@
-//! Ordered ordinary-group compiler seam for a future admitted mixed root.
+//! Ordered ordinary-group compiler for the admitted grouped root.
 
 use akita_error::{checked, AkitaError};
 use akita_params::ordinary_source::OrdinarySourceWidth;
@@ -12,9 +12,8 @@ use crate::AkitaSetupDescriptor;
 
 /// Exact ordered ordinary identities fixed before root randomness.
 ///
-/// The selecting driver must bind each width and complete profile, commitment,
-/// point and slot evaluation before drawing row batches. This arithmetic type
-/// cannot admit a schedule or produce an opening receipt.
+/// The grouped drivers bind each width and complete profile, commitment, point
+/// and slot evaluation before drawing row batches and consuming these weights.
 #[derive(Clone, Debug)]
 pub struct OrdinaryNativeRootBatch {
     plans: Vec<OrdinaryNativeRootPlan>,

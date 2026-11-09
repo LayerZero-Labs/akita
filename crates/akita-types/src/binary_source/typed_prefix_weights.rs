@@ -25,8 +25,8 @@ const ZERO_ROW: u32 = 0;
 /// of one source row, or one column copy of a B/D piece. Every other block is
 /// zero in the weight and in the typed setup table. The weights of live block
 /// `k` are `scales[k][0] * pool[rows[k][0]] + scales[k][1] * pool[rows[k][1]]`,
-/// with row 0 of the pool all zeros and an absent term scaled by zero. Binding the lowest address bit folds the
-/// pool rows; the block records do not change.
+/// with row 0 of the pool all zeros and an absent term scaled by zero. Binding
+/// the lowest address bit folds the pool rows; the block records do not change.
 #[derive(Clone, Debug)]
 pub struct TypedPrefixWeights<E> {
     domain_len: usize,
@@ -106,14 +106,24 @@ impl<E: Field> TypedPrefixWeights<E> {
                 *target += value;
             }
         }
+        let live = table.chunks_exact(SLOTS)
+            .filter(|row| row.iter().any(|value| !value.is_zero())).count();
+        let rows = checked::sum([live, 1]).ok_or(AkitaError::InvalidProof)?;
+        let cells = checked::product([rows, SLOTS]).ok_or(AkitaError::InvalidProof)?;
+        u32::try_from(live).map_err(|_| AkitaError::InvalidProof)?;
         let mut builder = Builder {
-            pool: vec![E::zero(); SLOTS], blocks: Vec::new(),
-            scales: Vec::new(), rows: Vec::new(),
+            pool: Vec::new(), blocks: Vec::new(), scales: Vec::new(), rows: Vec::new(),
         };
+        builder.pool.try_reserve_exact(cells).map_err(|_| AkitaError::InvalidProof)?;
+        builder.blocks.try_reserve_exact(live).map_err(|_| AkitaError::InvalidProof)?;
+        builder.scales.try_reserve_exact(live).map_err(|_| AkitaError::InvalidProof)?;
+        builder.rows.try_reserve_exact(live).map_err(|_| AkitaError::InvalidProof)?;
+        builder.pool.resize(SLOTS, E::zero());
         for (block, row) in table.chunks_exact(SLOTS).enumerate() {
             if row.iter().any(|value| !value.is_zero()) {
                 let index = builder.push_row(row)?;
-                builder.push_block(block * SLOTS, [E::one(), E::zero()], [index, ZERO_ROW]);
+                let cell = checked::product([block, SLOTS]).ok_or(AkitaError::InvalidProof)?;
+                builder.push_block(cell, [E::one(), E::zero()], [index, ZERO_ROW]);
             }
         }
         Ok(Self {
