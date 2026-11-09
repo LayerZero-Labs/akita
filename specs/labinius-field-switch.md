@@ -1,14 +1,16 @@
 # Binary host field-switch arithmetic
 
-Status: active
+Status: implemented
 Book-chapter: book/src/foundations/field-arithmetic.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 ## Scope and representations
 
-The arithmetic implementation and scoped acceptance checks are complete on the
-topic branch. This record stays active through review and landing, then follows
-the Book-fold/archive lifecycle.
+The arithmetic implementation and scoped acceptance checks have landed in
+`akita-algebra`. This record preserves their arithmetic contract until it is
+folded into the Book. Native field-switch integration is described in
+[binary-source-opening.md](binary-source-opening.md); the standalone F192 host
+opening API is withdrawn.
 
 This slice supplies accelerated host arithmetic and field-switch kernels for
 both F128-witness/F128-challenge and F64-witness/F192-challenge profiles. It

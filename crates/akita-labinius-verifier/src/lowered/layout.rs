@@ -45,7 +45,7 @@ impl LoweredRootLayout {
         M: TrinomialModulus,
     {
         let invalid = || AkitaError::InvalidSetup("lowered setup and root shape disagree".into());
-        let encoding = shape.derive_encoding(crate::admitted::field_characteristic::<F>()?)?;
+        let encoding = shape.derive_encoding(akita_params::field_modulus::<F>()?)?;
         // Deriving the challenge-field sites is the admission of `E`. The
         // mode with both claims visits every site of the other two with a loss
         // factor at least as large. The statement binding derives the plan of

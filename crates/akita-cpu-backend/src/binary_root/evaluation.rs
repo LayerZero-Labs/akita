@@ -203,7 +203,7 @@ impl BinaryEvaluationWitness {
                     scalar_rows.push(values);
                 }
             }
-            let product = akita_labinius_prover::lowered::binary_weighted_integer_convolution(
+            let product = crate::kernels::binary_source::weighted_integer_convolution::binary_weighted_integer_convolution(
                 &row_weights,
                 &scalar_rows,
             )?;

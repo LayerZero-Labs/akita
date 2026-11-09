@@ -171,7 +171,7 @@ where
     let order = ChallengeFieldOrder::from_field(
         F::MODULUS_BITS,
         E::DEGREE,
-        crate::admitted::field_characteristic::<F>()?,
+        akita_params::field_modulus::<F>()?,
     )?;
     // A commitment row and the prime row are tested after reduction modulo
     // the degree-`D` modulus; the parity row is tested unreduced, with its
@@ -337,7 +337,7 @@ impl RootGrindingPlan {
         let order = ChallengeFieldOrder::from_field(
             F::MODULUS_BITS,
             E::DEGREE,
-            crate::admitted::field_characteristic::<F>()?,
+            akita_params::field_modulus::<F>()?,
         )?;
         let mut runs = Vec::new();
         for &(invocation, shape) in instances {

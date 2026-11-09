@@ -3,20 +3,15 @@
 //! report eight-column totals at width 4096 for each thread count. The width-1024,
 //! 256-column row uses one thread for the end-to-end W=20, log C=8 geometry.
 
-#![cfg(feature = "labinius")]
+#![cfg(feature = "labinius-trinomial")]
 
 use std::{hint::black_box, time::Duration};
 
-use akita_algebra::{binary::BinaryField128, MinusTrinomial, TrinomialLimbAccumulator};
-use akita_labinius_prover::{
-    commit_binary_clear_limb_prepared, commit_binary_clear_prepared,
-    limb_commit_kernel::pack_binary_element_bits, PreparedLimbCommitMatrix,
+use akita_algebra::{binary::BinaryField128, TrinomialLimbAccumulator};
+use akita_cpu_backend::kernels::binary_source::limb_commit::{
+    commit_binary_clear_limb_prepared, pack_binary_element_bits, PreparedLimbCommitMatrix,
 };
-use akita_labinius_verifier::AdmittedRootSetup;
-use akita_params::sis::labinius::LabiniusRootProfile;
-use akita_types::proof::AkitaSetupSeed;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_field::Prime128Offset275;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 const D: usize = 648;
@@ -78,37 +73,9 @@ fn benchmark_geometry(criterion: &mut Criterion) {
                 });
             },
         );
-        // The profile's certified rank at this width.
+        // Synthetic rank-two geometry for the column/thread sweep.
         if rank == 2 {
             multiple_columns(&mut group, &prepared);
-            let admitted = AdmittedRootSetup::<D, MinusTrinomial>::derive::<Prime128Offset275>(
-                LabiniusRootProfile::D648Q25BoundedW46,
-                14,
-                0,
-                128,
-                AkitaSetupSeed::shake256_paged_v1([0x28; 32]),
-            )
-            .expect("benchmark setup is admitted");
-            let setup = admitted.setup();
-            assert_eq!((setup.n_a(), setup.m(), setup.columns()), (2, WIDTH, 1));
-            let bound = PreparedLimbCommitMatrix::prepare_for_setup(setup)
-                .expect("benchmark setup has canonical coefficients");
-            group.bench_function("limb_setup_rank/2", |b| {
-                b.iter(|| {
-                    let run = || {
-                        commit_binary_clear_prepared::<BinaryField128>(
-                            black_box(&bound),
-                            black_box(setup),
-                            black_box(&source),
-                        )
-                        .expect("benchmark source has the admitted setup geometry")
-                    };
-                    #[cfg(feature = "parallel")]
-                    black_box(pool.install(run));
-                    #[cfg(not(feature = "parallel"))]
-                    black_box(run());
-                });
-            });
         }
     }
     {

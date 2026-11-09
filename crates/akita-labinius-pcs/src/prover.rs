@@ -15,13 +15,15 @@ use akita_config::{
     ensure_prover_schedule_fits_setup, CommitmentConfig, ResolvedScheduleRow,
     TrustedScheduleCatalog,
 };
+use akita_cpu_backend::kernels::binary_source::limb_commit::{
+    commit_binary_clear_limb_prepared, PreparedLimbCommitMatrix,
+};
 use akita_cpu_backend::{
     AkitaProverSetup, CommitOutput, CommitmentHandle, CpuBackend, DensePoly, GroupContext,
 };
 use akita_error::{checked, AkitaError};
 use akita_labinius_prover::{
-    commit_binary_clear_prepared, lowered::encode_image, prove_root_reduction_bytes,
-    prove_root_reduction_in_session, PreparedLimbCommitMatrix,
+    lowered::encode_image, prove_root_reduction_bytes, prove_root_reduction_in_session,
 };
 use akita_labinius_verifier::{
     channel::ClearChannel,
@@ -98,7 +100,13 @@ impl<P: FieldFamily> Prover<P> {
                 &row.profiles().opening_layout()?,
             )?;
         }
-        let prepared = PreparedLimbCommitMatrix::prepare_for_setup(root.setup())?;
+        let prepared = PreparedLimbCommitMatrix::prepare(
+            root.setup().modulus(),
+            648,
+            root.setup().n_a(),
+            root.setup().m(),
+            root.setup().matrix(),
+        )?;
         let backend = CpuBackend::new(setup.expanded.clone())?;
         Ok(Self {
             root,
@@ -128,7 +136,12 @@ impl<P: FieldFamily> Prover<P> {
         H::Source: Sync,
     {
         let clear = info_span!("pcs_clear_commitment").in_scope(|| {
-            commit_binary_clear_prepared::<H>(&self.prepared, self.root.setup(), source)
+            commit_binary_clear_limb_prepared::<H>(
+                &self.prepared,
+                self.root.setup().columns(),
+                source,
+            )
+            .map(|images| BinaryClearCommitment { images })
         })?;
         let CommitOutput {
             committed_group: commitment,

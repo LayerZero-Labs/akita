@@ -52,7 +52,7 @@ where
         .ok_or_else(invalid)?;
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(len).map_err(|_| invalid())?;
-    bytes.extend_from_slice(&crate::admitted::field_characteristic::<F>()?.to_le_bytes());
+    bytes.extend_from_slice(&akita_params::field_modulus::<F>()?.to_le_bytes());
     bytes.extend_from_slice(&u32::try_from(degree).map_err(|_| invalid())?.to_le_bytes());
     let mut basis = Vec::new();
     basis.try_reserve_exact(degree).map_err(|_| invalid())?;

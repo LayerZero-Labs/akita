@@ -1,8 +1,8 @@
 //! Commitment modulo an admitted limb prime, with signed binary sources.
 //!
 //! The raw arithmetic kernel is independent of root-profile admission. Its output
-//! is reduced coefficient storage in the same column/row/coefficient order as
-//! `BinaryClearCommitment::images`; it has no proof or serialization format.
+//! is reduced coefficient storage in column/row/coefficient order; it has no
+//! proof or serialization format.
 
 #![deny(
     clippy::expect_used,
@@ -23,12 +23,9 @@ use rayon::prelude::*;
 
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
 mod packing;
-mod setup;
 mod workspace;
 
 use workspace::{commit_blocks, Workspace, BLOCK_COLUMNS, ELEMENT_BATCH};
-
-pub use setup::commit_binary_clear_prepared;
 
 const DEGREE: usize = 648;
 const K: usize = 4;
@@ -48,7 +45,6 @@ pub struct PreparedLimbCommitMatrix {
     matrix_bytes: usize,
     prepared_bytes: usize,
     workspace_bytes: usize,
-    setup_digest: Option<[u8; 32]>,
 }
 
 impl PreparedLimbCommitMatrix {
@@ -57,8 +53,6 @@ impl PreparedLimbCommitMatrix {
     /// Reject degrees other than 648, unadmitted primes, zero rank or width,
     /// incorrect length, unreduced coefficients, overflowing sizes, and failed
     /// matrix allocations. Preparation initializes the signed-bit tables too.
-    /// The result is unbound and cannot serve the setup-bound entry point; use
-    /// [`Self::prepare_for_setup`] for a clear setup.
     pub fn prepare(
         q0: u32,
         degree: usize,
@@ -175,7 +169,6 @@ impl PreparedLimbCommitMatrix {
             matrix_bytes,
             prepared_bytes,
             workspace_bytes,
-            setup_digest: None,
         })
     }
 
@@ -221,8 +214,8 @@ impl PreparedLimbCommitMatrix {
 ///
 /// Bit `4*s+c` is coordinate `s` of `embed_source::<H>(words[c])`. The limb
 /// domain applies its fixed sign `(-1)^s` through lookup tables. This agrees
-/// exactly with `akita_labinius_verifier::source::pack_source_column`, without
-/// a degree-sized array of signed coefficients. Both supported source types
+/// with signed coefficient packing, without a degree-sized array of signed
+/// coefficients. Both supported source types
 /// embed into the low 128 coordinates of F162, so the final 136 bits are zero.
 pub fn pack_binary_element_bits<H: SwitchField>(
     words: &[H::Source],
@@ -264,8 +257,7 @@ pub fn pack_binary_element_bits<H: SwitchField>(
 
 /// Commit exactly `columns * m * 4` source words using a prepared limb matrix.
 ///
-/// Columns contain groups of four words per element, in precisely the layout
-/// accepted by [`crate::commit_binary_clear`]. Return reduced `u32`
+/// Columns contain groups of four words per element. Return reduced `u32`
 /// coefficients ordered by column, row, then coefficient. Each source element
 /// is transformed once for all rows. Parallel workers reuse private workspaces
 /// and write disjoint column slices, preserving output for any thread count.

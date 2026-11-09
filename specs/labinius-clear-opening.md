@@ -1,24 +1,27 @@
 # Standalone clear binary opening
 
-Status: active
+Status: implemented
 Book-chapter: book/src/how/architecture.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 ## Scope
 
-The two standalone crates `akita-labinius-verifier` and
-`akita-labinius-prover` implement a clear binary opening differential oracle.
-Their `labinius` feature is off by default. Enabling it exposes this separate
-API; nothing on the Akita proof path selects or depends on the extension.
+The standalone clear opening API is withdrawn. Its implementation remains in
+`akita-labinius-verifier` and `akita-labinius-prover` temporarily for removal,
+behind their default-off `labinius` feature. The native grouped binary root is
+the binary-source product. Its arithmetic kernels live in
+`akita-cpu-backend/src/kernels/binary_source/`; native callers do not depend on
+the standalone crates. The F192 host path and the other standalone root and PCS
+APIs are withdrawn as well.
 
 This oracle performs no SIS admission, width-table lookup, or security lookup.
 It admits no production parameter set. It has no outer commitment, setup
 offloading, quotient or carry rows, bit dropping, recursion, performance
 contract, or zero knowledge. Its proof encoding is not the production Akita
-proof format. The field-switch projection and composition obligations recorded
-in [the field-switch specification](labinius-field-switch.md) remain open for
-production integration. Arithmetic and protocol agreement in this oracle do
-not discharge them.
+proof format. Native field-switch integration is implemented separately; see
+[the native binary-source specification](binary-source-opening.md). Arithmetic
+and protocol agreement in this retired oracle do not establish native protocol
+security.
 
 ## Statement and geometry
 

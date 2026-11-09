@@ -144,7 +144,7 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
             .ok_or(AkitaError::InvalidProof)?;
         let range =
             checked::range(start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
-        let partials = akita_labinius_prover::lowered::weighted_source_bits::<
+        let partials = crate::kernels::binary_source::weighted_source::weighted_source_bits::<
             akita_algebra::binary::BinaryField128,
             F,
         >(

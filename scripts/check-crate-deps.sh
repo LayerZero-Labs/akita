@@ -27,6 +27,7 @@ else
       ;;
     akita-cpu-backend)
       forbidden=(akita-planner akita-verifier akita-setup akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
+      forbidden+=(akita-labinius-prover akita-labinius-verifier akita-labinius-pcs)
       ;;
     akita-config)
       forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs akita-metal jolt-metal akita-zk-prover akita-zk-verifier)
@@ -92,6 +93,10 @@ for label in default all-features; do
     all-features) tree="${all_features_tree}" ;;
   esac
   for candidate in "${forbidden[@]}"; do
+    # The withdrawn standalone prover now calls the canonical CPU arithmetic.
+    if [ "$#" -eq 0 ] && [ "$pkg" = "akita-labinius-prover" ] && [ "$candidate" = "akita-cpu-backend" ]; then
+      continue
+    fi
     if grep -qE "(^|[[:space:]])${candidate}([[:space:]]|$)" <<<"${tree}"; then
       echo "forbidden dependency found in ${pkg} (${label}): ${candidate}" >&2
       exit 1

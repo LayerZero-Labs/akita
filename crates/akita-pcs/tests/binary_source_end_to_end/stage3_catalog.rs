@@ -56,52 +56,68 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
     direct_policy.recursive_setup_planning = false;
     direct_policy.selection_policy = SelectionPolicyId::for_policy(false);
     direct_policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
-    let directory = if akita_params::DEV_PROTOCOL {
-        "schedules-labinius-dev"
-    } else {
-        "schedules-labinius"
-    };
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../artifacts")
-        .join(directory)
-        .join("labinius_fp128_digits_b4.aks");
-    let direct = ValidatedScheduleCatalog::from_artifact_bytes(
-        &std::fs::read(path).expect("direct fixture artifact"),
-        "labinius_fp128_digits_b4",
+    let contract = BinaryTestSuffix::committed_source_contract().expect("fixture contract");
+    let singleton = |vars| ScheduleLookupKey::single(PolynomialGroupLayout::singleton(vars));
+    let direct_rows: Vec<_> = [23, 18]
+        .into_iter()
+        .map(|vars| {
+            let planned = akita_planner::find_schedule(
+                &singleton(vars),
+                contract,
+                &[],
+                &direct_policy,
+                BinaryTestSuffix::ring_challenge_config,
+            )
+            .expect("direct fixture schedule");
+            (
+                akita_params::CommittedGroupBatchProfile {
+                    final_group: planned.schedule.root.params.own_group().profile,
+                    precommitteds: Vec::new(),
+                },
+                planned.schedule,
+            )
+        })
+        .collect();
+    let direct = ValidatedScheduleCatalog::try_new(
+        BinaryTestSuffix::schedule_family_name(),
+        direct_rows,
         &direct_policy,
         BinaryTestSuffix::ring_challenge_config,
     )
     .expect("direct fixture catalog");
-    let singleton = |vars| ScheduleLookupKey::single(PolynomialGroupLayout::singleton(vars));
     let carrier = direct.resolve_key(&singleton(23)).expect("carrier row");
     let mixed_key = ScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(18),
         precommitteds: vec![carrier.profiles().final_group],
         root_accumulated_setup_prefix_len: 0,
     };
-    let cached = std::fs::read(artifact_path()).ok().map(|bytes| {
-        ValidatedScheduleCatalog::from_artifact_bytes(
-            &bytes,
-            BinaryTestSuffix::schedule_family_name(),
-            &policy,
-            BinaryTestSuffix::ring_challenge_config,
-        )
-        .expect("previous selected fixture catalog")
-    });
     // The larger singleton is only a commitment producer for the mixed root.
     let mut rows = vec![(carrier.profiles().clone(), carrier.schedule().clone())];
     for key in [singleton(18), mixed_key] {
-        if key.precommitteds.is_empty() {
-            if let Some(row) = cached
-                .as_ref()
-                .and_then(|catalog| catalog.resolve_key(&key).ok())
-            {
-                rows.push((row.profiles().clone(), row.schedule().clone()));
-                continue;
-            }
-        }
-        let baseline = direct.resolve_key(&key).expect("original fixture row");
-        let contract = BinaryTestSuffix::committed_source_contract().expect("fixture contract");
+        let main = direct
+            .resolve_key(&ScheduleLookupKey::single(key.final_group))
+            .expect("direct fixture main row");
+        let baseline = if key.precommitteds.is_empty() {
+            main.schedule().clone()
+        } else {
+            let producers = key
+                .precommitteds
+                .iter()
+                .map(|&profile| {
+                    akita_planner::emit::PrecommittedProducer::try_new(profile, contract)
+                        .expect("fixture producer contract")
+                })
+                .collect();
+            akita_planner::find_adapted_schedule(
+                main,
+                &akita_planner::emit::GroupedGenerationRequest::new(key.final_group, producers),
+                contract,
+                &direct_policy,
+                BinaryTestSuffix::ring_challenge_config,
+            )
+            .expect("direct grouped fixture schedule")
+            .schedule
+        };
         let planned = akita_planner::find_schedule_with_root_setup_mode(
             &key,
             contract,
@@ -109,7 +125,7 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
             &policy,
             BinaryTestSuffix::ring_challenge_config,
             SetupContributionMode::Recursive,
-            (!key.precommitteds.is_empty()).then_some(&baseline.schedule().root.params),
+            (!key.precommitteds.is_empty()).then_some(&baseline.root.params),
         )
         .expect("root-offloaded fixture schedule");
         let prefix = planned.schedule.recursive_folds[0]

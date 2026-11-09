@@ -1,17 +1,12 @@
-#![cfg(feature = "labinius")]
-
-mod common;
-
+use super::common::{TestHost, Q};
 use akita_algebra::{
     binary::{field_switch::SwitchField, BinaryField128, BinaryField192},
-    MinusTrinomial, TrinomialLimbDomain,
+    TrinomialLimbDomain,
+};
+use akita_cpu_backend::kernels::binary_source::limb_commit::{
+    commit_binary_clear_limb_prepared, pack_binary_element_bits, PreparedLimbCommitMatrix,
 };
 use akita_error::AkitaError;
-use akita_labinius_prover::{
-    commit_binary_clear, commit_binary_clear_limb_prepared, commit_binary_clear_prepared,
-    limb_commit_kernel::pack_binary_element_bits, PreparedLimbCommitMatrix,
-};
-use common::{clear_setup, clear_setup_with, TestHost, Q};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 const D: usize = 648;
@@ -183,47 +178,6 @@ fn ragged_column_blocks_match_unblocked_and_integer_definitions() {
             assert_eq!(pool.install(commit), expected, "threads={threads}");
         }
     }
-}
-
-#[test]
-fn setup_bound_and_reference_commitments_match_the_integer_definition() {
-    let setup = clear_setup::<D, MinusTrinomial>(2, 2, 4);
-    let (source, _, _) = common::data::<BinaryField128>(setup.source_len(), setup.num_vars());
-    let expected = integer_definition::<BinaryField128>(Q, setup.matrix(), 2, 2, 4, &source);
-    let prepared = PreparedLimbCommitMatrix::prepare_for_setup(&setup).unwrap();
-    let commit = |prepared, setup, source: &[u128]| {
-        commit_binary_clear_prepared::<BinaryField128>(prepared, setup, source)
-    };
-    assert_eq!(commit(&prepared, &setup, &source).unwrap().images, expected);
-    assert_eq!(
-        commit_binary_clear::<BinaryField128, D, MinusTrinomial>(&setup, &source)
-            .unwrap()
-            .images,
-        expected
-    );
-    // A raw cache, and the cache of another matrix, cannot serve this setup.
-    let raw = PreparedLimbCommitMatrix::prepare(Q, D, 2, 2, setup.matrix()).unwrap();
-    let mut other_matrix = setup.matrix().to_vec();
-    other_matrix[0] ^= 1;
-    let other = clear_setup_with::<D, MinusTrinomial>(other_matrix, 2, 2, 4).unwrap();
-    for foreign in [&raw, &prepared] {
-        let target = if std::ptr::eq(foreign, &raw) {
-            &setup
-        } else {
-            &other
-        };
-        assert!(matches!(
-            commit(foreign, target, &source),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-    }
-    assert_eq!(
-        commit(&prepared, &setup, &source[1..]).unwrap_err(),
-        AkitaError::InvalidSize {
-            expected: source.len(),
-            actual: source.len() - 1
-        }
-    );
 }
 
 #[test]

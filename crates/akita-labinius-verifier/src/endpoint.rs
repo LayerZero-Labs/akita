@@ -5,7 +5,7 @@ use akita_algebra::binary::{
     BinaryField162,
 };
 use akita_algebra::ring::TrinomialModulus;
-use akita_challenges::{BinaryChallenge, BinaryChallengeProfile};
+use akita_challenges::BinaryChallenge;
 use akita_error::{checked, AkitaError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -60,81 +60,6 @@ pub fn left_expansion<H: SwitchField>(
     }
     #[cfg(not(feature = "parallel"))]
     result.extend(source.chunks_exact(scalar_rows).map(column_value));
-    Ok(result)
-}
-
-/// Fold binary source columns in the integer scalar trinomial ring.
-///
-/// Accumulation and reduction are checked signed integer operations, prior to
-/// either the prime embedding or the modulo-two projection.
-pub fn fold_integer<H: SwitchField>(
-    source: &[H::Source],
-    scalar_rows: usize,
-    columns: usize,
-    challenges: &[BinaryChallenge],
-    profile: &BinaryChallengeProfile,
-) -> Result<Vec<[i64; 162]>, AkitaError> {
-    let length = checked::product([scalar_rows, columns])
-        .ok_or_else(|| AkitaError::InvalidInput("integer fold size overflow".into()))?;
-    if !scalar_rows.is_power_of_two()
-        || !columns.is_power_of_two()
-        || source.len() != length
-        || challenges.len() != columns
-    {
-        return Err(AkitaError::InvalidInput(
-            "integer fold geometry mismatch".into(),
-        ));
-    }
-    for challenge in challenges {
-        challenge_binary(challenge, profile)?;
-    }
-    let mut result = Vec::new();
-    result
-        .try_reserve_exact(scalar_rows)
-        .map_err(|_| AkitaError::InvalidInput("integer response allocation failed".into()))?;
-    for row in 0..scalar_rows {
-        let mut product = [0i128; 323];
-        for (column, challenge) in challenges.iter().enumerate() {
-            let index =
-                checked::mul_add(column, scalar_rows, row).ok_or(AkitaError::InvalidProof)?;
-            let word = *source.get(index).ok_or(AkitaError::InvalidProof)?;
-            let bits = embed_source::<H>(word).to_bytes();
-            for term in challenge.terms() {
-                for bit in 0..162 {
-                    let byte = bits.get(bit / 8).ok_or(AkitaError::InvalidProof)?;
-                    if byte & (1u8 << (bit % 8)) == 0 {
-                        continue;
-                    }
-                    let position = usize::from(term.position)
-                        .checked_add(bit)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let accumulator = product.get_mut(position).ok_or(AkitaError::InvalidProof)?;
-                    *accumulator = accumulator
-                        .checked_add(i128::from(term.coefficient))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput("integer fold accumulator overflow".into())
-                        })?;
-                }
-            }
-        }
-        for degree in (162..323).rev() {
-            let leading = *product.get(degree).ok_or(AkitaError::InvalidProof)?;
-            *product.get_mut(degree).ok_or(AkitaError::InvalidProof)? = 0;
-            let reduced = degree - 162;
-            for position in [reduced, reduced + 81] {
-                let accumulator = product.get_mut(position).ok_or(AkitaError::InvalidProof)?;
-                *accumulator = accumulator.checked_sub(leading).ok_or_else(|| {
-                    AkitaError::InvalidInput("integer fold reduction overflow".into())
-                })?;
-            }
-        }
-        let mut response = [0i64; 162];
-        for (destination, &coefficient) in response.iter_mut().zip(product.iter()) {
-            *destination = i64::try_from(coefficient)
-                .map_err(|_| AkitaError::InvalidInput("integer response exceeds i64".into()))?;
-        }
-        result.push(response);
-    }
     Ok(result)
 }
 

@@ -12,8 +12,6 @@
 #![cfg(feature = "labinius")]
 
 pub mod combined_kernel;
-pub mod fold_kernel;
-pub mod limb_commit_kernel;
 pub mod lowered;
 pub mod root;
 pub mod root_sumcheck;
@@ -23,19 +21,16 @@ pub use root::{
     TransparentRootProverOracle,
 };
 
-pub use limb_commit_kernel::{
-    commit_binary_clear_limb_prepared, commit_binary_clear_prepared, PreparedLimbCommitMatrix,
-};
-
 use akita_algebra::{binary::field_switch::SwitchField, TrinomialModulus};
 use akita_challenges::{BinaryChallenge, BinaryChallengeSampler};
+use akita_cpu_backend::kernels::binary_source::fold::fold_integer;
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
     bind_statement,
     channel::{finish_prover, new_prover, FoldSearchChannel},
     codec::{exchange_binary, exchange_response},
     commitment::{apply_matrix, BinaryClearCommitment},
-    endpoint::{fold_integer, left_expansion},
+    endpoint::left_expansion,
     frontend::prove_frontend,
     profile::BinaryClearSetup,
     source::pack_source_column,

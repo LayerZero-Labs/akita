@@ -79,7 +79,6 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-error",
- "akita-labinius-prover",
  "akita-params",
  "akita-prover",
  "akita-serialization",
@@ -134,6 +133,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-cpu-backend",
  "akita-error",
  "akita-labinius-verifier",
  "akita-params",

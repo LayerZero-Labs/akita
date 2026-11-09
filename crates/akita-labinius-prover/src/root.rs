@@ -9,6 +9,7 @@ mod transparent;
 pub use transparent::TransparentRootProverOracle;
 
 use akita_algebra::{binary::field_switch::SwitchField, TrinomialModulus};
+use akita_cpu_backend::kernels::binary_source::fold::fold_integer;
 use akita_error::AkitaError;
 use akita_labinius_verifier::{
     channel::{
@@ -34,7 +35,6 @@ use tracing::info_span;
 
 use crate::{
     combined_kernel::{prove_combined_rounds, CombinedRootKernel},
-    fold_kernel::fold_integer,
     lowered::{
         a_relation_carry, encode_image, encode_witness, parity_quotient_and_carry,
         prime_left_opening,

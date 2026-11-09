@@ -56,6 +56,7 @@ jobs:
           cargo test --release -p akita-verifier --lib terminal::ntt::
           cargo test --release -p akita-cpu-backend --lib wide_mass::tests
           cargo test --release -p akita-cpu-backend --lib windowed_accum::tests
+          cargo test --release -p akita-cpu-backend --test binary_source --no-default-features --features labinius-trinomial,transcript-keccak limb_commit::
           cargo test --release -p akita-cpu-backend --lib poly_helpers::tests::partitioned_fold
 
   x86-avx2:
@@ -82,6 +83,7 @@ jobs:
           RUSTFLAGS: -D warnings -C target-feature=+avx2
         run: |
           cargo test --release -p akita-cpu-backend --lib windowed_accum::tests
+          cargo test --release -p akita-cpu-backend --test binary_source --no-default-features --features labinius-trinomial,transcript-keccak limb_commit::
           cargo test --release -p akita-cpu-backend --lib poly_helpers::tests::partitioned_fold
 
   avx512-ifma:

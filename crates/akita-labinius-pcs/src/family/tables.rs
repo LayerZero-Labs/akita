@@ -10,7 +10,6 @@ use crate::shipped::{
 };
 use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_error::{checked, AkitaError};
-use akita_labinius_verifier::admitted::field_characteristic;
 use akita_params::{
     sis::labinius::LabiniusRootShape, GroupCommitPhaseParams, PolynomialGroupLayout,
     ScheduleLookupKey,
@@ -48,7 +47,7 @@ impl DigitTables {
             geometry.log_fold_width,
             geometry.lambda_fold,
         )?
-        .derive_encoding(field_characteristic::<P::Base>()?)?;
+        .derive_encoding(akita_params::field_modulus::<P::Base>()?)?;
         let coordinate_vars = match P::Challenge::DEGREE {
             1 => 0,
             2 => 1,

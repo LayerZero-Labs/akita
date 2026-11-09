@@ -1,17 +1,19 @@
 # Packed F162 round and fold kernels
 
-Status: active
+Status: implemented
 Book-chapter: book/src/foundations/field-arithmetic.md
 Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 ## Scope
 
-Implementation and scoped acceptance checks are complete on the topic branch.
-This record remains active until the implementation and Book chapter land;
-then archive it under the spec lifecycle policy.
+Implementation and scoped acceptance checks have landed in `akita-algebra`.
+This record preserves the packed arithmetic contract until it is folded into
+the Book. The native binary-source path uses this arithmetic independently of
+the withdrawn standalone opening APIs.
 
-Add reusable computation storage and complete product-sumcheck arithmetic over
-`BinaryField162`. This slice depends on the scalar arithmetic in PR #46. It does
+The implementation supplies reusable computation storage and product-sumcheck
+arithmetic over `BinaryField162`. This slice depends on the scalar arithmetic in
+PR #46. It does
 not add transcript sampling, a sumcheck proof format, field switching, commitment
 ownership, or a production binary PCS profile. Those contracts remain separate.
 
