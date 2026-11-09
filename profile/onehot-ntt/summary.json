@@ -1,0 +1,2830 @@
+{
+  "workload": {
+    "nv": 38,
+    "k_chunk": 16,
+    "setup": "recursive",
+    "root_D": 512,
+    "root_rank": 1,
+    "root_width": 65536,
+    "live_blocks": 8192,
+    "source": "32 GiB independent random resident Option<u8> indices, seed 0xbeef_cafe",
+    "mac_threads": 16,
+    "leopard_threads": 32
+  },
+  "hosts": {
+    "mac": {
+      "summary": {
+        "nv": 38,
+        "trials": [
+          {
+            "trial": 0,
+            "mode": "accumulation",
+            "requested": "accumulation",
+            "commit_s": 132.546229,
+            "prove_s": 33.266358,
+            "storage_read_bytes": null,
+            "both_verified": true
+          },
+          {
+            "trial": 1,
+            "mode": "ntt-exact",
+            "requested": "ntt-exact",
+            "commit_s": 77.702986,
+            "prove_s": 33.654511,
+            "storage_read_bytes": null,
+            "both_verified": true
+          },
+          {
+            "trial": 2,
+            "mode": "ntt-exact",
+            "requested": "ntt-exact",
+            "commit_s": 82.796757,
+            "prove_s": 34.954741,
+            "storage_read_bytes": null,
+            "both_verified": true
+          },
+          {
+            "trial": 3,
+            "mode": "ntt-exact",
+            "requested": "best",
+            "commit_s": 84.958075,
+            "prove_s": 35.66182,
+            "storage_read_bytes": null,
+            "both_verified": true
+          },
+          {
+            "trial": 4,
+            "mode": "accumulation",
+            "requested": "accumulation",
+            "commit_s": 140.062711,
+            "prove_s": 33.656914,
+            "storage_read_bytes": null,
+            "both_verified": true
+          },
+          {
+            "trial": 5,
+            "mode": "ntt-exact",
+            "requested": "best",
+            "commit_s": 82.209369,
+            "prove_s": 34.533247,
+            "storage_read_bytes": null,
+            "both_verified": true
+          }
+        ],
+        "proof_bytes": 74352,
+        "proof_sha256": "0283079873554610b5bcec106f84492d2a4240ee021bfb4189170eba3c76f899",
+        "proof_all_identical": true,
+        "commitment_bytes": 343,
+        "commitment_sha256": "dd5db80bf872066c63f868e528d87117b490184626dc42a3f8a797885f93692f",
+        "commitment_all_identical": true,
+        "accumulation_mean_s": 136.30447,
+        "best_mean_s": 83.583722,
+        "best_mode": "ntt-exact",
+        "speedup": 1.630753772845866,
+        "ntt_time_reduction_percent": 38.67866402327085
+      },
+      "screen": {
+        "rows": [
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.236057,
+              2.46812
+            ],
+            "mean_s": 2.3520885
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.39567,
+              2.699626
+            ],
+            "mean_s": 2.5476479999999997
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 24,
+            "prefetch": 0,
+            "samples": [
+              3.003523,
+              3.141238
+            ],
+            "mean_s": 3.0723805
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 16,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.055388,
+              3.092599
+            ],
+            "mean_s": 3.0739935000000003
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              3.028602,
+              3.119842
+            ],
+            "mean_s": 3.074222
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              3.019035,
+              3.142186
+            ],
+            "mean_s": 3.0806105
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              3.094988,
+              3.140814
+            ],
+            "mean_s": 3.117901
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.005333,
+              3.248917
+            ],
+            "mean_s": 3.127125
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 384,
+            "prefetch": 0,
+            "samples": [
+              3.00152,
+              3.265141
+            ],
+            "mean_s": 3.1333305
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              3.058995,
+              3.212516
+            ],
+            "mean_s": 3.1357555
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              3.093559,
+              3.184269
+            ],
+            "mean_s": 3.1389139999999998
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              3.138881,
+              3.144813
+            ],
+            "mean_s": 3.1418470000000003
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.009894,
+              3.281315
+            ],
+            "mean_s": 3.1456045
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.25764,
+              3.051308
+            ],
+            "mean_s": 3.154474
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 2,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.117742,
+              3.213302
+            ],
+            "mean_s": 3.165522
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.134985,
+              3.258899
+            ],
+            "mean_s": 3.196942
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 2,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.44988,
+              3.485297
+            ],
+            "mean_s": 3.4675884999999997
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.5035,
+              3.459571
+            ],
+            "mean_s": 3.4815354999999997
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 384,
+            "prefetch": 0,
+            "samples": [
+              3.581639,
+              3.569902
+            ],
+            "mean_s": 3.5757705
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              3.592217,
+              3.560722
+            ],
+            "mean_s": 3.5764695
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              3.618083,
+              3.547302
+            ],
+            "mean_s": 3.5826925000000003
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              3.578362,
+              3.588928
+            ],
+            "mean_s": 3.5836449999999997
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              3.590154,
+              3.579234
+            ],
+            "mean_s": 3.584694
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              3.601516,
+              3.570472
+            ],
+            "mean_s": 3.5859940000000003
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              3.596389,
+              3.576573
+            ],
+            "mean_s": 3.586481
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.625223,
+              3.571548
+            ],
+            "mean_s": 3.5983855
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 24,
+            "prefetch": 0,
+            "samples": [
+              3.656973,
+              3.649455
+            ],
+            "mean_s": 3.653214
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.669321,
+              3.701399
+            ],
+            "mean_s": 3.68536
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.717381,
+              3.842064
+            ],
+            "mean_s": 3.7797225
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-legacy",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.70689,
+              3.896277
+            ],
+            "mean_s": 3.8015835
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel6",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.685499,
+              4.09308
+            ],
+            "mean_s": 3.8892895
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "accumulation",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.000534,
+              4.145092
+            ],
+            "mean_s": 4.072813
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-legacy",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.17141,
+              4.280112
+            ],
+            "mean_s": 4.225761
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel6",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.157209,
+              4.314058
+            ],
+            "mean_s": 4.2356335000000005
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.418449,
+              4.398562
+            ],
+            "mean_s": 4.4085055
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              4.438008,
+              4.474881
+            ],
+            "mean_s": 4.4564445
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              4.46273,
+              4.460064
+            ],
+            "mean_s": 4.461397
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              4.483507,
+              4.445611
+            ],
+            "mean_s": 4.464559
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              4.521003,
+              4.470207
+            ],
+            "mean_s": 4.495605
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.548164,
+              4.459412
+            ],
+            "mean_s": 4.503788
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              4.447915,
+              4.581342
+            ],
+            "mean_s": 4.514628500000001
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 24,
+            "prefetch": 0,
+            "samples": [
+              4.547267,
+              4.490635
+            ],
+            "mean_s": 4.5189509999999995
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 16,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.613311,
+              4.425602
+            ],
+            "mean_s": 4.5194565
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              4.537339,
+              4.504761
+            ],
+            "mean_s": 4.521050000000001
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.600949,
+              4.489111
+            ],
+            "mean_s": 4.545030000000001
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 384,
+            "prefetch": 0,
+            "samples": [
+              4.491992,
+              4.610127
+            ],
+            "mean_s": 4.5510595
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-panel5",
+            "blocks": 16,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.641108,
+              4.636028
+            ],
+            "mean_s": 4.638567999999999
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "accumulation",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.539048,
+              4.742872
+            ],
+            "mean_s": 4.64096
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 2,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.745247,
+              4.558966
+            ],
+            "mean_s": 4.6521065
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.790161,
+              4.621858
+            ],
+            "mean_s": 4.7060095
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.978632,
+              5.08312
+            ],
+            "mean_s": 5.030876
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-binary5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.174658,
+              5.183051
+            ],
+            "mean_s": 5.1788545
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-binary5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.478307,
+              5.477118
+            ],
+            "mean_s": 5.4777125
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.673565,
+              5.443488
+            ],
+            "mean_s": 5.5585265
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-panel6",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.812739,
+              5.548239
+            ],
+            "mean_s": 5.680489
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.827185,
+              5.955898
+            ],
+            "mean_s": 5.891541500000001
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-legacy",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              6.066043,
+              5.813648
+            ],
+            "mean_s": 5.9398455
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "accumulation",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              6.329532,
+              6.060372
+            ],
+            "mean_s": 6.194952000000001
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              7.419089,
+              7.409103
+            ],
+            "mean_s": 7.414096
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log",
+            "mode": "ntt-binary5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              7.700459,
+              7.632732
+            ],
+            "mean_s": 7.6665955
+          }
+        ],
+        "selected": [
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.236057,
+              2.46812
+            ],
+            "mean_s": 2.3520885
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.717381,
+              3.842064
+            ],
+            "mean_s": 3.7797225
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 24,
+            "prefetch": 0,
+            "samples": [
+              3.003523,
+              3.141238
+            ],
+            "mean_s": 3.0723805
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 16,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.055388,
+              3.092599
+            ],
+            "mean_s": 3.0739935000000003
+          },
+          {
+            "log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.978632,
+              5.08312
+            ],
+            "mean_s": 5.030876
+          }
+        ],
+        "best_simd_log": "/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log",
+        "order": "accumulation,ntt-legacy,ntt-exact,ntt-panel6@4x96x0,ntt-panel5@4x24x0,ntt-panel5@16x96x0,ntt-binary5@4x96x0,best,accumulation,best"
+      },
+      "initial_full_sweep": {
+        "threads": 12,
+        "summary": {
+          "nv": 38,
+          "trials": [
+            {
+              "trial": 0,
+              "mode": "accumulation",
+              "requested": "accumulation",
+              "commit_s": 152.458796,
+              "prove_s": 41.188878,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 1,
+              "mode": "ntt-legacy",
+              "requested": "ntt-legacy",
+              "commit_s": 147.526434,
+              "prove_s": 42.425515,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 2,
+              "mode": "ntt-exact",
+              "requested": "ntt-exact",
+              "commit_s": 107.568852,
+              "prove_s": 42.959342,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 3,
+              "mode": "ntt-panel6@1x96x0",
+              "requested": "ntt-panel6@1x96x0",
+              "commit_s": 142.987381,
+              "prove_s": 41.055799,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 4,
+              "mode": "ntt-panel5@1x96x0",
+              "requested": "ntt-panel5@1x96x0",
+              "commit_s": 117.985936,
+              "prove_s": 40.772448,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 5,
+              "mode": "ntt-panel5@2x96x0",
+              "requested": "ntt-panel5@2x96x0",
+              "commit_s": 114.34195,
+              "prove_s": 40.969396,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 6,
+              "mode": "ntt-binary5@1x96x0",
+              "requested": "ntt-binary5@1x96x0",
+              "commit_s": 180.428198,
+              "prove_s": 40.970835,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 7,
+              "mode": "ntt-exact",
+              "requested": "best",
+              "commit_s": 95.79472,
+              "prove_s": 41.254335,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 8,
+              "mode": "accumulation",
+              "requested": "accumulation",
+              "commit_s": 154.618479,
+              "prove_s": 40.773186,
+              "storage_read_bytes": null,
+              "both_verified": true
+            },
+            {
+              "trial": 9,
+              "mode": "ntt-exact",
+              "requested": "best",
+              "commit_s": 108.270564,
+              "prove_s": 41.52706,
+              "storage_read_bytes": null,
+              "both_verified": true
+            }
+          ],
+          "proof_bytes": 74352,
+          "proof_sha256": "0283079873554610b5bcec106f84492d2a4240ee021bfb4189170eba3c76f899",
+          "proof_all_identical": true,
+          "commitment_bytes": 343,
+          "commitment_sha256": "dd5db80bf872066c63f868e528d87117b490184626dc42a3f8a797885f93692f",
+          "commitment_all_identical": true,
+          "accumulation_mean_s": 153.5386375,
+          "best_mean_s": 102.032642,
+          "best_mode": "ntt-exact",
+          "speedup": 1.5047991945557972,
+          "ntt_time_reduction_percent": 33.54595060803506
+        },
+        "screen": {
+          "rows": [
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-exact",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.726159,
+                3.097707
+              ],
+              "mean_s": 2.9119330000000003
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.538248,
+                3.976492
+              ],
+              "mean_s": 3.75737
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 2,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.477025,
+                4.064077
+              ],
+              "mean_s": 3.770551
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 24,
+              "prefetch": 0,
+              "samples": [
+                3.605048,
+                4.041683
+              ],
+              "mean_s": 3.8233655
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.649346,
+                4.096775
+              ],
+              "mean_s": 3.8730605000000002
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 48,
+              "prefetch": 0,
+              "samples": [
+                3.605665,
+                4.187325
+              ],
+              "mean_s": 3.8964950000000003
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.674924,
+                4.198341
+              ],
+              "mean_s": 3.9366325
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 48,
+              "prefetch": 0,
+              "samples": [
+                3.807875,
+                4.12266
+              ],
+              "mean_s": 3.9652675
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 192,
+              "prefetch": 0,
+              "samples": [
+                3.800208,
+                4.132191
+              ],
+              "mean_s": 3.9661995
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 384,
+              "prefetch": 0,
+              "samples": [
+                3.74475,
+                4.202033
+              ],
+              "mean_s": 3.9733915
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 192,
+              "prefetch": 0,
+              "samples": [
+                3.766686,
+                4.183173
+              ],
+              "mean_s": 3.9749295
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 96,
+              "prefetch": 1,
+              "samples": [
+                3.870241,
+                4.081514
+              ],
+              "mean_s": 3.9758775
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 1,
+              "samples": [
+                3.877977,
+                4.12785
+              ],
+              "mean_s": 4.0029135
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel6",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                4.256922,
+                4.958183
+              ],
+              "mean_s": 4.607552500000001
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-legacy",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                4.295624,
+                4.959252
+              ],
+              "mean_s": 4.627438
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel6",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                4.439626,
+                5.086619
+              ],
+              "mean_s": 4.7631225
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 16,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                4.61162,
+                5.036071
+              ],
+              "mean_s": 4.8238455
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "accumulation",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                4.718093,
+                5.383353
+              ],
+              "mean_s": 5.050723
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-binary5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                5.99626,
+                6.706279
+              ],
+              "mean_s": 6.351269500000001
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-binary5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                6.323283,
+                6.761516
+              ],
+              "mean_s": 6.5423995
+            }
+          ],
+          "selected": [
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-exact",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.726159,
+                3.097707
+              ],
+              "mean_s": 2.9119330000000003
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel6",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                4.256922,
+                4.958183
+              ],
+              "mean_s": 4.607552500000001
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.538248,
+                3.976492
+              ],
+              "mean_s": 3.75737
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-panel5",
+              "blocks": 2,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.477025,
+                4.064077
+              ],
+              "mean_s": 3.770551
+            },
+            {
+              "log": "screen-neon.log",
+              "mode": "ntt-binary5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                5.99626,
+                6.706279
+              ],
+              "mean_s": 6.351269500000001
+            }
+          ],
+          "best_simd_log": "screen-neon.log",
+          "order": "accumulation,ntt-legacy,ntt-exact,ntt-panel6@1x96x0,ntt-panel5@1x96x0,ntt-panel5@2x96x0,ntt-binary5@1x96x0,best,accumulation,best"
+        }
+      }
+    },
+    "leopard": {
+      "summary": {
+        "nv": 38,
+        "trials": [
+          {
+            "trial": 0,
+            "mode": "accumulation",
+            "requested": "accumulation",
+            "commit_s": 86.38853,
+            "prove_s": 23.261096,
+            "storage_read_bytes": 0,
+            "both_verified": true
+          },
+          {
+            "trial": 1,
+            "mode": "ntt-panel5@8x48x0",
+            "requested": "ntt-panel5@8x48x0",
+            "commit_s": 59.9313,
+            "prove_s": 23.202735,
+            "storage_read_bytes": 0,
+            "both_verified": true
+          },
+          {
+            "trial": 2,
+            "mode": "ntt-panel5@8x48x0",
+            "requested": "ntt-panel5@8x48x0",
+            "commit_s": 59.889732,
+            "prove_s": 23.166312,
+            "storage_read_bytes": 0,
+            "both_verified": true
+          },
+          {
+            "trial": 3,
+            "mode": "ntt-panel5@8x48x0",
+            "requested": "best",
+            "commit_s": 59.838239,
+            "prove_s": 23.142008,
+            "storage_read_bytes": 0,
+            "both_verified": true
+          },
+          {
+            "trial": 4,
+            "mode": "accumulation",
+            "requested": "accumulation",
+            "commit_s": 84.826363,
+            "prove_s": 23.154894,
+            "storage_read_bytes": 0,
+            "both_verified": true
+          },
+          {
+            "trial": 5,
+            "mode": "ntt-panel5@8x48x0",
+            "requested": "best",
+            "commit_s": 59.92853,
+            "prove_s": 23.180662,
+            "storage_read_bytes": 0,
+            "both_verified": true
+          }
+        ],
+        "proof_bytes": 74352,
+        "proof_sha256": "0283079873554610b5bcec106f84492d2a4240ee021bfb4189170eba3c76f899",
+        "proof_all_identical": true,
+        "commitment_bytes": 343,
+        "commitment_sha256": "dd5db80bf872066c63f868e528d87117b490184626dc42a3f8a797885f93692f",
+        "commitment_all_identical": true,
+        "accumulation_mean_s": 85.60744650000001,
+        "best_mean_s": 59.883384500000005,
+        "best_mode": "ntt-panel5@8x48x0",
+        "speedup": 1.4295692739277286,
+        "ntt_time_reduction_percent": 30.04886029394651
+      },
+      "screen": {
+        "rows": [
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              1.7934,
+              1.797526
+            ],
+            "mean_s": 1.795463
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              1.78911,
+              1.809731
+            ],
+            "mean_s": 1.7994205
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              1.813838,
+              1.792521
+            ],
+            "mean_s": 1.8031795000000002
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              1.805663,
+              1.800863
+            ],
+            "mean_s": 1.803263
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              1.82426,
+              1.799933
+            ],
+            "mean_s": 1.8120965
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 384,
+            "prefetch": 0,
+            "samples": [
+              1.818572,
+              1.813037
+            ],
+            "mean_s": 1.8158045
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 24,
+            "prefetch": 0,
+            "samples": [
+              1.819205,
+              1.814564
+            ],
+            "mean_s": 1.8168845
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              1.817654,
+              1.819115
+            ],
+            "mean_s": 1.8183845
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              1.822213,
+              1.814952
+            ],
+            "mean_s": 1.8185825
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 2,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              1.825168,
+              1.860512
+            ],
+            "mean_s": 1.8428399999999998
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              1.840689,
+              1.849971
+            ],
+            "mean_s": 1.8453300000000001
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 16,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              1.986216,
+              1.993971
+            ],
+            "mean_s": 1.9900935
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.017265,
+              2.009196
+            ],
+            "mean_s": 2.0132305
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 16,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.041397,
+              1.990718
+            ],
+            "mean_s": 2.0160575
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              2.049595,
+              2.016384
+            ],
+            "mean_s": 2.0329895000000002
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              2.057477,
+              2.018958
+            ],
+            "mean_s": 2.0382175
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              2.018801,
+              2.063769
+            ],
+            "mean_s": 2.0412850000000002
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              2.054927,
+              2.049419
+            ],
+            "mean_s": 2.052173
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.192083,
+              1.922403
+            ],
+            "mean_s": 2.0572429999999997
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              2.073442,
+              2.057037
+            ],
+            "mean_s": 2.0652394999999997
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.075714,
+              2.055314
+            ],
+            "mean_s": 2.0655140000000003
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              2.061599,
+              2.116856
+            ],
+            "mean_s": 2.0892275
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 384,
+            "prefetch": 0,
+            "samples": [
+              2.125781,
+              2.060045
+            ],
+            "mean_s": 2.0929130000000002
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 24,
+            "prefetch": 0,
+            "samples": [
+              2.128301,
+              2.075041
+            ],
+            "mean_s": 2.101671
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 2,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.176367,
+              2.150575
+            ],
+            "mean_s": 2.163471
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.200425,
+              2.208594
+            ],
+            "mean_s": 2.2045095000000003
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.36155,
+              2.331907
+            ],
+            "mean_s": 2.3467285
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel6",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.425118,
+              2.286873
+            ],
+            "mean_s": 2.3559954999999997
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.497288,
+              2.451307
+            ],
+            "mean_s": 2.4742975
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "accumulation",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.621708,
+              2.630192
+            ],
+            "mean_s": 2.62595
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "accumulation",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.674117,
+              2.643238
+            ],
+            "mean_s": 2.6586775
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-panel6",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.732061,
+              2.790932
+            ],
+            "mean_s": 2.7614965
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.742029,
+              2.801096
+            ],
+            "mean_s": 2.7715625
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-binary5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.891106,
+              2.895552
+            ],
+            "mean_s": 2.893329
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-legacy",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.277116,
+              3.407981
+            ],
+            "mean_s": 3.3425485
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.44482,
+              3.408415
+            ],
+            "mean_s": 3.4266175
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 16,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.642891,
+              3.649828
+            ],
+            "mean_s": 3.6463595
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              3.656121,
+              3.659124
+            ],
+            "mean_s": 3.6576225
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-binary5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.681131,
+              3.663753
+            ],
+            "mean_s": 3.672442
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.686063,
+              3.695045
+            ],
+            "mean_s": 3.6905539999999997
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              3.687325,
+              3.69494
+            ],
+            "mean_s": 3.6911325
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              3.689716,
+              3.693363
+            ],
+            "mean_s": 3.6915395
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 1,
+            "samples": [
+              3.717326,
+              3.71903
+            ],
+            "mean_s": 3.718178
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 24,
+            "prefetch": 0,
+            "samples": [
+              3.782325,
+              3.789909
+            ],
+            "mean_s": 3.786117
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              3.787918,
+              3.787611
+            ],
+            "mean_s": 3.7877644999999998
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.78709,
+              3.790356
+            ],
+            "mean_s": 3.788723
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 192,
+            "prefetch": 0,
+            "samples": [
+              3.789296,
+              3.789592
+            ],
+            "mean_s": 3.789444
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 384,
+            "prefetch": 0,
+            "samples": [
+              3.792159,
+              3.793371
+            ],
+            "mean_s": 3.792765
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-legacy",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.957152,
+              3.736632
+            ],
+            "mean_s": 3.846892
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 2,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              3.97356,
+              3.975633
+            ],
+            "mean_s": 3.9745965
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.347629,
+              4.345714
+            ],
+            "mean_s": 4.3466715
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "accumulation",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.546675,
+              4.358659
+            ],
+            "mean_s": 4.452667
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              4.524218,
+              4.514813
+            ],
+            "mean_s": 4.519515500000001
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-panel6",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.1907,
+              5.189182
+            ],
+            "mean_s": 5.189940999999999
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.466489,
+              5.195248
+            ],
+            "mean_s": 5.3308685
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-legacy",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.750491,
+              5.801026
+            ],
+            "mean_s": 5.7757585
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              6.120457,
+              6.47293
+            ],
+            "mean_s": 6.2966935
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              6.306521,
+              6.31395
+            ],
+            "mean_s": 6.3102355
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              6.534645,
+              6.74548
+            ],
+            "mean_s": 6.6400625
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log",
+            "mode": "ntt-binary5",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              6.874406,
+              6.883827
+            ],
+            "mean_s": 6.8791165
+          }
+        ],
+        "selected": [
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-exact",
+            "blocks": 1,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              5.466489,
+              5.195248
+            ],
+            "mean_s": 5.3308685
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel6",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.200425,
+              2.208594
+            ],
+            "mean_s": 2.2045095000000003
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 8,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              1.7934,
+              1.797526
+            ],
+            "mean_s": 1.795463
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-panel5",
+            "blocks": 4,
+            "columns": 48,
+            "prefetch": 0,
+            "samples": [
+              1.78911,
+              1.809731
+            ],
+            "mean_s": 1.7994205
+          },
+          {
+            "log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+            "mode": "ntt-binary5",
+            "blocks": 4,
+            "columns": 96,
+            "prefetch": 0,
+            "samples": [
+              2.742029,
+              2.801096
+            ],
+            "mean_s": 2.7715625
+          }
+        ],
+        "best_simd_log": "/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log",
+        "order": "accumulation,ntt-legacy,ntt-exact,ntt-panel6@4x96x0,ntt-panel5@8x48x0,ntt-panel5@4x48x0,ntt-binary5@4x96x0,best,accumulation,best"
+      },
+      "initial_full_sweep": {
+        "threads": 16,
+        "summary": {
+          "nv": 38,
+          "trials": [
+            {
+              "trial": 0,
+              "mode": "accumulation",
+              "requested": "accumulation",
+              "commit_s": 82.110714,
+              "prove_s": 23.234631,
+              "storage_read_bytes": 3432448,
+              "both_verified": true
+            },
+            {
+              "trial": 1,
+              "mode": "ntt-legacy",
+              "requested": "ntt-legacy",
+              "commit_s": 117.603788,
+              "prove_s": 23.128886,
+              "storage_read_bytes": 24576,
+              "both_verified": true
+            },
+            {
+              "trial": 2,
+              "mode": "ntt-exact",
+              "requested": "ntt-exact",
+              "commit_s": 205.859706,
+              "prove_s": 23.174469,
+              "storage_read_bytes": 65536,
+              "both_verified": true
+            },
+            {
+              "trial": 3,
+              "mode": "ntt-panel6@4x96x0",
+              "requested": "ntt-panel6@4x96x0",
+              "commit_s": 80.225949,
+              "prove_s": 23.180531,
+              "storage_read_bytes": 12288,
+              "both_verified": true
+            },
+            {
+              "trial": 4,
+              "mode": "ntt-panel5@8x48x0",
+              "requested": "ntt-panel5@8x48x0",
+              "commit_s": 66.76609,
+              "prove_s": 23.254891,
+              "storage_read_bytes": 61440,
+              "both_verified": true
+            },
+            {
+              "trial": 5,
+              "mode": "ntt-panel5@8x192x0",
+              "requested": "ntt-panel5@8x192x0",
+              "commit_s": 66.783258,
+              "prove_s": 23.288455,
+              "storage_read_bytes": 0,
+              "both_verified": true
+            },
+            {
+              "trial": 6,
+              "mode": "ntt-binary5@4x96x0",
+              "requested": "ntt-binary5@4x96x0",
+              "commit_s": 110.911474,
+              "prove_s": 23.265839,
+              "storage_read_bytes": 0,
+              "both_verified": true
+            },
+            {
+              "trial": 7,
+              "mode": "ntt-panel5@8x48x0",
+              "requested": "best",
+              "commit_s": 66.637094,
+              "prove_s": 23.191044,
+              "storage_read_bytes": 0,
+              "both_verified": true
+            },
+            {
+              "trial": 8,
+              "mode": "accumulation",
+              "requested": "accumulation",
+              "commit_s": 81.334126,
+              "prove_s": 23.337106,
+              "storage_read_bytes": 0,
+              "both_verified": true
+            },
+            {
+              "trial": 9,
+              "mode": "ntt-panel5@8x48x0",
+              "requested": "best",
+              "commit_s": 66.688859,
+              "prove_s": 23.320658,
+              "storage_read_bytes": 0,
+              "both_verified": true
+            }
+          ],
+          "proof_bytes": 74352,
+          "proof_sha256": "0283079873554610b5bcec106f84492d2a4240ee021bfb4189170eba3c76f899",
+          "proof_all_identical": true,
+          "commitment_bytes": 343,
+          "commitment_sha256": "dd5db80bf872066c63f868e528d87117b490184626dc42a3f8a797885f93692f",
+          "commitment_all_identical": true,
+          "accumulation_mean_s": 81.72242,
+          "best_mean_s": 66.6629765,
+          "best_mode": "ntt-panel5@8x48x0",
+          "speedup": 1.2259041568598426,
+          "ntt_time_reduction_percent": 18.42755451931062
+        },
+        "screen": {
+          "rows": [
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 48,
+              "prefetch": 0,
+              "samples": [
+                2.004487,
+                2.024767
+              ],
+              "mean_s": 2.014627
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 192,
+              "prefetch": 0,
+              "samples": [
+                2.018567,
+                2.035621
+              ],
+              "mean_s": 2.027094
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 16,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.06689,
+                2.102116
+              ],
+              "mean_s": 2.0845029999999998
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 24,
+              "prefetch": 0,
+              "samples": [
+                2.082545,
+                2.089869
+              ],
+              "mean_s": 2.086207
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 384,
+              "prefetch": 0,
+              "samples": [
+                2.092149,
+                2.096692
+              ],
+              "mean_s": 2.0944205
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 192,
+              "prefetch": 0,
+              "samples": [
+                2.098451,
+                2.122681
+              ],
+              "mean_s": 2.110566
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 48,
+              "prefetch": 0,
+              "samples": [
+                2.059826,
+                2.213055
+              ],
+              "mean_s": 2.1364405
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 96,
+              "prefetch": 1,
+              "samples": [
+                2.027866,
+                2.339333
+              ],
+              "mean_s": 2.1835994999999997
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.10007,
+                2.417964
+              ],
+              "mean_s": 2.259017
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 2,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.186524,
+                2.338234
+              ],
+              "mean_s": 2.262379
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.048587,
+                2.585285
+              ],
+              "mean_s": 2.316936
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 1,
+              "samples": [
+                2.099127,
+                2.536153
+              ],
+              "mean_s": 2.31764
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.320465,
+                2.491988
+              ],
+              "mean_s": 2.4062265
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 192,
+              "prefetch": 0,
+              "samples": [
+                2.422241,
+                2.420429
+              ],
+              "mean_s": 2.421335
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.420136,
+                2.423003
+              ],
+              "mean_s": 2.4215695
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 48,
+              "prefetch": 0,
+              "samples": [
+                2.426137,
+                2.429485
+              ],
+              "mean_s": 2.427811
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 16,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.449408,
+                2.432278
+              ],
+              "mean_s": 2.440843
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 96,
+              "prefetch": 1,
+              "samples": [
+                2.470143,
+                2.427586
+              ],
+              "mean_s": 2.4488645
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 384,
+              "prefetch": 0,
+              "samples": [
+                2.472214,
+                2.466043
+              ],
+              "mean_s": 2.4691285
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 48,
+              "prefetch": 0,
+              "samples": [
+                2.46879,
+                2.484044
+              ],
+              "mean_s": 2.4764169999999996
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 24,
+              "prefetch": 0,
+              "samples": [
+                2.484907,
+                2.468354
+              ],
+              "mean_s": 2.4766305
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 192,
+              "prefetch": 0,
+              "samples": [
+                2.4727,
+                2.490827
+              ],
+              "mean_s": 2.4817635
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.508596,
+                2.483423
+              ],
+              "mean_s": 2.4960095
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 1,
+              "samples": [
+                2.491016,
+                2.512659
+              ],
+              "mean_s": 2.5018375
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "accumulation",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.50268,
+                2.601566
+              ],
+              "mean_s": 2.552123
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 2,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.585422,
+                2.582746
+              ],
+              "mean_s": 2.584084
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "accumulation",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.579723,
+                2.624693
+              ],
+              "mean_s": 2.602208
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel6",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.477411,
+                2.944186
+              ],
+              "mean_s": 2.7107985
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.847359,
+                2.754898
+              ],
+              "mean_s": 2.8011285
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel6",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.859456,
+                2.91787
+              ],
+              "mean_s": 2.888663
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel6",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.960326,
+                2.99372
+              ],
+              "mean_s": 2.977023
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-panel6",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.258581,
+                3.218758
+              ],
+              "mean_s": 3.2386695
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-binary5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.411526,
+                3.475612
+              ],
+              "mean_s": 3.443569
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-binary5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.681023,
+                3.620937
+              ],
+              "mean_s": 3.65098
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-binary5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.655771,
+                3.653755
+              ],
+              "mean_s": 3.654763
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-legacy",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.641914,
+                3.872666
+              ],
+              "mean_s": 3.7572900000000002
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-binary5",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.924406,
+                3.850638
+              ],
+              "mean_s": 3.8875219999999997
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-legacy",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.973145,
+                4.094534
+              ],
+              "mean_s": 4.0338395
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-exact",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                6.424526,
+                6.514531
+              ],
+              "mean_s": 6.4695285
+            },
+            {
+              "log": "screen-avx2.log",
+              "mode": "ntt-exact",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                6.530392,
+                6.754887
+              ],
+              "mean_s": 6.6426395
+            }
+          ],
+          "selected": [
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-exact",
+              "blocks": 1,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                6.424526,
+                6.514531
+              ],
+              "mean_s": 6.4695285
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel6",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                2.477411,
+                2.944186
+              ],
+              "mean_s": 2.7107985
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 48,
+              "prefetch": 0,
+              "samples": [
+                2.004487,
+                2.024767
+              ],
+              "mean_s": 2.014627
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-panel5",
+              "blocks": 8,
+              "columns": 192,
+              "prefetch": 0,
+              "samples": [
+                2.018567,
+                2.035621
+              ],
+              "mean_s": 2.027094
+            },
+            {
+              "log": "screen-avx512.log",
+              "mode": "ntt-binary5",
+              "blocks": 4,
+              "columns": 96,
+              "prefetch": 0,
+              "samples": [
+                3.411526,
+                3.475612
+              ],
+              "mean_s": 3.443569
+            }
+          ],
+          "best_simd_log": "screen-avx512.log",
+          "order": "accumulation,ntt-legacy,ntt-exact,ntt-panel6@4x96x0,ntt-panel5@8x48x0,ntt-panel5@8x192x0,ntt-binary5@4x96x0,best,accumulation,best"
+        }
+      }
+    }
+  },
+  "endgame": {
+    "mac": {
+      "accumulation_s": 136.30447,
+      "accumulation_threads": 16,
+      "ntt_s": 83.583722,
+      "ntt_threads": 16,
+      "ntt_mode": "ntt-exact",
+      "speedup": 1.630753772845866,
+      "time_saved_percent": 38.67866402327085
+    },
+    "leopard": {
+      "accumulation_s": 81.72242,
+      "accumulation_threads": 16,
+      "ntt_s": 59.883384500000005,
+      "ntt_threads": 32,
+      "ntt_mode": "ntt-panel5@8x48x0",
+      "speedup": 1.364692738767963,
+      "time_saved_percent": 26.723432198899634
+    }
+  }
+}

@@ -2,6 +2,7 @@ use akita_config::CommitmentConfig;
 use akita_cpu_backend::evaluate_root_polynomial;
 use akita_cpu_backend::{OneHotIndex, OneHotPoly};
 use akita_params::{lagrange_weights, BasisMode, CommittedGroupParams};
+use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -22,6 +23,9 @@ where
     let total_chunks = total_field / onehot_k;
     assert_eq!(total_chunks * onehot_k, total_field);
 
+    if let Some(path) = std::env::var_os("AKITA_PROFILE_ONEHOT_FILE") {
+        return super::mapped_onehot::create::<Cfg>(num_vars, onehot_k, seed, path.into());
+    }
     let mut rng = StdRng::seed_from_u64(seed);
     let indices = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
@@ -81,11 +85,6 @@ where
     let low_vars = onehot_k.trailing_zeros() as usize;
     let low_weights = lagrange_weights(&point[..low_vars]).expect("valid low opening point");
     let high_point = &point[low_vars..];
-    let mut high_weight = high_point
-        .iter()
-        .copied()
-        .map(|r| E::one() - r)
-        .fold(E::one(), |acc, value| acc * value);
     let transitions = high_point
         .iter()
         .copied()
@@ -98,26 +97,50 @@ where
             (to_one, to_zero)
         })
         .collect::<Vec<_>>();
-    let mut opening = E::zero();
-    let mut gray_index = 0usize;
-    for step in 0..poly.indices().len() {
-        if let Some(hot_idx) = poly.indices()[gray_index] {
-            opening += high_weight * low_weights[hot_idx.as_usize()];
-        }
-        let next_step = step + 1;
-        if next_step == poly.indices().len() {
-            break;
-        }
-        let next_gray = next_step ^ (next_step >> 1);
-        let flipped_bit = (gray_index ^ next_gray).trailing_zeros() as usize;
-        high_weight *= if next_gray & (1usize << flipped_bit) == 0 {
-            transitions[flipped_bit].1
-        } else {
-            transitions[flipped_bit].0
-        };
-        gray_index = next_gray;
-    }
-    opening
+    // Independent Gray-code ranges preserve the exact expected opening while
+    // letting the nv=38 fixture preparation use the same worker pool as commit.
+    let range_size = 1usize << 20;
+    let partials = cfg_into_iter!(0..poly.indices().len().div_ceil(range_size))
+        .map(|range| {
+            let start = range * range_size;
+            let end = (start + range_size).min(poly.indices().len());
+            let mut gray_index = start ^ (start >> 1);
+            let mut high_weight =
+                high_point
+                    .iter()
+                    .enumerate()
+                    .fold(E::one(), |weight, (bit, &r)| {
+                        weight
+                            * if gray_index & (1usize << bit) == 0 {
+                                E::one() - r
+                            } else {
+                                r
+                            }
+                    });
+            let mut opening = E::zero();
+            for step in start..end {
+                if let Some(hot_idx) = poly.indices()[gray_index] {
+                    opening += high_weight * low_weights[hot_idx.as_usize()];
+                }
+                let next_step = step + 1;
+                if next_step == end {
+                    break;
+                }
+                let next_gray = next_step ^ (next_step >> 1);
+                let flipped_bit = (gray_index ^ next_gray).trailing_zeros() as usize;
+                high_weight *= if next_gray & (1usize << flipped_bit) == 0 {
+                    transitions[flipped_bit].1
+                } else {
+                    transitions[flipped_bit].0
+                };
+                gray_index = next_gray;
+            }
+            opening
+        })
+        .collect::<Vec<_>>();
+    partials
+        .into_iter()
+        .fold(E::zero(), |sum, value| sum + value)
 }
 
 pub(super) fn opening_from_poly<FF, const D: usize, P>(

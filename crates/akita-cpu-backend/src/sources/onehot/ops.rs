@@ -128,6 +128,10 @@ where
     F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
     I: OneHotIndex,
 {
+    // Experiment selector: leave the normal accumulation route unchanged.
+    if std::env::var("AKITA_ONEHOT_COMMIT").is_ok_and(|mode| mode.starts_with("ntt")) {
+        return backend.onehot_ntt_commit_rows::<D, I>(prepared, sources, plan);
+    }
     let active_a_cols = plan
         .num_positions_per_block
         .checked_mul(plan.num_digits_inner)

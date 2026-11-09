@@ -1,0 +1,242 @@
+OPTIMIZED ONE-HOT NTT COMMITMENT EXPERIMENT
+
+HISTORICAL BENCHMARK REVISION
+The performance numbers below were measured before the merge of main e423a390 (2026-10-23). Main changed the SIS security policy and schedule geometry. These timings and historical proof hashes are not measurements of the updated branch. The K=16 schedules are regenerated for the new policy; current validation is recorded separately in main-sync-validation.json. Reproduction compares variants within each fresh run.
+
+
+Workload: nv=38 (2^38), k_chunk=16, recursive mode; root D=512, rank=1, width=65536, 8192 live blocks.
+MacBook M4 Max and Leopard Ryzen 9 9950X. Both release builds use -C target-cpu=native; selected final thread counts are recorded below.
+Same setup, opening point, and independent resident random witness reused for all full-size trials within each host.
+The five-prime panel reads the existing six-prime root matrix directly. The exact limb-split backend needs its own additional prepared public-matrix representation; its fastest timing assumes that representation is already prepared. Both cases include all witness work.
+The witness is 32 GiB of random Option<u8> indices, not a repeated block. No disk-backed witness fixture.
+Preprocessed public matrix NTTs are prepared before timing. Witness decoding, conversion, forward NTT, pointwise dot, inverse NTT and exact CRT reconstruction are timed.
+
+ENDGAME: FASTEST VERIFIED FULL-SIZE SETTINGS (two-run means)
+Host | Accumulation seconds (threads) | NTT seconds (threads) | speedup | time saved
+mac | 136.304470 (16) | 83.583722 (16) | 1.6308x | 38.68%
+leopard | 81.722420 (16) | 59.883385 (32) | 1.3647x | 26.72%
+The accumulation baseline is the fastest full-size mean measured for that host, not necessarily the NTT-selected thread count.
+
+FINAL RUNS AT MATCHED THREAD COUNTS (seconds, lower is better)
+Host | Accumulation mean (2) | Best NTT mean (2 subsequent repeats) | speedup | time saved | winning configuration
+mac | 136.304470 | 83.583722 | 1.6308x | 38.68% | ntt-exact
+leopard | 85.607447 | 59.883385 | 1.4296x | 30.05% | ntt-panel5@8x48x0
+
+FULL-SIZE CANDIDATE ABLATIONS (single observations unless repeated; not confidence intervals)
+
+MAC
+trial | mode | requested | commit_s | prove_s | physical storage read bytes
+0 | accumulation | accumulation | 132.546229 | 33.266358 | None
+1 | ntt-exact | ntt-exact | 77.702986 | 33.654511 | None
+2 | ntt-exact | ntt-exact | 82.796757 | 34.954741 | None
+3 | ntt-exact | best | 84.958075 | 35.661820 | None
+4 | accumulation | accumulation | 140.062711 | 33.656914 | None
+5 | ntt-exact | best | 82.209369 | 34.533247 | None
+
+Representative-width screen (256 blocks; each configuration twice):
+log | mode | blocks | columns | prefetch | samples_s | mean_s
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-exact | 1 | 96 | 0 | [2.236057, 2.46812] | 2.352088
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-exact | 1 | 96 | 0 | [2.39567, 2.699626] | 2.547648
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 4 | 24 | 0 | [3.003523, 3.141238] | 3.072380
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 16 | 96 | 0 | [3.055388, 3.092599] | 3.073994
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 4 | 96 | 1 | [3.028602, 3.119842] | 3.074222
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 8 | 96 | 1 | [3.019035, 3.142186] | 3.080611
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 4 | 48 | 0 | [3.094988, 3.140814] | 3.117901
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 4 | 96 | 0 | [3.005333, 3.248917] | 3.127125
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 4 | 384 | 0 | [3.00152, 3.265141] | 3.133331
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 8 | 48 | 0 | [3.058995, 3.212516] | 3.135756
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 4 | 192 | 0 | [3.093559, 3.184269] | 3.138914
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 8 | 192 | 0 | [3.138881, 3.144813] | 3.141847
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 8 | 96 | 0 | [3.009894, 3.281315] | 3.145605
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-exact | 1 | 96 | 0 | [3.25764, 3.051308] | 3.154474
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 2 | 96 | 0 | [3.117742, 3.213302] | 3.165522
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel5 | 1 | 96 | 0 | [3.134985, 3.258899] | 3.196942
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 2 | 96 | 0 | [3.44988, 3.485297] | 3.467588
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 1 | 96 | 0 | [3.5035, 3.459571] | 3.481535
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 4 | 384 | 0 | [3.581639, 3.569902] | 3.575770
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 4 | 96 | 1 | [3.592217, 3.560722] | 3.576469
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 8 | 96 | 1 | [3.618083, 3.547302] | 3.582693
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 8 | 192 | 0 | [3.578362, 3.588928] | 3.583645
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 4 | 192 | 0 | [3.590154, 3.579234] | 3.584694
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 8 | 48 | 0 | [3.601516, 3.570472] | 3.585994
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 4 | 48 | 0 | [3.596389, 3.576573] | 3.586481
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 8 | 96 | 0 | [3.625223, 3.571548] | 3.598386
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 4 | 24 | 0 | [3.656973, 3.649455] | 3.653214
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 4 | 96 | 0 | [3.669321, 3.701399] | 3.685360
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel6 | 4 | 96 | 0 | [3.717381, 3.842064] | 3.779723
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-legacy | 1 | 96 | 0 | [3.70689, 3.896277] | 3.801584
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-panel6 | 1 | 96 | 0 | [3.685499, 4.09308] | 3.889289
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | accumulation | 1 | 96 | 0 | [4.000534, 4.145092] | 4.072813
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-legacy | 1 | 96 | 0 | [4.17141, 4.280112] | 4.225761
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel6 | 1 | 96 | 0 | [4.157209, 4.314058] | 4.235634
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel6 | 4 | 96 | 0 | [4.418449, 4.398562] | 4.408506
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 8 | 96 | 1 | [4.438008, 4.474881] | 4.456444
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 8 | 192 | 0 | [4.46273, 4.460064] | 4.461397
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 8 | 48 | 0 | [4.483507, 4.445611] | 4.464559
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 4 | 192 | 0 | [4.521003, 4.470207] | 4.495605
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 8 | 96 | 0 | [4.548164, 4.459412] | 4.503788
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 4 | 96 | 1 | [4.447915, 4.581342] | 4.514629
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 4 | 24 | 0 | [4.547267, 4.490635] | 4.518951
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 16 | 96 | 0 | [4.613311, 4.425602] | 4.519457
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 4 | 48 | 0 | [4.537339, 4.504761] | 4.521050
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 4 | 96 | 0 | [4.600949, 4.489111] | 4.545030
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 4 | 384 | 0 | [4.491992, 4.610127] | 4.551060
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-panel5 | 16 | 96 | 0 | [4.641108, 4.636028] | 4.638568
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | accumulation | 1 | 96 | 0 | [4.539048, 4.742872] | 4.640960
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 2 | 96 | 0 | [4.745247, 4.558966] | 4.652107
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel5 | 1 | 96 | 0 | [4.790161, 4.621858] | 4.706010
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-binary5 | 4 | 96 | 0 | [4.978632, 5.08312] | 5.030876
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-16.log | ntt-binary5 | 1 | 96 | 0 | [5.174658, 5.183051] | 5.178854
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-binary5 | 1 | 96 | 0 | [5.478307, 5.477118] | 5.477712
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel6 | 4 | 96 | 0 | [5.673565, 5.443488] | 5.558527
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-panel6 | 1 | 96 | 0 | [5.812739, 5.548239] | 5.680489
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-12.log | ntt-binary5 | 4 | 96 | 0 | [5.827185, 5.955898] | 5.891542
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-legacy | 1 | 96 | 0 | [6.066043, 5.813648] | 5.939845
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | accumulation | 1 | 96 | 0 | [6.329532, 6.060372] | 6.194952
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-binary5 | 4 | 96 | 0 | [7.419089, 7.409103] | 7.414096
+/private/tmp/akita-ntt-opt-mac-v2/screen-threads-8.log | ntt-binary5 | 1 | 96 | 0 | [7.700459, 7.632732] | 7.666595
+
+LEOPARD
+trial | mode | requested | commit_s | prove_s | physical storage read bytes
+0 | accumulation | accumulation | 86.388530 | 23.261096 | 0
+1 | ntt-panel5@8x48x0 | ntt-panel5@8x48x0 | 59.931300 | 23.202735 | 0
+2 | ntt-panel5@8x48x0 | ntt-panel5@8x48x0 | 59.889732 | 23.166312 | 0
+3 | ntt-panel5@8x48x0 | best | 59.838239 | 23.142008 | 0
+4 | accumulation | accumulation | 84.826363 | 23.154894 | 0
+5 | ntt-panel5@8x48x0 | best | 59.928530 | 23.180662 | 0
+
+Representative-width screen (256 blocks; each configuration twice):
+log | mode | blocks | columns | prefetch | samples_s | mean_s
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 8 | 48 | 0 | [1.7934, 1.797526] | 1.795463
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 4 | 48 | 0 | [1.78911, 1.809731] | 1.799421
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 8 | 96 | 1 | [1.813838, 1.792521] | 1.803180
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 8 | 96 | 0 | [1.805663, 1.800863] | 1.803263
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 8 | 192 | 0 | [1.82426, 1.799933] | 1.812096
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 4 | 384 | 0 | [1.818572, 1.813037] | 1.815805
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 4 | 24 | 0 | [1.819205, 1.814564] | 1.816885
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 4 | 192 | 0 | [1.817654, 1.819115] | 1.818385
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 4 | 96 | 0 | [1.822213, 1.814952] | 1.818582
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 2 | 96 | 0 | [1.825168, 1.860512] | 1.842840
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 4 | 96 | 1 | [1.840689, 1.849971] | 1.845330
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 16 | 96 | 0 | [1.986216, 1.993971] | 1.990093
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 8 | 96 | 0 | [2.017265, 2.009196] | 2.013231
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 16 | 96 | 0 | [2.041397, 1.990718] | 2.016058
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 8 | 192 | 0 | [2.049595, 2.016384] | 2.032990
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 8 | 48 | 0 | [2.057477, 2.018958] | 2.038218
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 8 | 96 | 1 | [2.018801, 2.063769] | 2.041285
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 4 | 48 | 0 | [2.054927, 2.049419] | 2.052173
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel5 | 1 | 96 | 0 | [2.192083, 1.922403] | 2.057243
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 4 | 192 | 0 | [2.073442, 2.057037] | 2.065239
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 4 | 96 | 0 | [2.075714, 2.055314] | 2.065514
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 4 | 96 | 1 | [2.061599, 2.116856] | 2.089227
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 4 | 384 | 0 | [2.125781, 2.060045] | 2.092913
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 4 | 24 | 0 | [2.128301, 2.075041] | 2.101671
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 2 | 96 | 0 | [2.176367, 2.150575] | 2.163471
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel6 | 4 | 96 | 0 | [2.200425, 2.208594] | 2.204510
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel5 | 1 | 96 | 0 | [2.36155, 2.331907] | 2.346729
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-panel6 | 1 | 96 | 0 | [2.425118, 2.286873] | 2.355995
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel6 | 4 | 96 | 0 | [2.497288, 2.451307] | 2.474298
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | accumulation | 1 | 96 | 0 | [2.621708, 2.630192] | 2.625950
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | accumulation | 1 | 96 | 0 | [2.674117, 2.643238] | 2.658678
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-panel6 | 1 | 96 | 0 | [2.732061, 2.790932] | 2.761496
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-binary5 | 4 | 96 | 0 | [2.742029, 2.801096] | 2.771562
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-binary5 | 1 | 96 | 0 | [2.891106, 2.895552] | 2.893329
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-legacy | 1 | 96 | 0 | [3.277116, 3.407981] | 3.342548
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-binary5 | 4 | 96 | 0 | [3.44482, 3.408415] | 3.426617
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 16 | 96 | 0 | [3.642891, 3.649828] | 3.646359
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 8 | 96 | 1 | [3.656121, 3.659124] | 3.657622
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-binary5 | 1 | 96 | 0 | [3.681131, 3.663753] | 3.672442
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 8 | 96 | 0 | [3.686063, 3.695045] | 3.690554
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 8 | 48 | 0 | [3.687325, 3.69494] | 3.691133
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 8 | 192 | 0 | [3.689716, 3.693363] | 3.691540
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 4 | 96 | 1 | [3.717326, 3.71903] | 3.718178
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 4 | 24 | 0 | [3.782325, 3.789909] | 3.786117
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 4 | 48 | 0 | [3.787918, 3.787611] | 3.787764
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 4 | 96 | 0 | [3.78709, 3.790356] | 3.788723
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 4 | 192 | 0 | [3.789296, 3.789592] | 3.789444
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 4 | 384 | 0 | [3.792159, 3.793371] | 3.792765
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-legacy | 1 | 96 | 0 | [3.957152, 3.736632] | 3.846892
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 2 | 96 | 0 | [3.97356, 3.975633] | 3.974597
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel5 | 1 | 96 | 0 | [4.347629, 4.345714] | 4.346672
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | accumulation | 1 | 96 | 0 | [4.546675, 4.358659] | 4.452667
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel6 | 4 | 96 | 0 | [4.524218, 4.514813] | 4.519516
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-panel6 | 1 | 96 | 0 | [5.1907, 5.189182] | 5.189941
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-32.log | ntt-exact | 1 | 96 | 0 | [5.466489, 5.195248] | 5.330869
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-legacy | 1 | 96 | 0 | [5.750491, 5.801026] | 5.775759
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-16.log | ntt-exact | 1 | 96 | 0 | [6.120457, 6.47293] | 6.296693
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-binary5 | 4 | 96 | 0 | [6.306521, 6.31395] | 6.310236
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-exact | 1 | 96 | 0 | [6.534645, 6.74548] | 6.640062
+/home/omid/jolt-cpp/.agent-gpu-runs/20261021T061901Z-ffb355/results/screen-threads-8.log | ntt-binary5 | 1 | 96 | 0 | [6.874406, 6.883827] | 6.879117
+
+INITIAL FULL SWEEP AND FINAL THREAD-COUNT CHECKS
+
+mac: initial full-size sweep used 12 threads; final full-size sweep used 16 threads. Final representative-width screens cover 8, 12, and 16 threads.
+accumulation mean 153.538637s; best NTT mean 102.032642s (ntt-exact); matched-thread speedup 1.5048x.
+trial 0 accumulation requested=accumulation commit=152.458796s prove=41.188878s read_bytes=None
+trial 1 ntt-legacy requested=ntt-legacy commit=147.526434s prove=42.425515s read_bytes=None
+trial 2 ntt-exact requested=ntt-exact commit=107.568852s prove=42.959342s read_bytes=None
+trial 3 ntt-panel6@1x96x0 requested=ntt-panel6@1x96x0 commit=142.987381s prove=41.055799s read_bytes=None
+trial 4 ntt-panel5@1x96x0 requested=ntt-panel5@1x96x0 commit=117.985936s prove=40.772448s read_bytes=None
+trial 5 ntt-panel5@2x96x0 requested=ntt-panel5@2x96x0 commit=114.341950s prove=40.969396s read_bytes=None
+trial 6 ntt-binary5@1x96x0 requested=ntt-binary5@1x96x0 commit=180.428198s prove=40.970835s read_bytes=None
+trial 7 ntt-exact requested=best commit=95.794720s prove=41.254335s read_bytes=None
+trial 8 accumulation requested=accumulation commit=154.618479s prove=40.773186s read_bytes=None
+trial 9 ntt-exact requested=best commit=108.270564s prove=41.527060s read_bytes=None
+Best measured accumulation and NTT among the two full-size thread settings: {"accumulation_s": 136.30447, "accumulation_threads": 16, "ntt_s": 83.583722, "ntt_threads": 16, "ntt_mode": "ntt-exact", "speedup": 1.630753772845866, "time_saved_percent": 38.67866402327085}
+
+leopard: initial full-size sweep used 16 threads; final full-size sweep used 32 threads. Final representative-width screens cover 8, 16, and 32 threads.
+accumulation mean 81.722420s; best NTT mean 66.662976s (ntt-panel5@8x48x0); matched-thread speedup 1.2259x.
+trial 0 accumulation requested=accumulation commit=82.110714s prove=23.234631s read_bytes=3432448
+trial 1 ntt-legacy requested=ntt-legacy commit=117.603788s prove=23.128886s read_bytes=24576
+trial 2 ntt-exact requested=ntt-exact commit=205.859706s prove=23.174469s read_bytes=65536
+trial 3 ntt-panel6@4x96x0 requested=ntt-panel6@4x96x0 commit=80.225949s prove=23.180531s read_bytes=12288
+trial 4 ntt-panel5@8x48x0 requested=ntt-panel5@8x48x0 commit=66.766090s prove=23.254891s read_bytes=61440
+trial 5 ntt-panel5@8x192x0 requested=ntt-panel5@8x192x0 commit=66.783258s prove=23.288455s read_bytes=0
+trial 6 ntt-binary5@4x96x0 requested=ntt-binary5@4x96x0 commit=110.911474s prove=23.265839s read_bytes=0
+trial 7 ntt-panel5@8x48x0 requested=best commit=66.637094s prove=23.191044s read_bytes=0
+trial 8 accumulation requested=accumulation commit=81.334126s prove=23.337106s read_bytes=0
+trial 9 ntt-panel5@8x48x0 requested=best commit=66.688859s prove=23.320658s read_bytes=0
+Best measured accumulation and NTT among the two full-size thread settings: {"accumulation_s": 81.72242, "accumulation_threads": 16, "ntt_s": 59.883384500000005, "ntt_threads": 32, "ntt_mode": "ntt-panel5@8x48x0", "speedup": 1.364692738767963, "time_saved_percent": 26.723432198899634}
+
+WHAT CHANGED
+Final exact-NTT preparation uses RHS bound 2, matching the existing basis-2 validator for binary 0/1 input. The initial sweep used the protocol basis-3 bound 4. This removes an unnecessary public limb on the MacBook (1.25 GiB to 1 GiB root exact cache) while leaving the witness and protocol unchanged.
+1. Direct decoding of one-hot indices into reusable bounded column tiles. No sparse-entry materialization and no witness gadget decomposition; higher digit planes are zero.
+2. Block panels reuse the same preprocessed matrix columns across independent blocks. Tested B=1,2,4,8,16 and C=24,48,96,192,384 combinations, including prefetch on/off.
+3. Five-prime exact CRT uses the one-hot ring L1 bound h=ceil(D/k_chunk), instead of the dense D bound. The full output bound is floor(q/2)*width*h, requiring CRT product strictly greater than twice that bound.
+   At nv38, D512 and width65536, the five-prime safe width is 131040. Existing six-prime matrix entries are consumed through their first five limbs without copying or retransforming A.
+   Larger widths split at the proven capacity, reconstruct each partial exactly, and add in the field. Forced small-capacity chunks are exercised by differential tests at both D256 and D512.
+4. Existing SIMD conversion, radix-4 transforms, six-column lazy pointwise dot and once-per-output reconstruction are retained; no new competing butterfly implementation.
+The reduced-prime path retains the original six-limb matrix storage (768 MiB at the root); it saves transform/dot arithmetic without allocating a separately transformed five-limb A. The final exact root cache is an additional 1 GiB on the MacBook; raw logs contain total cache and preparation costs.
+5. Existing exact signed-i16 NTT backend is benchmarked through its canonical cache, including its existing split-public-matrix/IFMA52 selection on x86. Direct one-hot decode supplies binary i16 coefficients.
+6. Binary twist selection is tested as an alternative conversion; screen and full-size data show whether its loss of the fused conversion path is worthwhile.
+7. Leopard screens both default AVX2 and explicit AVX-512 in fresh processes. The best screened SIMD plan is used for the full-size family comparison.
+8. All selected arithmetic families run complete proofs; the fastest completed verified NTT trial is automatically repeated twice, bracketed with a repeated accumulation run.
+
+CORRECTNESS AND MEASUREMENT LIMITS
+All full-size commitments and proofs are byte-identical across every candidate and both hosts. Every full trial passes both single-threaded and multi-threaded verification.
+Proof: 74352 bytes; SHA256 0283079873554610b5bcec106f84492d2a4240ee021bfb4189170eba3c76f899
+Commitment: 343 bytes; SHA256 dd5db80bf872066c63f868e528d87117b490184626dc42a3f8a797885f93692f
+The hashes also match the original accumulation experiment. Protocol, schedule-selected algebra, transcript and serialization are unchanged.
+Timing is commit wall time. Setup/preprocessing is excluded because the requested deployment already has preprocessed NTT matrices. Exact-backend extra cache preparation is likewise outside commit; cache sizes and preparation timings are retained in raw logs.
+Initial and final source snapshots differ only in the experimental exact-preprocessing bound and its screen. Initial exact-cache results are labeled separately; the accumulation and five/six-prime panel code is identical.
+Two repeated samples are a practical check, not a statistical confidence interval. Candidate selection is data-dependent; repeat samples are reported separately from the selection sample. The best result is for this workload and hardware, not a proof of a global optimum.
+D256 is covered by correctness tests; the requested nv38 full run selects D512. No new nv40 performance claim is made.
+Default accumulation remains unchanged; the experiment is opt-in through AKITA_ONEHOT_COMMIT. ntt aliases the five-prime panel with default B4/C96; the benchmark winner may require explicit tuning or ntt-exact.
+
+VALIDATION
+56 complete proofs (24 nv32 smoke trials and 32 nv38 full-size trials) passed both verification modes. An independent byte check compares every saved proof and commitment across both hosts and source versions.
+169 algebra unit tests passed (one ignored performance test); binary-conversion, one-hot differential (normal and scalar), forced-capacity-chunk, and capacity-boundary tests passed.
+All three required release Clippy feature configurations passed on the final Mac source. Format, line-cap, diff-whitespace and external-artifact checks passed; the repository preflight log is preserved at the experiment root.
+The full workspace Nextest CI suite was not run; validation used the checks above and complete recursive proofs.
+
+REPRODUCTION
+reproduce-mac.sh and reproduce-leopard.sh reproduce the final matched-thread points with saved bytes and automatic verification. Their optional first argument overrides thread count. On Leopard use 16 to reproduce the stronger accumulation baseline and 32 for the fastest NTT.
+See each host/job.sh or mac.sh, selected-order.txt, host.txt, build-hashes.txt, source-hashes.json, raw logs and saved proof/commitment bytes.
+For direct use of ntt-exact, set AKITA_ONEHOT_NTT_PREWARM_EXACT=1 before backend.prewarm(schedule), so the extra exact root representation is prepared outside commit. The comparison harness sets this automatically when its order contains ntt-exact.
+Mode tag ntt-panel5@BxCxP denotes AKITA_ONEHOT_COMMIT=ntt-panel5, AKITA_ONEHOT_NTT_BLOCKS=B, AKITA_ONEHOT_NTT_COLUMNS=C, AKITA_ONEHOT_NTT_PREFETCH=P.
+Leopard is a CPU benchmark; selected GPU reservation is transport metadata only, GPU unused. See plan.json and run-metadata.json for remote path, UUID and base revision/dirty state.
+Mac physical storage-read counters are unavailable; Leopard per-commit counters are included above (small executable paging is distinct from reading a disk-backed witness).
+Leopard cleanup freed 48.7 GiB by removing only two inspected inactive Rust incremental caches; the manifest preserves exact paths and allocated sizes.
+
+PR PACKAGING
+Portable reproduction scripts and byte-check parser are in profile/onehot-ntt/. Historical paths above identify the original runs; raw logs and saved proofs remain in the local experiment worktree. The full nv38 fixture is resident RAM, not the cancelled nv40 disk-backed run.
