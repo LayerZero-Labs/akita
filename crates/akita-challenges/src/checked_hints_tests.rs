@@ -70,6 +70,47 @@ fn checked_hints_reject_another_valid_challenge_at_the_wrong_transcript_slot() {
     hints[32..64].copy_from_slice(&first);
     crate::install_checked_hints(&hints).unwrap();
     assert!(message().draw_fold_challenges(&family(), 1024, 1).is_err());
+    crate::abort_checked_hints().unwrap();
+}
+
+#[test]
+fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
+    let family = family();
+    let draw = || message().draw_fold_challenges(&family, 1024, 1);
+    for _ in 0..2 {
+        crate::install_checked_hints(HINTS).unwrap();
+        assert!(draw().unwrap().is_some());
+        crate::finish_checked_hints().unwrap();
+        assert!(!crate::checked_hint::active());
+    }
+
+    // A malformed draw must stay rejected; abort only releases its session.
+    let mut malformed = HINTS.to_vec();
+    malformed[..8].fill(0xff);
+    crate::install_checked_hints(&malformed).unwrap();
+    assert!(draw().is_err());
+    crate::abort_checked_hints().unwrap();
+    assert!(!crate::checked_hint::active());
+
+    crate::install_checked_hints(HINTS).unwrap();
+    assert!(draw().unwrap().is_some());
+    crate::finish_checked_hints().unwrap();
+    // Unhinted decoding must no longer select an exhausted hint tape.
+    assert!(draw().unwrap().is_some());
+}
+
+#[test]
+fn finishing_an_incomplete_hint_session_rejects_and_clears_it() {
+    crate::install_checked_hints(HINTS).unwrap();
+    assert!(crate::finish_checked_hints().is_err());
+    assert!(!crate::checked_hint::active());
+    crate::install_checked_hints(HINTS).unwrap();
+    assert!(message()
+        .draw_fold_challenges(&family(), 1024, 1)
+        .unwrap()
+        .is_some());
+    crate::finish_checked_hints().unwrap();
+    assert!(crate::finish_checked_hints().is_err());
 }
 const MESSAGE: &[u8] = include_bytes!("../testdata/checked_hint_message.bin");
 const HINTS: &[u8] = include_bytes!("../testdata/checked_hint_codes.bin");

@@ -6,6 +6,10 @@ thread_local! {
 }
 
 /// Install untrusted quartet hints. Each consumed code is authenticated against transcript ranks and signs.
+///
+/// Call [`finish_checked_hints`] after successful verification to require complete
+/// consumption, or [`abort_checked_hints`] after a verification error. Both clear
+/// the installed hints so the current thread can verify another proof.
 pub fn install_checked_hints(bytes: &[u8]) -> Result<(), AkitaError> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(8) {
         return Err(AkitaError::InvalidProof);
@@ -38,13 +42,30 @@ pub fn install_checked_hints(bytes: &[u8]) -> Result<(), AkitaError> {
     })
 }
 
+/// Remove installed hints and reject unless every hint was consumed.
+/// An incomplete session is cleared even when this returns an error.
 pub fn finish_checked_hints() -> Result<(), AkitaError> {
     HINTS.with(|state| {
-        let state = state.try_borrow().map_err(|_| AkitaError::InvalidProof)?;
-        match state.as_ref() {
-            Some((words, used)) if *used == words.len() => Ok(()),
+        let hints = state
+            .try_borrow_mut()
+            .map_err(|_| AkitaError::InvalidProof)?
+            .take();
+        match hints {
+            Some((words, used)) if used == words.len() => Ok(()),
             _ => Err(AkitaError::InvalidProof),
         }
+    })
+}
+
+/// Discard hints after a failed verification. This does not authenticate the
+/// hints or make the failed proof valid; it only releases the thread's session.
+pub fn abort_checked_hints() -> Result<(), AkitaError> {
+    HINTS.with(|state| {
+        state
+            .try_borrow_mut()
+            .map_err(|_| AkitaError::InvalidProof)?
+            .take();
+        Ok(())
     })
 }
 
