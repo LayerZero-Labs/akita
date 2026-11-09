@@ -58,7 +58,15 @@ fn low_eval<F: Field, const STATES: usize>(
             .ok_or_else(|| AkitaError::Internal("interval has no carry states".into()))? = F::one();
         return Ok(value);
     }
-    if let Some(value) = cache.get(bits).and_then(|m| m.get(&shift)) {
+    let memo = cache
+        .get(bits)
+        .ok_or_else(|| AkitaError::Internal("interval low cache is absent".into()))?;
+    // Charge ordered-map lookups even when the carry summary is cached.
+    charge_work(
+        work,
+        1 + (usize::BITS - memo.len().leading_zeros()) as usize,
+    )?;
+    if let Some(value) = memo.get(&shift) {
         return Ok(*value);
     }
     charge_work(work, 2 * STATES)?;
@@ -93,10 +101,15 @@ fn low_eval<F: Field, const STATES: usize>(
             }
         }
     }
-    cache
+    let memo = cache
         .get_mut(bits)
-        .ok_or_else(|| AkitaError::Internal("interval low cache is absent".into()))?
-        .insert(shift, value);
+        .ok_or_else(|| AkitaError::Internal("interval low cache is absent".into()))?;
+    // Charge the tree update and storage before inserting a carry summary.
+    charge_work(
+        work,
+        2 + (usize::BITS - memo.len().leading_zeros()) as usize,
+    )?;
+    memo.insert(shift, value);
     Ok(value)
 }
 
@@ -245,5 +258,44 @@ mod tests {
             let mut work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
             assert!(high_eval::<F, false>(&point, 0, index, &mut cache, &mut work).is_err());
         }
+    }
+
+    fn check_low_cache_work_limit<const STATES: usize>() {
+        let factors = [[F::one(); 4]; 4];
+        let mut cache = (0..=2).map(|_| BTreeMap::new()).collect::<Vec<_>>();
+        low_eval::<F, STATES>(2, 0, &factors, &mut cache, &mut 0).unwrap();
+        let warmed = cache.clone();
+        for shift in [0, 1] {
+            let mut work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
+            assert!(low_eval::<F, STATES>(2, shift, &factors, &mut cache, &mut work).is_err());
+            assert_eq!(cache, warmed);
+        }
+
+        // Leave enough work for the empty lookup and arithmetic, but not for
+        // storing the result. The failed insertion must leave the cache empty.
+        let mut cache = (0..=1).map(|_| BTreeMap::new()).collect::<Vec<_>>();
+        let mut work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS - (1 + 2 * STATES);
+        assert!(low_eval::<F, STATES>(1, 0, &factors, &mut cache, &mut work).is_err());
+        assert!(cache.iter().all(BTreeMap::is_empty));
+
+        // A hit in a larger tree must be charged more than the same hit in a
+        // singleton tree, despite performing no field arithmetic.
+        let mut cache = (0..=4).map(|_| BTreeMap::new()).collect::<Vec<_>>();
+        cache[4].insert(0, [F::one(); STATES]);
+        let mut small_work = 0;
+        low_eval::<F, STATES>(4, 0, &factors, &mut cache, &mut small_work).unwrap();
+        for shift in 1..8 {
+            cache[4].insert(shift, [F::one(); STATES]);
+        }
+        let mut large_work = 0;
+        low_eval::<F, STATES>(4, 0, &factors, &mut cache, &mut large_work).unwrap();
+        assert!(large_work > small_work);
+    }
+
+    #[test]
+    fn low_cache_hits_misses_and_storage_respect_the_work_limit() {
+        check_low_cache_work_limit::<2>();
+        check_low_cache_work_limit::<4>();
+        check_low_cache_work_limit::<6>();
     }
 }
