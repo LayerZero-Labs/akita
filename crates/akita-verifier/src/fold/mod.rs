@@ -21,7 +21,7 @@ use crate::stages::opening_semantics::{prepare_opening_semantics, OpeningSemanti
 use crate::stages::relation_claim::prepare_relation_claim;
 use crate::stages::ring_switch::ring_switch_verifier;
 use crate::stages::stage1::verify_stage1;
-use crate::stages::stage2::{replay_stage2, validate_stage2_replay};
+use crate::stages::stage2::{evaluate_compression_oracle, replay_stage2, validate_stage2_replay};
 use crate::stages::stage3::verify_stage3;
 use akita_error::AkitaError;
 use akita_params::{BasisMode, CommittedGroupParams, OpeningClaimsLayout};
@@ -129,6 +129,7 @@ where
         prepared.w_len,
         grinding,
         level,
+        matches!(setup_policy, crate::SetupPolicy::Defer(_)),
     )?;
     let relation = prepare_relation_claim::<F, E>(
         prepared.lp,
@@ -171,6 +172,19 @@ where
         &opening_semantics,
         prepared.level_layout.stage2_sumcheck(),
     )?;
+    let external_compression_oracle = if let crate::SetupPolicy::Defer(accumulator) = setup_policy {
+        let _scope = akita_error::experiment_scope("compression/deferred_oracle");
+        Some(evaluate_compression_oracle(
+            &stage1.compression,
+            setup.expanded(),
+            &stage1.stage1_point,
+            &stage2_rounds.challenges,
+            stage2_rounds.witness_eval,
+            Some(accumulator),
+        )?)
+    } else {
+        None
+    };
     let defer = matches!(setup_policy, crate::SetupPolicy::Defer(_));
     let fold_setup = if let Some(accumulator) = setup_policy.accumulator() {
         let inherited = accumulator
@@ -243,6 +257,7 @@ where
         opening_semantics,
         stage2_rounds,
         fold_setup,
+        external_compression_oracle,
     )?;
     drop(stage2_span);
     Ok(FoldVerifyOutput {

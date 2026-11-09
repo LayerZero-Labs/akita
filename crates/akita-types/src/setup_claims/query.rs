@@ -1,4 +1,5 @@
 mod compilation;
+mod evaluation;
 
 use super::{point_domain, SetupPolynomialId};
 use crate::setup_contribution::setup_index_weight::{
@@ -99,14 +100,14 @@ impl<E: Field> SetupWeightTerm<E> {
 }
 
 #[derive(Clone)]
-pub(super) struct NativeTerm<E: Field> {
-    pub(super) coefficient: Vec<E>,
-    pub(super) point: Vec<E>,
-    pub(super) tensors: Vec<EqPairTensorFamily<E>>,
+pub(crate) struct NativeTerm<E: Field> {
+    pub(crate) coefficient: Vec<E>,
+    pub(crate) point: Vec<E>,
+    pub(crate) tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: Field> SetupQuery<E> {
-    pub(super) fn from_native_terms(terms: Vec<NativeTerm<E>>) -> Self {
+    pub(crate) fn from_native_terms(terms: Vec<NativeTerm<E>>) -> Self {
         Self(Query::Native(terms.into()))
     }
     pub fn contribution(
@@ -146,6 +147,27 @@ impl<E: Field> SetupQuery<E> {
                 !t.coefficient.is_empty()
                     && t.coefficient.len().is_power_of_two()
                     && t.coefficient.len() <= polynomial.field_len()
+                    && checked::pow2(t.point.len()).is_some_and(|right_limit| {
+                        t.tensors.iter().all(|tensor| {
+                            tensor
+                                .axes
+                                .iter()
+                                .try_fold(
+                                    (tensor.left_offset, tensor.right_offset),
+                                    |(left, right), axis| {
+                                        let last = axis.len.checked_sub(1)?;
+                                        Some((
+                                            checked::mul_add(axis.left_stride, last, left)?,
+                                            checked::mul_add(axis.right_stride, last, right)?,
+                                        ))
+                                    },
+                                )
+                                .is_some_and(|(left, right)| {
+                                    left < polynomial.field_len() / t.coefficient.len()
+                                        && right < right_limit
+                                })
+                        })
+                    })
             }),
         };
         if !fits {
@@ -156,11 +178,6 @@ impl<E: Field> SetupQuery<E> {
         Ok(())
     }
     pub(super) fn validate_split(&self, coefficient_len: usize) -> Result<(), AkitaError> {
-        if let Query::Native(terms) = &self.0 {
-            if terms.iter().any(|t| coefficient_len > t.coefficient.len()) {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
         if let Query::Contribution { plan, .. } = &self.0 {
             if coefficient_len > plan.projection_geometry().base_ring_dim() {
                 return Err(AkitaError::InvalidInput(

@@ -88,13 +88,20 @@ pub(crate) fn ring_switch_verifier<F, E>(
     w_len: usize,
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     level: u32,
+    defer_compression_setup: bool,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F> + ChallengeCodec,
 {
     let mut challenges = RingSwitchChallenges(grinding);
-    ring_switch_verifier_with_challenges::<F, E, _>(replay, w_len, &mut challenges, level)
+    ring_switch_verifier_with_challenges::<F, E, _>(
+        replay,
+        w_len,
+        &mut challenges,
+        level,
+        defer_compression_setup,
+    )
 }
 
 fn ring_switch_verifier_with_challenges<F, E, C>(
@@ -102,6 +109,7 @@ fn ring_switch_verifier_with_challenges<F, E, C>(
     w_len: usize,
     challenges: &mut C,
     level: u32,
+    defer_compression_setup: bool,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -197,7 +205,7 @@ where
         match lp.ring_relation_mode {
             RingRelationMode::QuotientLift => PreparedStage2Compression::QuotientLift {
                 weights: build_compression_relation_weights(
-                    replay.setup,
+                    (!defer_compression_setup).then_some(replay.setup),
                     relation,
                     alpha,
                     lp,

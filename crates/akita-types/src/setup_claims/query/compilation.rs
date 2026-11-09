@@ -17,6 +17,25 @@ impl<E: Field> SetupQuery<E> {
         let term_bytes = |dimension| {
             let index_len = checked::exact_div(polynomial.field_len(), dimension)
                 .ok_or(AkitaError::InvalidProof)?;
+            if dimension < coefficient_len {
+                let lanes = checked::exact_div(coefficient_len, dimension)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let fields = checked::sum([
+                    checked::product([2, index_len]).ok_or(AkitaError::InvalidProof)?,
+                    checked::product([lanes, coefficient_len]).ok_or(AkitaError::InvalidProof)?,
+                    dimension,
+                ])
+                .ok_or(AkitaError::InvalidProof)?;
+                return checked::sum([
+                    checked::product([fields, size_of::<E>()]).ok_or(AkitaError::InvalidProof)?,
+                    checked::product([
+                        lanes,
+                        size_of::<SetupWeightTerm<E>>() + size_of::<Vec<SetupWeightTerm<E>>>(),
+                    ])
+                    .ok_or(AkitaError::InvalidProof)?,
+                ])
+                .ok_or(AkitaError::InvalidProof);
+            }
             let lanes =
                 checked::exact_div(dimension, coefficient_len).ok_or(AkitaError::InvalidProof)?;
             let fields =
@@ -135,6 +154,40 @@ impl<E: Field> SetupQuery<E> {
         };
         let mut terms = Vec::new();
         for (coefficient, index, active) in native {
+            if coefficient.len() < coefficient_len {
+                let lanes = checked::exact_div(coefficient_len, coefficient.len())
+                    .ok_or(AkitaError::InvalidProof)?;
+                for lane in 0..lanes {
+                    let mut widened = vec![E::zero(); coefficient_len];
+                    let start = checked::product([lane, coefficient.len()])
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let range =
+                        checked::range(start, coefficient.len()).ok_or(AkitaError::InvalidProof)?;
+                    widened
+                        .get_mut(range)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .copy_from_slice(&coefficient);
+                    let lane_index = index
+                        .iter()
+                        .skip(lane)
+                        .step_by(lanes)
+                        .copied()
+                        .collect::<Vec<_>>();
+                    let active = if lane < active {
+                        checked::div_ceil(active - lane, lanes).ok_or(AkitaError::InvalidProof)?
+                    } else {
+                        0
+                    };
+                    terms.push(SetupWeightTerm {
+                        coefficient: widened,
+                        index: lane_index.into(),
+                        lane: 0,
+                        lanes: 1,
+                        active_index_len: active,
+                    });
+                }
+                continue;
+            }
             let lanes = checked::exact_div(coefficient.len(), coefficient_len)
                 .ok_or(AkitaError::InvalidProof)?;
             let index: Arc<[E]> = index.into();

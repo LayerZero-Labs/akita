@@ -261,7 +261,7 @@ where
         && parameters.ring_relation_mode == akita_params::RingRelationMode::QuotientLift
     {
         let weights = akita_types::build_compression_relation_weights(
-            setup,
+            Some(setup),
             instance,
             request.alpha,
             parameters,

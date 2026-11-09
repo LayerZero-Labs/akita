@@ -137,6 +137,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     compression: Stage2CompressionOracle<'a, E>,
     setup_claim: Option<E>,
     external_relation_weight: Option<E>,
+    external_compression_oracle: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
     opening_semantics: Stage2OpeningSemantics<'a, E>,
@@ -163,6 +164,7 @@ pub(crate) struct Stage2VerifierInput<'a, F: Field, E: Field> {
     /// Stage 3 setup claim when the setup contribution is deferred.
     pub(crate) setup_claim: Option<E>,
     pub(crate) external_relation_weight: Option<E>,
+    pub(crate) external_compression_oracle: Option<E>,
     /// Relation lane variable count.
     pub(crate) col_bits: usize,
     /// Relation coefficient variable count.
@@ -208,6 +210,7 @@ where
             alpha,
             setup_claim,
             external_relation_weight,
+            external_compression_oracle,
             col_bits,
             ring_bits,
             opening_semantics,
@@ -234,6 +237,7 @@ where
             compression,
             setup_claim,
             external_relation_weight,
+            external_compression_oracle,
             setup,
             alpha,
             opening_semantics,
@@ -289,7 +293,9 @@ where
                 (relation_weight?, coefficient_packing_weight?)
             }
         };
-        let compression_oracle = {
+        let compression_oracle = if let Some(value) = self.external_compression_oracle {
+            value
+        } else {
             let _span = tracing::info_span!(
                 "stage2_compression_oracle",
                 reduced = matches!(
@@ -304,6 +310,7 @@ where
                 &self.stage1_point,
                 challenges,
                 w_eval,
+                None,
             )?
         };
         let relation_oracle =
@@ -392,6 +399,10 @@ where
 }
 
 /// Resolve this fold's setup contribution and check the Stage 2 output claim.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage 2 combines transcript replay with separately resolved setup obligations"
+)]
 pub(crate) fn validate_stage2_replay<F, E>(
     setup: &AkitaVerifierSetup<F>,
     stage1: Stage1Replay<'_, E>,
@@ -400,6 +411,7 @@ pub(crate) fn validate_stage2_replay<F, E>(
     opening_semantics: Stage2OpeningSemantics<'_, E>,
     replay: Stage2RoundReplay<E>,
     fold_setup: FoldSetup<'_, '_, E>,
+    external_compression_oracle: Option<E>,
 ) -> Result<Stage2Output<E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
@@ -429,6 +441,7 @@ where
         alpha: rs.alpha,
         setup_claim,
         external_relation_weight,
+        external_compression_oracle,
         col_bits: rs.relation_address_geometry.relation_lane_variable_count(),
         ring_bits: rs
             .relation_address_geometry
@@ -455,6 +468,7 @@ pub(crate) fn evaluate_compression_oracle<F, E>(
     stage1_point: &[E],
     point: &[E],
     witness_evaluation: E,
+    mut resolve: Option<&mut crate::SetupClaimAccumulator<'_, E>>,
 ) -> Result<E, AkitaError>
 where
     F: Field,
@@ -466,7 +480,12 @@ where
             support,
             binary_batching,
         } => {
-            let relation_weight = weights.evaluate_at_point(point)?;
+            let relation_weight = match resolve.as_mut() {
+                Some(resolve) => {
+                    weights.evaluate_with_external_setup(point, |query| resolve.resolve(query))?
+                }
+                None => weights.evaluate_at_point(point)?,
+            };
             let binary_weight =
                 support.evaluate_restricted_equality_at_point(stage1_point, point)?;
             Ok(witness_evaluation * relation_weight
@@ -480,7 +499,12 @@ where
             support,
             binary_batching,
         } => {
-            let relation_weight = weights.evaluate_at_point(setup, point)?;
+            let relation_weight = match resolve.as_mut() {
+                Some(resolve) => {
+                    weights.evaluate_with_external_setup(point, |query| resolve.resolve(query))?
+                }
+                None => weights.evaluate_at_point(setup, point)?,
+            };
             let binary_weight =
                 support.evaluate_restricted_equality_at_point(stage1_point, point)?;
             Ok(witness_evaluation * relation_weight
@@ -693,6 +717,7 @@ mod tests {
             alpha,
             setup_claim: None,
             external_relation_weight: None,
+            external_compression_oracle: None,
             col_bits: relation_address_geometry.relation_lane_variable_count(),
             ring_bits: relation_address_geometry.relation_coefficient_variable_count(),
             opening_semantics: Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)])

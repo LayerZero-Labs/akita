@@ -1,6 +1,9 @@
 //! Shared compact F/H relation weights for prover materialization and verifier evaluation.
 
 mod reduced;
+mod setup_query;
+
+use setup_query::{CompressionSetupMap, CompressionSetupMode};
 
 pub use reduced::{build_reduced_compression_relation_weights, ReducedCompressionRelationWeights};
 
@@ -35,7 +38,6 @@ struct CompressionRelationEvent<E: Field> {
 struct EvaluatedCompressionMatrix<E: Field> {
     input_width: usize,
     ring_dimension: usize,
-    powers: Vec<E>,
     columns: Vec<E>,
 }
 
@@ -43,6 +45,7 @@ struct EvaluatedCompressionMatrix<E: Field> {
 #[derive(Clone, Debug)]
 pub struct CompressionRelationWeights<E: Field> {
     events: Vec<CompressionRelationEvent<E>>,
+    deferred_maps: Vec<CompressionSetupMap<E>>,
     alpha_powers: Vec<E>,
     coefficient_block_len: usize,
     physical_field_len: usize,
@@ -189,6 +192,12 @@ impl<E: Field> CompressionRelationWeights<E> {
     }
 
     fn accumulate_dense(&self, weights: &mut [E]) -> Result<(), AkitaError> {
+        if !self.deferred_maps.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "compression setup contribution is deferred".into(),
+            ));
+        }
+
         if weights.len() != self.physical_field_len {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len,
@@ -232,6 +241,12 @@ impl<E: Field> CompressionRelationWeights<E> {
     /// intervals. Each cluster accumulates densely over its own span, so no
     /// per-coefficient sort is needed and clusters are independent.
     pub fn into_sparse_entries(mut self) -> Result<Vec<(usize, E)>, AkitaError> {
+        if !self.deferred_maps.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "compression setup contribution is deferred".into(),
+            ));
+        }
+
         /// Coefficients per parallel task, rounded up to whole clusters.
         const TASK_COEFFICIENTS: usize = 1 << 14;
         self.events
@@ -306,6 +321,40 @@ impl<E: Field> CompressionRelationWeights<E> {
     /// Evaluate the table's multilinear extension at one full witness point.
     #[tracing::instrument(skip_all, name = "compression_relation_mle")]
     pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        if !self.deferred_maps.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "compression setup contribution is deferred".into(),
+            ));
+        }
+        self.evaluate_linear_at_point(point)
+    }
+
+    /// Evaluate recomposition and quotient terms, exporting the setup-map functional.
+    pub fn evaluate_with_external_setup(
+        &self,
+        point: &[E],
+        mut resolve: impl FnMut(crate::setup_claims::SetupQuery<E>) -> Result<E, AkitaError>,
+    ) -> Result<E, AkitaError> {
+        let linear = self.evaluate_linear_at_point(point)?;
+        if self.deferred_maps.is_empty() {
+            return Ok(linear);
+        }
+        let alpha = self
+            .alpha_powers
+            .get(1)
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?;
+        let query = setup_query::compression_setup_query(
+            alpha,
+            point,
+            self.physical_field_len,
+            CompressionSetupMode::LiftedPower,
+            &self.deferred_maps,
+        )?;
+        Ok(linear + resolve(query)?)
+    }
+
+    fn evaluate_linear_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         if checked::pow2(point.len()) != Some(self.physical_field_len) {
             return Err(AkitaError::InvalidSize {
                 expected: self.physical_field_len.trailing_zeros() as usize,
@@ -627,11 +676,13 @@ where
     )
 }
 
-/// Build the one canonical compact F/H relation table.
+/// Build the canonical compact F/H relation table.
+/// With no materialized setup, retain the map functionals for
+/// `evaluate_with_external_setup`; every exported query must be authenticated.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "build_compression_relation_weights")]
 pub fn build_compression_relation_weights<F, E>(
-    setup: &AkitaExpandedSetup<F>,
+    setup: Option<&AkitaExpandedSetup<F>>,
     instance: &RingRelationInstance<F>,
     alpha: E,
     lp: &CommittedGroupParams,
@@ -682,6 +733,7 @@ where
         })?;
     let mut weights = CompressionRelationWeights {
         events: Vec::new(),
+        deferred_maps: Vec::new(),
         alpha_powers: scalar_powers(alpha, maximum_dimension),
         coefficient_block_len,
         physical_field_len,
@@ -712,56 +764,64 @@ where
         let row_weight = *row_weights.get(row_index).ok_or_else(|| {
             AkitaError::Internal("compression row exceeds the generated row weight table".into())
         })?;
-        let matrix_index = if let Some(index) = evaluated_matrices.iter().position(|evaluated| {
-            evaluated.input_width == map.input_width()
-                && evaluated.ring_dimension == map.ring_dimension()
-        }) {
-            index
+        if let Some(setup) = setup {
+            let matrix_index = if let Some(index) =
+                evaluated_matrices.iter().position(|evaluated| {
+                    evaluated.input_width == map.input_width()
+                        && evaluated.ring_dimension == map.ring_dimension()
+                }) {
+                index
+            } else {
+                let matrix = setup.shared_matrix.ring_view_dyn(
+                    1,
+                    map.input_width(),
+                    map.ring_dimension(),
+                )?;
+                let matrix_row = matrix.row_flat(0)?;
+                let powers = scalar_powers(alpha, map.ring_dimension());
+                // All columns share the powers: batched calls let a field-inline
+                // guest load each power once per block of columns.
+                let columns = dot_base_rows_batched(
+                    &powers,
+                    (0..map.input_width()).map(|column| {
+                        let start = column * map.ring_dimension();
+                        let end = start + map.ring_dimension();
+                        matrix_row.get(start..end).ok_or_else(|| {
+                            AkitaError::Internal(
+                                "compression column exceeds the checked setup matrix row".into(),
+                            )
+                        })
+                    }),
+                )?;
+                evaluated_matrices.push(EvaluatedCompressionMatrix {
+                    input_width: map.input_width(),
+                    ring_dimension: map.ring_dimension(),
+                    columns,
+                });
+                evaluated_matrices.len() - 1
+            };
+            let evaluated = evaluated_matrices.get(matrix_index).ok_or_else(|| {
+                AkitaError::Internal("evaluated compression matrix cache entry is missing".into())
+            })?;
+            for column in 0..map.input_width() {
+                let start = column * map.ring_dimension();
+                weights.push(
+                    span.range().start + start,
+                    map.ring_dimension(),
+                    0,
+                    row_weight
+                        * evaluated.columns.get(column).copied().ok_or_else(|| {
+                            AkitaError::Internal(
+                                "compression column exceeds the evaluated column table".into(),
+                            )
+                        })?,
+                )?;
+            }
         } else {
-            let matrix =
-                setup
-                    .shared_matrix
-                    .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
-            let matrix_row = matrix.row_flat(0)?;
-            let powers = scalar_powers(alpha, map.ring_dimension());
-            // All columns share the powers: batched calls let a field-inline
-            // guest load each power once per block of columns.
-            let columns = dot_base_rows_batched(
-                &powers,
-                (0..map.input_width()).map(|column| {
-                    let start = column * map.ring_dimension();
-                    let end = start + map.ring_dimension();
-                    matrix_row.get(start..end).ok_or_else(|| {
-                        AkitaError::Internal(
-                            "compression column exceeds the checked setup matrix row".into(),
-                        )
-                    })
-                }),
-            )?;
-            evaluated_matrices.push(EvaluatedCompressionMatrix {
-                input_width: map.input_width(),
-                ring_dimension: map.ring_dimension(),
-                powers,
-                columns,
+            weights.deferred_maps.push(CompressionSetupMap {
+                span: span.clone(),
+                row_weight,
             });
-            evaluated_matrices.len() - 1
-        };
-        let evaluated = evaluated_matrices.get(matrix_index).ok_or_else(|| {
-            AkitaError::Internal("evaluated compression matrix cache entry is missing".into())
-        })?;
-        for column in 0..map.input_width() {
-            let start = column * map.ring_dimension();
-            weights.push(
-                span.range().start + start,
-                map.ring_dimension(),
-                0,
-                row_weight
-                    * evaluated.columns.get(column).copied().ok_or_else(|| {
-                        AkitaError::Internal(
-                            "compression column exceeds the evaluated column table".into(),
-                        )
-                    })?,
-            )?;
         }
         if let Some(successor) = successor_compression_span(witness_layout, group_index, map_index)?
         {
@@ -777,9 +837,14 @@ where
                 &row_weights,
             )?;
         }
-        let denominator = evaluated.powers.last().copied().ok_or_else(|| {
-            AkitaError::Internal("compression modulus alpha power table is empty".into())
-        })? * alpha
+        let denominator = weights
+            .alpha_powers
+            .get(map.ring_dimension() - 1)
+            .copied()
+            .ok_or_else(|| {
+                AkitaError::Internal("compression modulus alpha power table is empty".into())
+            })?
+            * alpha
             + E::one();
         for (digit, gadget) in gadget_row_scalars::<F>(
             r_decomp_levels::<F>(lp.open().digits.log_basis),
@@ -816,6 +881,7 @@ mod tests {
         for event_count in [0, 1, 3, 31, 32, 33, 64, 65] {
             let mut weights = CompressionRelationWeights {
                 events: Vec::new(),
+                deferred_maps: Vec::new(),
                 alpha_powers: (1..=16).map(F::from_u64).collect(),
                 coefficient_block_len: 2,
                 physical_field_len: 16,
@@ -845,6 +911,7 @@ mod tests {
         let physical_field_len = 1 << 16;
         let mut weights = CompressionRelationWeights {
             events: Vec::new(),
+            deferred_maps: Vec::new(),
             alpha_powers: (1..=4096).map(F::from_u64).collect(),
             coefficient_block_len: 8,
             physical_field_len,

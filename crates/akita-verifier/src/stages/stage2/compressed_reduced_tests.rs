@@ -454,10 +454,53 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
             &stage1_point,
             &point,
             witness_evaluation,
+            None,
         )
         .unwrap(),
         expected
     );
+
+    let polynomial = akita_types::setup_claims::SetupPolynomialId::new::<F, E>(
+        &setup,
+        setup
+            .shared_matrix()
+            .num_field_elements()
+            .next_power_of_two(),
+    )
+    .unwrap();
+    let mut query_count = 0;
+    let deferred_weight = prepared
+        .evaluate_with_external_setup(&point, |query| {
+            query_count += 1;
+            let value = query.evaluate_materialized(&polynomial, &setup)?;
+            let statement = akita_types::setup_claims::SetupBatchStatement::new(
+                polynomial.clone(),
+                2,
+                vec![akita_types::setup_claims::SetupClaim::new(
+                    polynomial.clone(),
+                    query.clone(),
+                    value,
+                )?],
+            )?;
+            crate::setup_batch::decide_setup_batch(&setup, &statement, &[E::one()])?;
+            let false_statement = akita_types::setup_claims::SetupBatchStatement::new(
+                polynomial.clone(),
+                2,
+                vec![akita_types::setup_claims::SetupClaim::new(
+                    polynomial.clone(),
+                    query,
+                    value + E::one(),
+                )?],
+            )?;
+            assert!(
+                crate::setup_batch::decide_setup_batch(&setup, &false_statement, &[E::one()])
+                    .is_err()
+            );
+            Ok(value)
+        })
+        .unwrap();
+    assert_eq!(deferred_weight, relation_weight);
+    assert_eq!(query_count, 1);
 
     let wrong_successor = literal_reduced_compression_table(
         &params,
@@ -517,6 +560,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
             &stage1_point,
             &point,
             tampered_witness_evaluation,
+            None,
         )
         .unwrap(),
         expected
@@ -542,6 +586,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
             &stage1_point,
             &point,
             witness_evaluation,
+            None,
         )
         .unwrap(),
         E::zero()

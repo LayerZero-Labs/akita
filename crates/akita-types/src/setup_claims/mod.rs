@@ -8,6 +8,7 @@ use akita_error::{checked, AkitaError};
 use akita_params::dispatch::field_modulus_be_bytes;
 use akita_serialization::{AkitaSerialize, Valid};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
+pub(crate) use query::NativeTerm;
 pub use query::{SetupQuery, SetupWeightTerm};
 
 pub(crate) const MAX_SETUP_QUERY_TENSOR_AXES: usize = 8;

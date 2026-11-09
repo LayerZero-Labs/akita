@@ -5,12 +5,6 @@ use akita_algebra::{
 };
 use jolt_field::{ExtField, Unreduced, Zero};
 
-#[derive(Clone, Debug)]
-struct ReducedCompressionMapEvent<E: Field> {
-    span: CompressionWitnessSpan,
-    row_weight: E,
-}
-
 /// Checked physical/setup-column view for one canonical compression map.
 struct CompressionMapColumns<'a, F> {
     row: &'a [F],
@@ -131,65 +125,24 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
                 "reduced compression high point exceeds the checked point dimension".into(),
             )
         })?;
-        let low_equality = EqPolynomial::evals(low_point)?;
         let high_equality = OffsetEqWindow::new(high_point)?;
-        if low_equality.len() != ring_dimension {
-            return Err(AkitaError::Internal(
-                "reduced compression equality table disagrees with the ring dimension".into(),
-            ));
-        }
-        let residue_point = ResidueKernelPoint::new(alpha, ring_dimension)?;
         let low_offset = columns.physical_start % ring_dimension;
-        // Compression maps have few columns, while each column already uses a
-        // tight residue dot product. Dispatching these short loops through
-        // Rayon costs more than it saves in multi-threaded verification.
-        let column_evaluations = if low_offset == 0 {
-            let kernel = residue_point.field_kernel(&low_equality)?;
-            let values = dot_base_rows_batched(
-                &kernel,
-                (0..columns.input_width).map(|column| Ok(columns.column(column)?.1)),
-            )?;
-            ReducedCompressionColumnEvaluations::Aligned(values)
+        let kernels = setup_query::coefficient_kernels(
+            alpha,
+            low_point,
+            low_offset,
+            CompressionSetupMode::ReducedEvaluation,
+        )?;
+        let first_kernel = kernels.first().ok_or(AkitaError::InvalidProof)?;
+        let column_rows = || (0..columns.input_width).map(|column| Ok(columns.column(column)?.1));
+        let first = dot_base_rows_batched(first_kernel, column_rows())?;
+        let column_evaluations = if let Some(second_kernel) = kernels.get(1) {
+            let second = dot_base_rows_batched(second_kernel, column_rows())?;
+            ReducedCompressionColumnEvaluations::Split(
+                first.into_iter().zip(second).map(|(a, b)| [a, b]).collect(),
+            )
         } else {
-            let first_len = ring_dimension.checked_sub(low_offset).ok_or_else(|| {
-                AkitaError::Internal(
-                    "reduced compression low offset exceeds the ring dimension".into(),
-                )
-            })?;
-            let mut first_equality = vec![E::zero(); ring_dimension];
-            let mut second_equality = vec![E::zero(); ring_dimension];
-            first_equality
-                .get_mut(..first_len)
-                .ok_or_else(|| {
-                    AkitaError::Internal(
-                        "reduced compression first equality destination is too short".into(),
-                    )
-                })?
-                .copy_from_slice(low_equality.get(low_offset..).ok_or_else(|| {
-                    AkitaError::Internal(
-                        "reduced compression first equality source is too short".into(),
-                    )
-                })?);
-            second_equality
-                .get_mut(first_len..)
-                .ok_or_else(|| {
-                    AkitaError::Internal(
-                        "reduced compression second equality destination is too short".into(),
-                    )
-                })?
-                .copy_from_slice(low_equality.get(..low_offset).ok_or_else(|| {
-                    AkitaError::Internal(
-                        "reduced compression second equality source is too short".into(),
-                    )
-                })?);
-            let first_kernel = residue_point.field_kernel(&first_equality)?;
-            let second_kernel = residue_point.field_kernel(&second_equality)?;
-            let column_rows =
-                || (0..columns.input_width).map(|column| Ok(columns.column(column)?.1));
-            let first = dot_base_rows_batched(&first_kernel, column_rows())?;
-            let second = dot_base_rows_batched(&second_kernel, column_rows())?;
-            let values = first.into_iter().zip(second).map(|(a, b)| [a, b]).collect();
-            ReducedCompressionColumnEvaluations::Split(values)
+            ReducedCompressionColumnEvaluations::Aligned(first)
         };
         Ok(Self {
             input_width: columns.input_width,
@@ -286,7 +239,7 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
 #[derive(Clone, Debug)]
 pub struct ReducedCompressionRelationWeights<E: Field> {
     linear: CompressionRelationWeights<E>,
-    maps: Vec<ReducedCompressionMapEvent<E>>,
+    maps: Vec<CompressionSetupMap<E>>,
     alpha: E,
 }
 
@@ -336,6 +289,26 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
             }
         }
         Ok(())
+    }
+
+    /// Evaluate known recomposition terms and defer one combined F/H setup query.
+    pub fn evaluate_with_external_setup(
+        &self,
+        point: &[E],
+        mut resolve: impl FnMut(crate::setup_claims::SetupQuery<E>) -> Result<E, AkitaError>,
+    ) -> Result<E, AkitaError> {
+        let linear = self.linear.evaluate_at_point(point)?;
+        if self.maps.is_empty() {
+            return Ok(linear);
+        }
+        let query = setup_query::compression_setup_query(
+            self.alpha,
+            point,
+            self.linear.physical_field_len,
+            CompressionSetupMode::ReducedEvaluation,
+            &self.maps,
+        )?;
+        Ok(linear + resolve(query)?)
     }
 
     /// Evaluate the complete reduced compression relation at one full witness
@@ -433,6 +406,7 @@ where
         })?;
     let mut linear = CompressionRelationWeights {
         events: Vec::new(),
+        deferred_maps: Vec::new(),
         alpha_powers: scalar_powers(alpha, maximum_dimension),
         coefficient_block_len,
         physical_field_len,
@@ -476,7 +450,7 @@ where
                 "reduced compression row exceeds the generated row weight table".into(),
             )
         })?;
-        maps.push(ReducedCompressionMapEvent {
+        maps.push(CompressionSetupMap {
             span: span.clone(),
             row_weight,
         });
@@ -693,11 +667,12 @@ mod tests {
         let program_for = |span: &CompressionWitnessSpan| ReducedCompressionRelationWeights {
             linear: CompressionRelationWeights {
                 events: Vec::new(),
+                deferred_maps: Vec::new(),
                 alpha_powers: Vec::new(),
                 coefficient_block_len: 1,
                 physical_field_len: 2048,
             },
-            maps: vec![ReducedCompressionMapEvent {
+            maps: vec![CompressionSetupMap {
                 span: span.clone(),
                 row_weight,
             }],

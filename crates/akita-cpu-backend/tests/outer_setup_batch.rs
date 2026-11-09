@@ -345,7 +345,7 @@ where
         )
         .unwrap();
     let pending = collected.into_pending();
-    let direct_folds = (0..levels - 1)
+    let exported_claims = (0..levels - 1)
         .filter(|&level| {
             row.schedule()
                 .recursive_folds
@@ -353,15 +353,21 @@ where
                 .is_none_or(|next| next.params.setup_prefix().is_none())
         })
         .count();
-    assert_eq!(pending.len(), direct_folds);
+    let ordinary_setup_claims = exported_claims;
+    let compression_setup_claims = std::iter::once(row.schedule().root_fold())
+        .chain(row.schedule().recursive_folds.iter())
+        .filter(|fold| fold.params.payload_mode.is_compressed())
+        .count();
+    let exported_claims = ordinary_setup_claims + compression_setup_claims;
+    assert_eq!(pending.len(), exported_claims);
     assert_eq!(
         advice.calls,
         pending.len(),
-        "only direct setup evaluations are exported"
+        "direct relation and compression setup evaluations are exported"
     );
     if offloaded {
         assert!(
-            pending.len() < levels - 1,
+            ordinary_setup_claims < levels - 1,
             "checked Stage 3 inputs must not be exported"
         );
         assert!(
@@ -486,7 +492,7 @@ where
 
     assert_eq!(
         carried.len(),
-        direct_folds
+        exported_claims
             + if offloaded {
                 0
             } else {
@@ -532,7 +538,7 @@ where
             .unwrap();
         assert_eq!(
             deferred.into_pending().len(),
-            direct_folds,
+            exported_claims,
             "recursive generations must not retain their inherited input lists"
         );
     }
@@ -587,7 +593,7 @@ where
         ));
         assert_eq!(
             carried.into_pending().len(),
-            inherited.claims().len() + direct_folds
+            inherited.claims().len() + exported_claims
         );
         assert_eq!(
             advice.calls - advice_calls_before_direct,
@@ -633,7 +639,7 @@ where
             if !defer {
                 0
             } else {
-                direct_folds
+                exported_claims
                     + if offloaded {
                         0
                     } else {
@@ -658,7 +664,7 @@ where
     }
     assert_eq!(
         collected.into_pending().len(),
-        2 * direct_folds,
+        2 * exported_claims,
         "rollback must preserve existing pending claims and discard only failed replay output"
     );
     let mut changed = inherited.claims().to_vec();
