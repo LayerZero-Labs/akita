@@ -15,8 +15,8 @@ use akita_types::binary_source::{
 use akita_types::native_root_relation::NativeRootWeights;
 use akita_types::{AkitaSetupDescriptor, Commitment, FpExtEncoding};
 use jolt_field::{
-    AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
-    Unreduced,
+    AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne,
+    Ring, Unreduced, WithCommitAccumulator,
 };
 use jolt_poly::UnivariatePoly;
 use std::any::Any;
@@ -164,7 +164,13 @@ pub(crate) struct FaultBackend<F: Field, E> {
 
 impl<F, E> FaultBackend<F, E>
 where
-    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + PseudoMersenne
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
     F::Wide: From<F> + AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>

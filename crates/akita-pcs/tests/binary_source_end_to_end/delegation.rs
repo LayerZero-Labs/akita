@@ -268,7 +268,13 @@ where
 
 impl<F, E> OpaqueWitnessCommitKernel<F, E> for FaultBackend<F, E>
 where
-    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + PseudoMersenne
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
     F::Wide: From<F> + AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
