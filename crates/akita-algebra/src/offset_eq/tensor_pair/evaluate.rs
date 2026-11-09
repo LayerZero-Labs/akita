@@ -1,5 +1,6 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
+mod grouping;
 mod unit_intervals;
 
 use super::{
@@ -8,12 +9,10 @@ use super::{
 use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
 use akita_error::{checked, AkitaError};
-use std::collections::{btree_map::Entry, BTreeMap};
+use std::collections::BTreeMap;
 
 #[cfg(test)]
 mod grouping_tests;
-
-const MAX_WEIGHTED_BATCH_GROUPS: usize = 16;
 
 /// Evaluate tensor-native paired Boolean-basis families.
 ///
@@ -51,8 +50,7 @@ pub(super) fn eval_unfactored_tensor_families<
         .flat_map(|family| &family.axes)
         .try_for_each(EqPairTensorAxis::validate_weights)?;
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
-    let mut multi_axis_batches =
-        BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<Vec<&EqPairTensorFamily<F>>>>::new();
+    let mut multi_axis_batches = grouping::RecurrenceBatches::new();
     let mut scalar_seeds = Vec::new();
     let mut acc = F::zero();
     for family in families {
@@ -86,74 +84,15 @@ pub(super) fn eval_unfactored_tensor_families<
                 .is_some_and(|axis| matches!(axis.weights, EqPairTensorWeights::BitProduct(_)))
         });
         if recurrence_axes.len() >= 2 || has_factored_weights {
-            let recurrence_geometry = recurrence_axes
-                .iter()
-                .map(|&axis_index| {
-                    let axis = family.axes.get(axis_index).ok_or_else(|| {
-                        AkitaError::Internal("selected tensor recurrence axis is absent".into())
-                    })?;
-                    Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            charge_work(work, recurrence_geometry.len())?;
-            charge_work(
+            if let Some(singleton) = grouping::queue_or_singleton::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                left_challenges,
+                right_challenges,
+                family,
+                &recurrence_axes,
+                &mut multi_axis_batches,
                 work,
-                1 + (usize::BITS - multi_axis_batches.len().leading_zeros()) as usize,
-            )?;
-            match multi_axis_batches.entry(recurrence_geometry) {
-                Entry::Vacant(entry) => {
-                    charge_work(work, 1)?;
-                    entry.insert(vec![vec![family]]);
-                }
-                Entry::Occupied(mut entry) => {
-                    let mut matched = false;
-                    // Keep at most this many weight groups per geometry. Once
-                    // full, unmatched families use the singleton recurrence.
-                    for batch in entry.get_mut().iter_mut() {
-                        let first = batch.first().ok_or_else(|| {
-                            AkitaError::Internal("tensor recurrence batch is empty".into())
-                        })?;
-                        let mut equal = true;
-                        for &index in &recurrence_axes {
-                            let axis = family.axes.get(index).ok_or_else(|| {
-                                AkitaError::Internal(
-                                    "selected tensor recurrence axis is absent".into(),
-                                )
-                            })?;
-                            let terms = match &axis.weights {
-                                EqPairTensorWeights::Unit => 0,
-                                EqPairTensorWeights::Dense(weights) => weights.len(),
-                                EqPairTensorWeights::BitProduct(factors) => factors.len(),
-                            };
-                            charge_work(work, 1)?;
-                            charge_work(work, terms)?;
-                            if first.axes.get(index) != Some(axis) {
-                                equal = false;
-                                break;
-                            }
-                        }
-                        if equal {
-                            charge_work(work, 1)?;
-                            batch.push(family);
-                            matched = true;
-                            break;
-                        }
-                    }
-                    if !matched {
-                        if entry.get().len() < MAX_WEIGHTED_BATCH_GROUPS {
-                            charge_work(work, 1)?;
-                            entry.get_mut().push(vec![family]);
-                        } else {
-                            acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                                left_challenges,
-                                right_challenges,
-                                &[family],
-                                entry.key(),
-                                work,
-                            )?;
-                        }
-                    }
-                }
+            )? {
+                acc += singleton;
             }
             continue;
         }
