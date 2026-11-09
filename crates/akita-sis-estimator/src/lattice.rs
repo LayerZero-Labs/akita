@@ -380,7 +380,7 @@ fn dilithium_log_trial_probability(
     let idx_end = profile
         .iter()
         .rposition(|value| value.sqrt() > 1.0 + UNIT_VECTOR_TOLERANCE)
-        .map_or(profile.len() - 1, |index| index);
+        .unwrap_or(profile.len() - 1);
     let gaussian_coords = (idx_end - idx_start + 1).max(sieve_dim as usize) as f64;
     let log2_sigma = 0.5 * log2_positive(profile[idx_start]) - 0.5 * log2_positive(gaussian_coords);
     let log2_erf_arg = log2_positive(length_bound) - 0.5 - log2_sigma;

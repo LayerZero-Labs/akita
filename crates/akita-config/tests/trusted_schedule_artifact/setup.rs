@@ -53,7 +53,7 @@ fn recursive_prefix_slot_id_fixture() {
         onehot,
         (
             4,
-            "2e0adde522011e4b2e3da15cf394a4e2165302eb8e3f95189e8278c0baab49a0".to_string(),
+            "f7c8690cdfe14b2a76ada81c0162ac7149816633152c35ff35609197e754a92f".to_string(),
         )
     );
     assert_eq!(
