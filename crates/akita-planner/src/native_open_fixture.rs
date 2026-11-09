@@ -98,28 +98,66 @@ pub(crate) fn opening() -> &'static Opening {
 
 fn build() -> Opening {
     let fixture = actual_profiles::actual_fixture();
-    let requirements = NativeSetupRequirements::<Field>::from_catalog(
-        &fixture.catalog, 22, 16, &fixture.bindings,
-    ).unwrap();
+    let requirements =
+        NativeSetupRequirements::<Field>::from_catalog(&fixture.catalog, 22, 16, &fixture.bindings)
+            .unwrap();
     let setup = akita_cpu_backend::AkitaProverSetup::generate_with_capacity(
-        22, 16, requirements.requirements().matrix_capacity(),
-    ).unwrap();
-    let binding = requirements.bind_setup(
-        setup.expanded.descriptor().clone(), requirements.requirements().prefix_slot_ids(),
-    ).unwrap().remove(0).1;
-    assert_eq!(binding.parts().iter().map(|(range, _)| range.start).collect::<Vec<_>>(),
-        [0, 140_416, 280_832, 421_248]);
+        22,
+        16,
+        requirements.requirements().matrix_capacity(),
+    )
+    .unwrap();
+    let binding = requirements
+        .bind_setup(
+            setup.expanded.descriptor().clone(),
+            requirements.requirements().prefix_slot_ids(),
+        )
+        .unwrap()
+        .remove(0)
+        .1;
+    assert_eq!(
+        binding
+            .parts()
+            .iter()
+            .map(|(range, _)| range.start)
+            .collect::<Vec<_>>(),
+        [0, 140_416, 280_832, 421_248]
+    );
     assert_eq!(binding.natural_len(), 561_664);
     assert_eq!(binding.first().n_prefix().unwrap(), 1_048_576);
-    assert_eq!(binding.plan().d_payload_ranges().unwrap().last().unwrap().end, 512);
-    assert_eq!(binding.plan().binary().iter().map(|binary| {
-        let descriptor = binary.source().manifest.descriptor();
-        descriptor.index_map().columns() * descriptor.polynomials().len()
-    }).collect::<Vec<_>>(), [2, 2, 2, 2]);
+    assert_eq!(
+        binding
+            .plan()
+            .d_payload_ranges()
+            .unwrap()
+            .last()
+            .unwrap()
+            .end,
+        512
+    );
+    assert_eq!(
+        binding
+            .plan()
+            .binary()
+            .iter()
+            .map(|binary| {
+                let descriptor = binary.source().manifest.descriptor();
+                descriptor.index_map().columns() * descriptor.polynomials().len()
+            })
+            .collect::<Vec<_>>(),
+        [2, 2, 2, 2]
+    );
     let backend = Arc::new(CpuBackend::<Field, E>::new(setup.expanded.clone()).unwrap());
-    let later = requirements.requirements().prefix_slot_ids().iter()
-        .filter(|id| *id != binding.first()).cloned().collect::<Vec<_>>();
-    let prefixes = backend.prepare_grouped_typed_prefixes(&binding, &later).unwrap();
+    let later = requirements
+        .requirements()
+        .prefix_slot_ids()
+        .iter()
+        .filter(|id| *id != binding.first())
+        .cloned()
+        .collect::<Vec<_>>();
+    let prefixes = backend
+        .prepare_grouped_typed_prefixes(&binding, &later)
+        .unwrap();
     let mut public = akita_types::SetupPrefixVerifierRegistry::new(
         setup.expanded.descriptor().setup_seed.clone(),
     );
@@ -127,9 +165,13 @@ fn build() -> Opening {
         public.insert(slot.clone()).unwrap();
     }
     let ordinary = AkitaVerifierSetup::from_parts(setup.expanded.clone(), public).unwrap();
-    let verifier_setup = backend.prepare_grouped_typed_verifier_setup(
-        &ordinary, &binding, &prefixes.get(binding.first()).unwrap().public,
-    ).unwrap();
+    let verifier_setup = backend
+        .prepare_grouped_typed_verifier_setup(
+            &ordinary,
+            &binding,
+            &prefixes.get(binding.first()).unwrap().public,
+        )
+        .unwrap();
     binding.validate_verifier_setup(&verifier_setup).unwrap();
     let mut groups = Vec::new();
     let mut handles = Vec::new();
@@ -137,9 +179,13 @@ fn build() -> Opening {
     for (group, binary) in binding.plan().binary().iter().enumerate() {
         let source = binary.source();
         let descriptor = source.manifest.descriptor();
-        let imported = backend.import_binary_source(
-            source.manifest.clone(), source.carrier, vec![native_source_data::words(group)],
-        ).unwrap();
+        let imported = backend
+            .import_binary_source(
+                source.manifest.clone(),
+                source.carrier,
+                vec![native_source_data::words(group)],
+            )
+            .unwrap();
         let frozen = (!preceding.is_empty()).then(|| {
             akita_params::PrecommittedGroupProfiles::from_profiles(preceding.clone()).unwrap()
         });
@@ -149,77 +195,132 @@ fn build() -> Opening {
             }
             None => GroupContext::explicit(&source.carrier),
         };
-        let committed = backend.commit(&fixture.catalog, &imported, context).unwrap();
+        let committed = backend
+            .commit(&fixture.catalog, &imported, context)
+            .unwrap();
         let word = native_source_data::word(descriptor, &native_source_data::words(group));
-        groups.push(PolynomialGroupClaims::new_binary_planes(
-            committed.committed_group, Some(word), source.prime.claims().to_vec(),
-        ).unwrap());
+        groups.push(
+            PolynomialGroupClaims::new_binary_planes(
+                committed.committed_group,
+                Some(word),
+                source.prime.claims().to_vec(),
+            )
+            .unwrap(),
+        );
         handles.push(committed.private_handle);
         preceding.push(source.carrier);
     }
-    for (index, signed) in binding.plan().ordinary().unwrap().plans().iter().enumerate() {
+    for (index, signed) in binding
+        .plan()
+        .ordinary()
+        .unwrap()
+        .plans()
+        .iter()
+        .enumerate()
+    {
         let profile = signed.profile();
         let offset = signed.source_width().unwrap().offset() as i128;
-        let values = (0..profile.group.num_polynomials()).map(|slot| {
-            (0..1usize << profile.group.num_vars()).map(|i| {
-                Field::from_i128(match (i + slot) % 4 {
-                    0 => -offset, 1 => offset - 1, 2 => -1, _ => 0,
-                })
-            }).collect::<Vec<_>>()
-        }).collect::<Vec<_>>();
-        let source = backend.import_source(values.iter().map(|values| {
-            DensePoly::from_field_evals(profile.group.num_vars(), values).unwrap()
-        }).collect()).unwrap();
+        let values = (0..profile.group.num_polynomials())
+            .map(|slot| {
+                (0..1usize << profile.group.num_vars())
+                    .map(|i| {
+                        Field::from_i128(match (i + slot) % 4 {
+                            0 => -offset,
+                            1 => offset - 1,
+                            2 => -1,
+                            _ => 0,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let source = backend
+            .import_source(
+                values
+                    .iter()
+                    .map(|values| {
+                        DensePoly::from_field_evals(profile.group.num_vars(), values).unwrap()
+                    })
+                    .collect(),
+            )
+            .unwrap();
         macro_rules! commit {
             ($width:literal) => {{
                 let producer = TrustedScheduleCatalog::<Producer<$width>>::new(
-                    fixture.catalog.catalog().clone(), ChunkedWitnessCfg::default_non_chunked(),
-                ).unwrap();
-                let frozen = akita_params::PrecommittedGroupProfiles::from_profiles(
-                    preceding.clone(),
-                ).unwrap();
-                backend.commit(&producer, &source,
-                    GroupContext::explicit_with_precommitted_groups(profile, &frozen),
-                ).unwrap()
+                    fixture.catalog.catalog().clone(),
+                    ChunkedWitnessCfg::default_non_chunked(),
+                )
+                .unwrap();
+                let frozen =
+                    akita_params::PrecommittedGroupProfiles::from_profiles(preceding.clone())
+                        .unwrap();
+                backend
+                    .commit(
+                        &producer,
+                        &source,
+                        GroupContext::explicit_with_precommitted_groups(profile, &frozen),
+                    )
+                    .unwrap()
             }};
         }
         let committed = match index {
-            0 => commit!(2), 1 => commit!(9), 2 => commit!(18), 3 => commit!(33),
+            0 => commit!(2),
+            1 => commit!(9),
+            2 => commit!(18),
+            3 => commit!(33),
             _ => unreachable!(),
         };
         let points = [vec![ext::<E>([2, 3]); 13], vec![ext::<E>([2, 4]); 13]];
         let readings = points.each_ref().map(|point| {
             let eq = EqPolynomial::evals(point).unwrap();
-            values.iter().map(|values| values.iter().zip(&eq)
-                .fold(E::zero(), |sum, (&v, &weight)| {
-                    sum + ext::<E>([v.to_u128_checked().unwrap() as u64, 0]) * weight
-                })).collect()
+            values
+                .iter()
+                .map(|values| {
+                    values
+                        .iter()
+                        .zip(&eq)
+                        .fold(E::zero(), |sum, (&v, &weight)| {
+                            sum + ext::<E>([v.to_u128_checked().unwrap() as u64, 0]) * weight
+                        })
+                })
+                .collect()
         });
-        groups.push(PolynomialGroupClaims::new_two_points(
-            points, readings, committed.committed_group,
-        ).unwrap());
+        groups.push(
+            PolynomialGroupClaims::new_two_points(points, readings, committed.committed_group)
+                .unwrap(),
+        );
         handles.push(committed.private_handle);
         preceding.push(*profile);
     }
     let claims = OpeningClaims::from_groups(groups).unwrap();
     let mut opening = Opening {
-        fixture, binding, setup: verifier_setup, claims, proof: Vec::new(),
-        backend, prefixes, handles,
+        fixture,
+        binding,
+        setup: verifier_setup,
+        claims,
+        proof: Vec::new(),
+        backend,
+        prefixes,
+        handles,
     };
-    opening.proof = opening.prove_with(opening.backend.as_ref(), &opening.claims).unwrap();
-    opening.verify(&opening.claims, &opening.setup, &opening.proof).unwrap();
+    opening.proof = opening
+        .prove_with(opening.backend.as_ref(), &opening.claims)
+        .unwrap();
+    opening
+        .verify(&opening.claims, &opening.setup, &opening.proof)
+        .unwrap();
     opening
 }
 
 impl Opening {
-    pub(crate) fn prove_with<B>(
-        &self, backend: &B, claims: &Claims,
-    ) -> Result<Vec<u8>, AkitaError>
+    pub(crate) fn prove_with<B>(&self, backend: &B, claims: &Claims) -> Result<Vec<u8>, AkitaError>
     where
         B: akita_prover::backend::ProverBackend<Field, E, CommitmentHandle = Handle> + 'static,
     {
         let data = SelectedProverOpeningData::from_committed_claims::<Config>(
-            claims.clone(), self.handles.clone(), &self.fixture.catalog,
+            claims.clone(),
+            self.handles.clone(),
+            &self.fixture.catalog,
         )?;
         let row = self.fixture.catalog.resolve_selection(data.selection())?;
         let mut registry = BackendRegistry::<Config>::new()?;
@@ -227,25 +328,47 @@ impl Opening {
         let mut route = FixedFoldRoute::new(vec![id; row.schedule().num_fold_levels()]);
         let mut channel = akita_transcript::new_prover_channel(b"staged-four-group-p64");
         akita_prover::batched_prove_embedded::<Config, _>(
-            self.setup.expanded().descriptor(), &self.fixture.catalog, &registry, data,
-            &mut channel, BasisMode::Lagrange, &mut route,
+            self.setup.expanded().descriptor(),
+            &self.fixture.catalog,
+            &registry,
+            data,
+            &mut channel,
+            BasisMode::Lagrange,
+            &mut route,
         )?;
         Ok(channel.narg_string().to_vec())
     }
 
     pub(crate) fn verify(
-        &self, claims: &Claims, setup: &AkitaVerifierSetup<Field>, proof: &[u8],
+        &self,
+        claims: &Claims,
+        setup: &AkitaVerifierSetup<Field>,
+        proof: &[u8],
     ) -> Result<(), AkitaError> {
-        let claims = OpeningClaims::from_groups(claims.groups().iter()
-            .map(|group| group.map_commitment(|_| group.commitment())).collect())?;
+        let claims = OpeningClaims::from_groups(
+            claims
+                .groups()
+                .iter()
+                .map(|group| group.map_commitment(|_| group.commitment()))
+                .collect(),
+        )?;
         let statement = GroupBatchStatement::new(self.fixture.bindings[0].0, claims)?;
         let verifier = akita_verifier::AkitaVerifier::<Config>::for_selection(
-            setup.clone(), self.fixture.catalog.clone(), self.fixture.bindings[0].0, None,
+            setup.clone(),
+            self.fixture.catalog.clone(),
+            self.fixture.bindings[0].0,
+            None,
         )?;
         let _no_a_reads = akita_types::binary_source::BinaryAReadGuard::forbid();
         let mut channel = akita_transcript::new_verifier_channel(b"staged-four-group-p64", proof);
-        verifier.batched_verify_embedded(&mut channel, statement, BasisMode::Lagrange,
-            akita_verifier::SetupPolicy::Check(None),
-        )?.check_eof(channel).map(|_| ())
+        verifier
+            .batched_verify_embedded(
+                &mut channel,
+                statement,
+                BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
+            )?
+            .check_eof(channel)
+            .map(|_| ())
     }
 }

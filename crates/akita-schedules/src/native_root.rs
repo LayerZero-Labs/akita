@@ -30,23 +30,39 @@ impl NativeRootSources {
     ) -> Result<Self, AkitaError> {
         profiles.validate(64)?;
         if profiles.precommitteds.len() != 7 || identity.is_empty() || identity.len() > 1 << 20 {
-            return Err(AkitaError::InvalidSetup("invalid grouped source inventory".into()));
+            return Err(AkitaError::InvalidSetup(
+                "invalid grouped source inventory".into(),
+            ));
         }
-        for (profile, width) in profiles.precommitteds.iter().skip(4)
-            .chain(std::iter::once(&profiles.final_group)).zip(signed_widths)
+        for (profile, width) in profiles
+            .precommitteds
+            .iter()
+            .skip(4)
+            .chain(std::iter::once(&profiles.final_group))
+            .zip(signed_widths)
         {
             width.validate_profile(profile)?;
         }
-        for profile in profiles.precommitteds.iter().chain(std::iter::once(&profiles.final_group)) {
+        for profile in profiles
+            .precommitteds
+            .iter()
+            .chain(std::iter::once(&profiles.final_group))
+        {
             if profile.inner.matrix.sis_modulus_profile()
                 != akita_params::SisModulusProfileId::Q64Offset59
                 || profile.outer.matrix.sis_modulus_profile()
                     != akita_params::SisModulusProfileId::Q64Offset59
             {
-                return Err(AkitaError::InvalidSetup("grouped source field mismatch".into()));
+                return Err(AkitaError::InvalidSetup(
+                    "grouped source field mismatch".into(),
+                ));
             }
         }
-        Ok(Self { profiles, signed_widths, identity })
+        Ok(Self {
+            profiles,
+            signed_widths,
+            identity,
+        })
     }
 
     pub fn profiles(&self) -> &CommittedGroupBatchProfile {

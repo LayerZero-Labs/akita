@@ -31,17 +31,20 @@ impl BinaryTypedPrefix {
         }
         let equality = OffsetEqWindow::new(root_point)?;
         let mut weights = Vec::new();
-        weights.try_reserve_exact(self.natural_len).map_err(|_| AkitaError::InvalidProof)?;
+        weights
+            .try_reserve_exact(self.natural_len)
+            .map_err(|_| AkitaError::InvalidProof)?;
         weights.resize(self.natural_len, E::zero());
         let adjoint = TrinomialAdjoint::<A_DEGREE, MinusTrinomial>::new()?;
         for row in 0..self.a.rows {
             for owner in 0..owners {
-                let element = checked::mul_add(owner, self.a.rows, row)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let element =
+                    checked::mul_add(owner, self.a.rows, row).ok_or(AkitaError::InvalidProof)?;
                 let mut response = [E::zero(); A_DEGREE];
                 for (coefficient, weight) in response.iter_mut().enumerate() {
-                    for (address, power) in plan.repacking()
-                        .coefficient_weights(0, element, coefficient, E::one())?
+                    for (address, power) in
+                        plan.repacking()
+                            .coefficient_weights(0, element, coefficient, E::one())?
                     {
                         let address = checked::sum([source_offset, address])
                             .ok_or(AkitaError::InvalidProof)?;
@@ -51,15 +54,17 @@ impl BinaryTypedPrefix {
                 for rank in 0..plan.rank() {
                     let index = checked::mul_add(owner, plan.rank(), rank)
                         .ok_or(AkitaError::InvalidProof)?;
-                    let coefficients = adjoint.apply(
-                        rho.get(index).ok_or(AkitaError::InvalidProof)?, &response,
-                    )?;
+                    let coefficients = adjoint
+                        .apply(rho.get(index).ok_or(AkitaError::InvalidProof)?, &response)?;
                     let start = checked::product([row, self.a.row_stride])
                         .and_then(|start| checked::mul_add(rank, A_STRIDE, start))
                         .ok_or(AkitaError::InvalidProof)?;
                     let range = checked::range(start, A_DEGREE).ok_or(AkitaError::InvalidProof)?;
-                    for (target, value) in weights.get_mut(range).ok_or(AkitaError::InvalidProof)?
-                        .iter_mut().zip(coefficients)
+                    for (target, value) in weights
+                        .get_mut(range)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .iter_mut()
+                        .zip(coefficients)
                     {
                         *target += value;
                     }
@@ -76,12 +81,15 @@ impl BinaryTypedPrefix {
             for (slot, value) in values.iter_mut().enumerate() {
                 if let Some(address) = segment.address(q, j, slot) {
                     let address = checked::sum([source_offset, address])
-                        .filter(|&address| address < domain).ok_or(AkitaError::InvalidProof)?;
+                        .filter(|&address| address < domain)
+                        .ok_or(AkitaError::InvalidProof)?;
                     *value = equality.eval(address);
                 }
             }
             kernel.field_kernel_into(&values, cells)?;
-            let batch = *batches.get(segment.role).and_then(|rows| rows.get(row))
+            let batch = *batches
+                .get(segment.role)
+                .and_then(|rows| rows.get(row))
                 .ok_or(AkitaError::InvalidProof)?;
             for value in cells {
                 *value *= batch;

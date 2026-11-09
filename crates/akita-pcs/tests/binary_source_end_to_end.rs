@@ -4,11 +4,11 @@
 #[path = "binary_source_end_to_end/byte_contract.rs"]
 mod byte_contract;
 mod common;
-#[path = "binary_source_end_to_end/grouped.rs"]
-mod grouped;
 #[cfg(feature = "transcript-keccak")]
 #[path = "binary_source_end_to_end/compatibility.rs"]
 mod compatibility;
+#[path = "binary_source_end_to_end/grouped.rs"]
+mod grouped;
 // Shared fault variants are exercised across separate integration targets.
 #[allow(dead_code)]
 #[path = "binary_source_end_to_end/fault_backend.rs"]

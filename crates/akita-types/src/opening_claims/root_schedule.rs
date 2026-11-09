@@ -26,16 +26,22 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
             let mut coordinates = Vec::new();
             let binary_count = if self.num_groups() == 8 { 4 } else { 1 };
             for group in self.groups().iter().take(binary_count) {
-                let super::GroupClaimKind::Binary { manifest: source, .. } = group.kind() else {
+                let super::GroupClaimKind::Binary {
+                    manifest: source, ..
+                } = group.kind()
+                else {
                     return Err(AkitaError::InvalidProof);
                 };
                 if source.field_profile() != manifest.field_profile() {
                     return Err(AkitaError::InvalidProof);
                 }
-                coordinates.push(akita_error::checked::product([
-                    source.descriptor().index_map().columns(),
-                    source.descriptor().polynomials().len(),
-                ]).ok_or(AkitaError::InvalidProof)?);
+                coordinates.push(
+                    akita_error::checked::product([
+                        source.descriptor().index_map().columns(),
+                        source.descriptor().polynomials().len(),
+                    ])
+                    .ok_or(AkitaError::InvalidProof)?,
+                );
             }
             return crate::binary_source::binary_root_grinding_plan(
                 &ordinary,

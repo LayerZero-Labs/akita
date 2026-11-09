@@ -27,10 +27,15 @@ where
             .group_index()
             .and_then(|group| u64::try_from(group).ok())
             != Some(source.manifest.setup_group())
-        || schedule.root.params.group_params(
-            &root_layout,
-            context.group_index().ok_or(AkitaError::InvalidProof)?,
-        )?.profile != source.carrier_profile
+        || schedule
+            .root
+            .params
+            .group_params(
+                &root_layout,
+                context.group_index().ok_or(AkitaError::InvalidProof)?,
+            )?
+            .profile
+            != source.carrier_profile
         || handle.committed.parameters != source.carrier_profile
         || handle.committed.retained.is_some()
     {

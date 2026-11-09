@@ -14,11 +14,14 @@ pub(crate) fn actual_fixture() -> &'static Fixture {
         let original = &old.bindings[0].1;
         let (binary, signed) = sources();
         let plan = GroupedNativeRootPlan::new(
-            &binary, &signed, original.plan().repacking().destination_ring_dimension(),
-        ).unwrap();
-        let capacity = GroupedPrefixCapacity::new(
-            &plan, *original.successor(), original.first().clone(),
-        ).unwrap();
+            &binary,
+            &signed,
+            original.plan().repacking().destination_ring_dimension(),
+        )
+        .unwrap();
+        let capacity =
+            GroupedPrefixCapacity::new(&plan, *original.successor(), original.first().clone())
+                .unwrap();
         let plan = capacity.plan();
         let signed = plan.ordinary().unwrap();
         let profiles = CommittedGroupBatchProfile::from_profiles(
@@ -118,7 +121,11 @@ pub(crate) fn actual_fixture() -> &'static Fixture {
             ChunkedWitnessCfg::default_non_chunked(),
         )
         .unwrap();
-        let selection = catalog.rows().find(|row| row.is_native_root()).unwrap().selection();
+        let selection = catalog
+            .rows()
+            .find(|row| row.is_native_root())
+            .unwrap()
+            .selection();
         Fixture {
             catalog,
             bindings: vec![(selection, capacity)],
@@ -128,19 +135,28 @@ pub(crate) fn actual_fixture() -> &'static Fixture {
 
 pub(crate) fn sources() -> (
     Vec<akita_types::binary_source::GroupedBinarySource>,
-    Vec<(akita_params::GroupCommitPhaseParams, akita_params::ordinary_source::OrdinarySourceWidth)>,
+    Vec<(
+        akita_params::GroupCommitPhaseParams,
+        akita_params::ordinary_source::OrdinarySourceWidth,
+    )>,
 ) {
     let (mut binary, signed) = grouped_suffix_sources_fixture();
     for (group, source) in binary.iter_mut().enumerate() {
         let words = native_source_data::words(group);
         let mut claims = source.prime.claims().to_vec();
         for claim in &mut claims {
-            native_source_data::prime(source.manifest.descriptor().index_map().word_width(),
-                &words, claim);
+            native_source_data::prime(
+                source.manifest.descriptor().index_map().word_width(),
+                &words,
+                claim,
+            );
         }
         source.prime = akita_types::binary_source::PrimePlaneManifest::with_field_profile(
-            source.manifest.descriptor(), claims, source.manifest.field_profile(),
-        ).unwrap();
+            source.manifest.descriptor(),
+            claims,
+            source.manifest.field_profile(),
+        )
+        .unwrap();
     }
     (binary, signed)
 }

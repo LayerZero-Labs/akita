@@ -192,7 +192,9 @@ impl GroupedNativeRootPlan {
         let mut end = 0;
         for binary in &self.binary {
             let source = binary.source();
-            let label = source.manifest.d_label(source.word, source.prime.planes().len())?;
+            let label = source
+                .manifest
+                .d_label(source.word, source.prime.planes().len())?;
             let len = checked::product([label.rank as usize, source.manifest.b_ring_dimension()])
                 .ok_or(AkitaError::InvalidProof)?;
             let range = checked::range(end, len).ok_or(AkitaError::InvalidProof)?;
@@ -247,7 +249,12 @@ impl GroupedNativeRootPlan {
         }
         let mut binary = Vec::new();
         for (index, group) in claims.groups().iter().take(4).enumerate() {
-            let GroupClaimKind::Binary { manifest, claim, prime } = group.kind() else {
+            let GroupClaimKind::Binary {
+                manifest,
+                claim,
+                prime,
+            } = group.kind()
+            else {
                 return Err(AkitaError::InvalidProof);
             };
             if manifest.setup_group() != index as u64 || prime.claims().len() != 2 {
@@ -255,8 +262,13 @@ impl GroupedNativeRootPlan {
             }
             binary.push(GroupedBinarySource {
                 manifest: manifest.as_ref().clone(),
-                carrier: *profiles.precommitteds.get(index).ok_or(AkitaError::InvalidProof)?,
-                setup_group: index as u64, word: claim.is_some(), prime: prime.clone(),
+                carrier: *profiles
+                    .precommitteds
+                    .get(index)
+                    .ok_or(AkitaError::InvalidProof)?,
+                setup_group: index as u64,
+                word: claim.is_some(),
+                prime: prime.clone(),
             });
         }
         for group in claims.groups().iter().skip(4) {
@@ -264,9 +276,14 @@ impl GroupedNativeRootPlan {
                 return Err(AkitaError::InvalidProof);
             }
         }
-        let signed = profiles.precommitteds.iter().skip(4)
-            .chain(std::iter::once(&profiles.final_group)).copied()
-            .zip(widths.iter().copied()).collect::<Vec<_>>();
+        let signed = profiles
+            .precommitteds
+            .iter()
+            .skip(4)
+            .chain(std::iter::once(&profiles.final_group))
+            .copied()
+            .zip(widths.iter().copied())
+            .collect::<Vec<_>>();
         Self::new(&binary, &signed, destination)
     }
 }

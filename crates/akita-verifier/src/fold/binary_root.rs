@@ -256,18 +256,32 @@ where
     drop(batches);
     drop(span);
 
-    finish_root::<F, E>(setup, grinding, tau0, relation, negative_bits, domain_len,
-        typed_prefix, typed_identity, next_witness, |root_point, point| {
-        let product = akita_types::binary_source::BinaryAProduct::new(
-            public.plan(),
-            &rho,
-            root_point,
-            typed_prefix_len,
-        )?;
-            Ok(product.evaluate(point)? + typed.digit_weight(
-                point, root_point, alpha, [&authentication[0], &authentication[1]],
-            )?)
-        })
+    finish_root::<F, E>(
+        setup,
+        grinding,
+        tau0,
+        relation,
+        negative_bits,
+        domain_len,
+        typed_prefix,
+        typed_identity,
+        next_witness,
+        |root_point, point| {
+            let product = akita_types::binary_source::BinaryAProduct::new(
+                public.plan(),
+                &rho,
+                root_point,
+                typed_prefix_len,
+            )?;
+            Ok(product.evaluate(point)?
+                + typed.digit_weight(
+                    point,
+                    root_point,
+                    alpha,
+                    [&authentication[0], &authentication[1]],
+                )?)
+        },
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

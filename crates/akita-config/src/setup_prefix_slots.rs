@@ -51,7 +51,9 @@ pub fn required_native_setup_prefix_slot_ids_for_row(
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
     if let Some(plan) = row.grouped_root() {
         if plan.identity() != capacity.plan().identity() {
-            return Err(AkitaError::InvalidSetup("native source plan mismatch".into()));
+            return Err(AkitaError::InvalidSetup(
+                "native source plan mismatch".into(),
+            ));
         }
     }
     let schedule = row.schedule();

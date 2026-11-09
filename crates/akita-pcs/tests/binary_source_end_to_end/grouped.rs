@@ -42,7 +42,11 @@ fn reject(fault: Fault, claims: &Claims) {
         opening.verify(claims, &opening.setup, &proof)
     });
     assert!(result.is_err(), "accepted {fault:?}");
-    assert_eq!(*receipt.0.lock().unwrap(), 1, "wrong rejection boundary: {fault:?}");
+    assert_eq!(
+        *receipt.0.lock().unwrap(),
+        1,
+        "wrong rejection boundary: {fault:?}"
+    );
 }
 
 #[test]
@@ -62,7 +66,14 @@ fn native_open_rejects_forged_prime_for_each_owner_point_coordinate() {
         for group in 0..4 {
             for point in 0..2 {
                 for coordinate in 0..2 {
-                    reject(Fault::GroupedPrime { group, point, coordinate }, &opening.claims);
+                    reject(
+                        Fault::GroupedPrime {
+                            group,
+                            point,
+                            coordinate,
+                        },
+                        &opening.claims,
+                    );
                 }
             }
         }
@@ -80,18 +91,25 @@ fn native_open_rejects_forged_signed_reading_for_each_slot_point_coordinate() {
                 for point in 0..2 {
                     for coordinate in 0..2 {
                         let mut groups = opening.claims.groups().to_vec();
-                        let mut values = [readings[0].evaluations.to_vec(),
-                            readings[1].evaluations.to_vec()];
+                        let mut values = [
+                            readings[0].evaluations.to_vec(),
+                            readings[1].evaluations.to_vec(),
+                        ];
                         let mut delta = [0; 2];
                         delta[coordinate] = 1;
                         values[point][slot] += ext::<E>(delta);
                         groups[group] = PolynomialGroupClaims::new_two_points(
                             [readings[0].point.to_vec(), readings[1].point.to_vec()],
-                            values, original.commitment().clone(),
-                        ).unwrap();
+                            values,
+                            original.commitment().clone(),
+                        )
+                        .unwrap();
                         let claims = OpeningClaims::from_groups(groups).unwrap();
-                        let row = opening.fixture.catalog
-                            .resolve_selection(opening.fixture.bindings[0].0).unwrap();
+                        let row = opening
+                            .fixture
+                            .catalog
+                            .resolve_selection(opening.fixture.bindings[0].0)
+                            .unwrap();
                         akita_config::bind_grouped_root(row, opening.binding.setup(), &claims)
                             .unwrap();
                         reject(Fault::GroupedValue, &claims);

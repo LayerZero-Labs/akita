@@ -47,8 +47,17 @@ where
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
     if _handoff.request.root_row.grouped_root().is_some() {
-        return grouped::prove_root::<Cfg, B>(expanded, prefix_slots, backend, claims, handles,
-            _handoff.request.root_row, proof_session, grinding, basis);
+        return grouped::prove_root::<Cfg, B>(
+            expanded,
+            prefix_slots,
+            backend,
+            claims,
+            handles,
+            _handoff.request.root_row,
+            proof_session,
+            grinding,
+            basis,
+        );
     }
     if !(1..=2).contains(&claims.num_groups())
         || handles.len() != claims.num_groups()
@@ -358,31 +367,40 @@ where
     drop(batches);
     drop(span);
     finish_root::<Cfg, B>(
-        prefix_slots, backend, next, proof_session, grinding, committed, domain, tau0,
-        relation, negative_binary_weights, |point, prefix| {
-        let phase = tracing::info_span!("binary_root_stage3_layout").entered();
-        let typed =
-            akita_types::binary_source::BinaryTypedPrefix::from_plan(manifest, public.plan())?;
-        let product = akita_types::binary_source::BinaryAProduct::new(
-            public.plan(),
-            &rho,
-            point,
-            prefix.n_prefix()?,
-        )?;
-        drop(phase);
-        // A, B and D share one weight over the typed prefix. It stays in live
-        // 64-cell blocks: the six in-block rounds read only those blocks, and the
-        // remaining rounds run on the one-cell block values.
-        let phase = tracing::info_span!("binary_root_stage3_weights").entered();
-        let weights = typed.prover_weight_blocks(
-            &product,
-            point,
-            alpha,
-            [&authentication[0], &authentication[1]],
-            prefix.n_prefix()?,
-        )?;
-        drop(phase);
-        Ok((weights, typed.identity(manifest, prefix)?))
+        prefix_slots,
+        backend,
+        next,
+        proof_session,
+        grinding,
+        committed,
+        domain,
+        tau0,
+        relation,
+        negative_binary_weights,
+        |point, prefix| {
+            let phase = tracing::info_span!("binary_root_stage3_layout").entered();
+            let typed =
+                akita_types::binary_source::BinaryTypedPrefix::from_plan(manifest, public.plan())?;
+            let product = akita_types::binary_source::BinaryAProduct::new(
+                public.plan(),
+                &rho,
+                point,
+                prefix.n_prefix()?,
+            )?;
+            drop(phase);
+            // A, B and D share one weight over the typed prefix. It stays in live
+            // 64-cell blocks: the six in-block rounds read only those blocks, and the
+            // remaining rounds run on the one-cell block values.
+            let phase = tracing::info_span!("binary_root_stage3_weights").entered();
+            let weights = typed.prover_weight_blocks(
+                &product,
+                point,
+                alpha,
+                [&authentication[0], &authentication[1]],
+                prefix.n_prefix()?,
+            )?;
+            drop(phase);
+            Ok((weights, typed.identity(manifest, prefix)?))
         },
     )
 }
@@ -403,11 +421,16 @@ fn finish_root<Cfg, B>(
     tau0: Vec<Cfg::ExtField>,
     relation: akita_types::native_root_relation::NativeRootWeights<Cfg::ExtField>,
     negative_binary_weights: Vec<(usize, Cfg::ExtField)>,
-    weights: impl FnOnce(&[Cfg::ExtField], &akita_params::SetupPrefixSlotId)
-        -> Result<
-            (akita_types::binary_source::TypedPrefixWeights<Cfg::ExtField>, Vec<u8>),
-            AkitaError,
-        >,
+    weights: impl FnOnce(
+        &[Cfg::ExtField],
+        &akita_params::SetupPrefixSlotId,
+    ) -> Result<
+        (
+            akita_types::binary_source::TypedPrefixWeights<Cfg::ExtField>,
+            Vec<u8>,
+        ),
+        AkitaError,
+    >,
 ) -> Result<
     ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
     AkitaError,

@@ -96,28 +96,50 @@ impl<E: Field> TypedPrefixWeights<E> {
             return Err(AkitaError::InvalidProof);
         }
         let mut table = Vec::new();
-        table.try_reserve_exact(domain_len).map_err(|_| AkitaError::InvalidProof)?;
+        table
+            .try_reserve_exact(domain_len)
+            .map_err(|_| AkitaError::InvalidProof)?;
         table.resize(domain_len, E::zero());
         for (offset, weights) in parts {
             let range = checked::range(offset, weights.len()).ok_or(AkitaError::InvalidProof)?;
-            for (target, value) in table.get_mut(range).ok_or(AkitaError::InvalidProof)?
-                .iter_mut().zip(weights)
+            for (target, value) in table
+                .get_mut(range)
+                .ok_or(AkitaError::InvalidProof)?
+                .iter_mut()
+                .zip(weights)
             {
                 *target += value;
             }
         }
-        let live = table.chunks_exact(SLOTS)
-            .filter(|row| row.iter().any(|value| !value.is_zero())).count();
+        let live = table
+            .chunks_exact(SLOTS)
+            .filter(|row| row.iter().any(|value| !value.is_zero()))
+            .count();
         let rows = checked::sum([live, 1]).ok_or(AkitaError::InvalidProof)?;
         let cells = checked::product([rows, SLOTS]).ok_or(AkitaError::InvalidProof)?;
         u32::try_from(live).map_err(|_| AkitaError::InvalidProof)?;
         let mut builder = Builder {
-            pool: Vec::new(), blocks: Vec::new(), scales: Vec::new(), rows: Vec::new(),
+            pool: Vec::new(),
+            blocks: Vec::new(),
+            scales: Vec::new(),
+            rows: Vec::new(),
         };
-        builder.pool.try_reserve_exact(cells).map_err(|_| AkitaError::InvalidProof)?;
-        builder.blocks.try_reserve_exact(live).map_err(|_| AkitaError::InvalidProof)?;
-        builder.scales.try_reserve_exact(live).map_err(|_| AkitaError::InvalidProof)?;
-        builder.rows.try_reserve_exact(live).map_err(|_| AkitaError::InvalidProof)?;
+        builder
+            .pool
+            .try_reserve_exact(cells)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        builder
+            .blocks
+            .try_reserve_exact(live)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        builder
+            .scales
+            .try_reserve_exact(live)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        builder
+            .rows
+            .try_reserve_exact(live)
+            .map_err(|_| AkitaError::InvalidProof)?;
         builder.pool.resize(SLOTS, E::zero());
         for (block, row) in table.chunks_exact(SLOTS).enumerate() {
             if row.iter().any(|value| !value.is_zero()) {
@@ -127,8 +149,12 @@ impl<E: Field> TypedPrefixWeights<E> {
             }
         }
         Ok(Self {
-            domain_len, width: SLOTS, pool: builder.pool, blocks: builder.blocks,
-            scales: builder.scales, rows: builder.rows,
+            domain_len,
+            width: SLOTS,
+            pool: builder.pool,
+            blocks: builder.blocks,
+            scales: builder.scales,
+            rows: builder.rows,
         })
     }
 
@@ -137,14 +163,19 @@ impl<E: Field> TypedPrefixWeights<E> {
         if self.width != SLOTS || point.len() != self.domain_len.trailing_zeros() as usize {
             return Err(AkitaError::InvalidProof);
         }
-        let (low, high) = point.split_at_checked(SLOT_BITS).ok_or(AkitaError::InvalidProof)?;
+        let (low, high) = point
+            .split_at_checked(SLOT_BITS)
+            .ok_or(AkitaError::InvalidProof)?;
         let low = EqPolynomial::evals(low)?;
         let mut result = E::zero();
         for (live, &block) in self.blocks.iter().enumerate() {
             let mut weight = E::zero();
             for (scale, row) in self.block_terms(live)? {
-                weight += scale * row.iter().zip(&low)
-                    .fold(E::zero(), |sum, (&a, &b)| sum + a * b);
+                weight += scale
+                    * row
+                        .iter()
+                        .zip(&low)
+                        .fold(E::zero(), |sum, (&a, &b)| sum + a * b);
             }
             result += weight * eq_eval_at_index(high, block);
         }

@@ -68,7 +68,10 @@ impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         let expected_contract = Cfg::committed_source_contract()?;
         #[cfg(feature = "labinius-trinomial")]
         let expected_contract = match schedules.resolve_selection(selection)?.grouped_root() {
-            Some(sources) => sources.signed_widths().last().ok_or(AkitaError::InvalidProof)?
+            Some(sources) => sources
+                .signed_widths()
+                .last()
+                .ok_or(AkitaError::InvalidProof)?
                 .producer_contract(profile.final_group.inner.matrix.sis_modulus_profile())?,
             None => expected_contract,
         };

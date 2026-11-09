@@ -330,7 +330,8 @@ impl<E: Field> NativeRootWeights<E> {
         }
         let table = self.materialize()?;
         let mut terms = Vec::new();
-        terms.try_reserve_exact(table.iter().filter(|value| !value.is_zero()).count())
+        terms
+            .try_reserve_exact(table.iter().filter(|value| !value.is_zero()).count())
             .map_err(|_| AkitaError::InvalidProof)?;
         for (address, value) in table.into_iter().enumerate() {
             if !value.is_zero() {

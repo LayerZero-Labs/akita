@@ -329,8 +329,13 @@ where
         .map_or(schedule.terminal.d_a(), |fold| fold.params.d_a());
     let group_index = context.group_index().ok_or(AkitaError::InvalidProof)?;
     let domain_len = if let Some(grouped) = grouped {
-        grouped.binary().get(group_index).ok_or(AkitaError::InvalidProof)?
-            .local().repacking().domain_len()
+        grouped
+            .binary()
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?
+            .local()
+            .repacking()
+            .domain_len()
     } else {
         akita_params::witness_commitment_domain_len(
             schedule.root.output_witness_len,
@@ -349,7 +354,11 @@ where
             != Some(manifest.setup_group())
         || manifest != &source.manifest
         || handle.committed.parameters != source.carrier_profile
-        || schedule.root.params.group_params(&root_layout, group_index)?.profile
+        || schedule
+            .root
+            .params
+            .group_params(&root_layout, group_index)?
+            .profile
             != source.carrier_profile
         || handle.committed.retained.is_some()
         || plan.descriptor() != manifest.descriptor()
@@ -475,8 +484,15 @@ where
 {
     let binding = backend.binding(session, context)?;
     if let Some(preparation) = preparation.downcast_ref::<grouped::Preparation>() {
-        return grouped::build(backend, session, context, preparation, challenges,
-            logical_len, destination_ring_dimension);
+        return grouped::build(
+            backend,
+            session,
+            context,
+            preparation,
+            challenges,
+            logical_len,
+            destination_ring_dimension,
+        );
     }
     let [challenges] = challenges else {
         return Err(AkitaError::InvalidProof);
@@ -641,10 +657,15 @@ where
             .and_then(|group| u64::try_from(group).ok())
             != Some(request.manifest.setup_group())
         || request.manifest != source.manifest
-        || schedule.root.params.group_params(
-            &root_layout,
-            context.group_index().ok_or(AkitaError::InvalidProof)?,
-        )?.profile != source.carrier_profile
+        || schedule
+            .root
+            .params
+            .group_params(
+                &root_layout,
+                context.group_index().ok_or(AkitaError::InvalidProof)?,
+            )?
+            .profile
+            != source.carrier_profile
         || handle.committed.parameters != source.carrier_profile
         || handle.committed.retained.is_some()
     {
