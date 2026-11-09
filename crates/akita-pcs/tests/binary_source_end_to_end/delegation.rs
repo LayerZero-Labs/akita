@@ -185,7 +185,13 @@ where
 
 impl<F, E> OpaqueRecursiveWitnessBuildKernel<F, E> for FaultBackend<F, E>
 where
-    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + PseudoMersenne
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
     F::Wide: From<F> + AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
@@ -398,7 +404,13 @@ where
 
 impl<F, E> OpaqueStage2Kernel<F, E> for FaultBackend<F, E>
 where
-    F: Field + CanonicalEncoding + AkitaSerialize + PseudoMersenne + Unreduced + 'static,
+    F: Field
+        + CanonicalEncoding
+        + AkitaSerialize
+        + PseudoMersenne
+        + Unreduced
+        + WithCommitAccumulator
+        + 'static,
     F::Wide: From<F> + AdditiveGroup,
     E: ExtField<F>
         + FpExtEncoding<F>
