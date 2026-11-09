@@ -344,6 +344,8 @@ where
         setup: expanded,
         schedules,
         schedule: resolved.schedule(),
+        #[cfg(feature = "labinius-trinomial")]
+        root_row: resolved,
         layout: claims.opening_layout(),
         identity,
         setup_batch,

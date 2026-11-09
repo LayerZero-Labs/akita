@@ -65,7 +65,14 @@ impl<'a, E: Field, H: CommitmentHandleMetadata, F: Field> SelectedProverOpeningD
         let final_handle = handles.last().ok_or_else(|| {
             AkitaError::Internal("validated opening has no final commitment handle".into())
         })?;
-        if final_handle.producer_contract() != Cfg::committed_source_contract()? {
+        let expected_contract = Cfg::committed_source_contract()?;
+        #[cfg(feature = "labinius-trinomial")]
+        let expected_contract = match schedules.resolve_selection(selection)?.grouped_root() {
+            Some(sources) => sources.signed_widths().last().ok_or(AkitaError::InvalidProof)?
+                .producer_contract(profile.final_group.inner.matrix.sis_modulus_profile())?,
+            None => expected_contract,
+        };
+        if final_handle.producer_contract() != expected_contract {
             return Err(AkitaError::InvalidInput(
                 "final group was committed under a different producer contract".into(),
             ));

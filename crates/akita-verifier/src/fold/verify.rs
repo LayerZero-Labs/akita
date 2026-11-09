@@ -220,6 +220,7 @@ where
                 schedule.recursive_folds.first(),
                 &schedule.terminal,
                 setup_policy,
+                resolved,
             )?;
             verify_suffix::<Cfg::Field, Cfg::ExtField>(
                 setup,

@@ -232,7 +232,7 @@ impl FaultBackend {
         session: &Session,
         context: &ProofContext,
         preparation: &dyn Any,
-        challenges: &akita_challenges::Challenges,
+        challenges: &[akita_challenges::Challenges],
         logical_len: usize,
         destination_ring_dimension: usize,
     ) -> Result<Option<W>, AkitaError> {
@@ -247,6 +247,9 @@ impl FaultBackend {
         )?
         else {
             return Ok(None);
+        };
+        let [challenges] = challenges else {
+            return Err(AkitaError::InvalidProof);
         };
         let mut digits = match preparation.manifest.field_profile() {
             BinaryFieldProfile::P128 => fault_witness::reconstruct(

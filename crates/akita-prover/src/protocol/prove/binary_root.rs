@@ -46,6 +46,10 @@ where
         + 'static,
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
+    if _handoff.request.root_row.grouped_root().is_some() {
+        return grouped::prove_root::<Cfg, B>(expanded, prefix_slots, backend, claims, handles,
+            _handoff.request.root_row, proof_session, grinding, basis);
+    }
     if !(1..=2).contains(&claims.num_groups())
         || handles.len() != claims.num_groups()
         || basis != BasisMode::Lagrange
@@ -216,7 +220,7 @@ where
             proof_session,
             &context,
             preparation.as_ref(),
-            &challenges,
+            core::slice::from_ref(&challenges),
             logical_len,
             next.params.d_a(),
         )? {
@@ -254,7 +258,6 @@ where
         witness,
     )?;
     drop(span);
-    let mut witness = committed.witness_handle;
     let span = tracing::info_span!("binary_root_projections").entered();
     let bounds = public.plan().projection_bounds();
     let projections = if bounds.quotient().is_none() {
@@ -354,6 +357,76 @@ where
     let (rho, _) = public.coefficient_inputs(&batches, &rho, &projected_values)?;
     drop(batches);
     drop(span);
+    finish_root::<Cfg, B>(
+        prefix_slots, backend, next, proof_session, grinding, committed, domain, tau0,
+        relation, negative_binary_weights, |point, prefix| {
+        let phase = tracing::info_span!("binary_root_stage3_layout").entered();
+        let typed =
+            akita_types::binary_source::BinaryTypedPrefix::from_plan(manifest, public.plan())?;
+        let product = akita_types::binary_source::BinaryAProduct::new(
+            public.plan(),
+            &rho,
+            point,
+            prefix.n_prefix()?,
+        )?;
+        drop(phase);
+        // A, B and D share one weight over the typed prefix. It stays in live
+        // 64-cell blocks: the six in-block rounds read only those blocks, and the
+        // remaining rounds run on the one-cell block values.
+        let phase = tracing::info_span!("binary_root_stage3_weights").entered();
+        let weights = typed.prover_weight_blocks(
+            &product,
+            point,
+            alpha,
+            [&authentication[0], &authentication[1]],
+            prefix.n_prefix()?,
+        )?;
+        drop(phase);
+        Ok((weights, typed.identity(manifest, prefix)?))
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn finish_root<Cfg, B>(
+    prefix_slots: &SetupPrefixProverRegistry<Cfg::Field, B::CommitmentHandle>,
+    backend: &B,
+    next: &FoldParams,
+    proof_session: &B::ProofSessionHandle,
+    grinding: &mut akita_types::ProverGrinding<'_>,
+    committed: fold::CommittedNextWitness<
+        Cfg::Field,
+        B::WitnessHandle,
+        B::CommitmentMaterialHandle,
+    >,
+    domain: FlatBooleanDomain,
+    tau0: Vec<Cfg::ExtField>,
+    relation: akita_types::native_root_relation::NativeRootWeights<Cfg::ExtField>,
+    negative_binary_weights: Vec<(usize, Cfg::ExtField)>,
+    weights: impl FnOnce(&[Cfg::ExtField], &akita_params::SetupPrefixSlotId)
+        -> Result<
+            (akita_types::binary_source::TypedPrefixWeights<Cfg::ExtField>, Vec<u8>),
+            AkitaError,
+        >,
+) -> Result<
+    ProveLevelOutput<Cfg::Field, Cfg::ExtField, B::CommitmentMaterialHandle, B::WitnessHandle>,
+    AkitaError,
+>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: CanonicalEncoding + AkitaSerialize + Unreduced + PseudoMersenne + Ring + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
+        + MulBaseUnreduced<Cfg::Field>
+        + AkitaSerialize
+        + 'static,
+    B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
+{
+    let mut witness = committed.witness_handle;
     let relation_claim = relation.claim();
     let span = tracing::info_span!("binary_root_stage1").entered();
     let range = DigitRangePlan::new(8)?;
@@ -400,27 +473,7 @@ where
     let prepared_prefix = prefix_slots.get(&prefix).ok_or_else(|| {
         AkitaError::InvalidInput("binary root typed prefix was not prepared".into())
     })?;
-    let phase = tracing::info_span!("binary_root_stage3_layout").entered();
-    let typed = akita_types::binary_source::BinaryTypedPrefix::from_plan(manifest, public.plan())?;
-    let product = akita_types::binary_source::BinaryAProduct::new(
-        public.plan(),
-        &rho,
-        &stage2.challenges,
-        prefix.n_prefix()?,
-    )?;
-    drop(phase);
-    // A, B and D share one weight over the typed prefix. It stays in live
-    // 64-cell blocks: the six in-block rounds read only those blocks, and the
-    // remaining rounds run on the one-cell block values.
-    let phase = tracing::info_span!("binary_root_stage3_weights").entered();
-    let weights = typed.prover_weight_blocks(
-        &product,
-        &stage2.challenges,
-        alpha,
-        [&authentication[0], &authentication[1]],
-        prefix.n_prefix()?,
-    )?;
-    drop(phase);
+    let (weights, identity) = weights(&stage2.challenges, &prefix)?;
     let phase = tracing::info_span!("binary_root_stage3_begin").entered();
     // The table is the one the prefix preparation committed.
     let (claim, session) = backend.begin_typed_stage3(crate::backend::TypedStage3Request {
@@ -430,7 +483,7 @@ where
         weights,
     })?;
     drop(phase);
-    akita_types::stage3_public_slot(grinding, 0, &typed.identity(manifest, &prefix)?)?;
+    akita_types::stage3_public_slot(grinding, 0, &identity)?;
     akita_types::stage3_claim::<Cfg::Field, Cfg::ExtField, _>(grinding, 0, claim)?;
     let phase = tracing::info_span!("binary_root_stage3_rounds").entered();
     let stage3 = fold::sumcheck::prove_stage3_session::<Cfg::Field, Cfg::ExtField, B>(
@@ -458,3 +511,6 @@ where
         },
     })
 }
+
+#[path = "grouped_binary_root.rs"]
+mod grouped;

@@ -30,6 +30,7 @@ pub(super) fn verify_root<F, E>(
     opening_batch: &OpeningClaimsLayout,
     root_params: &CommittedGroupParams,
     next_fold: Option<&FoldParams>,
+    row: &akita_config::ResolvedScheduleRow,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize + Ring,
@@ -40,6 +41,9 @@ where
         + MulBaseUnreduced<F>
         + ChallengeCodec,
 {
+    if row.grouped_root().is_some() {
+        return grouped::verify_root::<F, E>(setup, grinding, claims, row);
+    }
     let _span = tracing::info_span!("binary_root_verify").entered();
     if !(1..=2).contains(&claims.num_groups()) {
         return Err(AkitaError::InvalidSetup(
@@ -252,6 +256,44 @@ where
     drop(batches);
     drop(span);
 
+    finish_root::<F, E>(setup, grinding, tau0, relation, negative_bits, domain_len,
+        typed_prefix, typed_identity, next_witness, |root_point, point| {
+        let product = akita_types::binary_source::BinaryAProduct::new(
+            public.plan(),
+            &rho,
+            root_point,
+            typed_prefix_len,
+        )?;
+            Ok(product.evaluate(point)? + typed.digit_weight(
+                point, root_point, alpha, [&authentication[0], &authentication[1]],
+            )?)
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_root<F, E>(
+    setup: &AkitaVerifierSetup<F>,
+    grinding: &mut akita_types::VerifierGrinding<'_, '_>,
+    tau0: Vec<E>,
+    relation: akita_types::native_root_relation::NativeRootWeights<E>,
+    negative_bits: Vec<(usize, E)>,
+    domain_len: usize,
+    typed_prefix: akita_params::SetupPrefixSlotId,
+    typed_identity: Vec<u8>,
+    next_witness: RingVec<F>,
+    weight: impl Fn(&[E], &[E]) -> Result<E, AkitaError>,
+) -> Result<FoldVerifyOutput<F, E>, AkitaError>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize + Ring,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
+{
+    let num_vars = domain_len.trailing_zeros() as usize;
+    let typed_prefix_len = typed_prefix.n_prefix()?;
     let span = tracing::info_span!("binary_root_stage1_stage2_replay").entered();
     let equality_point =
         DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau0, num_vars, 0)?;
@@ -283,26 +325,12 @@ where
     }
     let mut replay_stage3 = || {
         let _span = tracing::info_span!("binary_root_typed_stage3").entered();
-        let product = akita_types::binary_source::BinaryAProduct::new(
-            public.plan(),
-            &rho,
-            &replay.challenges,
-            typed_prefix_len,
-        )?;
         crate::stages::stage3::verify_stage3_session::<F, E>(
             typed_prefix_len.trailing_zeros() as usize,
             &typed_identity,
             grinding,
             0,
-            |point| {
-                Ok(product.evaluate(point)?
-                    + typed.digit_weight(
-                        point,
-                        &replay.challenges,
-                        alpha,
-                        [&authentication[0], &authentication[1]],
-                    )?)
-            },
+            |point| weight(&replay.challenges, point),
         )
     };
     let evaluate_relation = || {
@@ -351,3 +379,6 @@ where
         opening: witness_eval,
     })
 }
+
+#[path = "grouped_binary_root.rs"]
+mod grouped;

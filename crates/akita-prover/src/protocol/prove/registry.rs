@@ -104,6 +104,8 @@ pub(super) struct ProofRequest<'p, Cfg: CommitmentConfig> {
     pub(super) setup: &'p AkitaSetupDescriptor,
     pub(super) schedules: &'p TrustedScheduleCatalog<Cfg>,
     pub(super) schedule: &'p FoldSchedule,
+    #[cfg(feature = "labinius-trinomial")]
+    pub(super) root_row: &'p akita_config::ResolvedScheduleRow,
     pub(super) layout: &'p OpeningClaimsLayout,
     pub(super) identity: u64,
     pub(super) setup_batch: Option<(

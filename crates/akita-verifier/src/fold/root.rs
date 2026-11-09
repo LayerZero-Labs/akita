@@ -22,6 +22,7 @@ pub(super) fn verify_root<F, E>(
     next_fold_params: Option<&FoldParams>,
     terminal: &TerminalFoldParams,
     setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
+    _row: &akita_config::ResolvedScheduleRow,
 ) -> Result<FoldVerifyOutput<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -45,9 +46,14 @@ where
                 opening_batch,
                 root_lp,
                 next_fold_params,
+                _row,
             )
         }
         Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
+            #[cfg(feature = "labinius-trinomial")]
+            if _row.grouped_root().is_some() {
+                return Err(AkitaError::InvalidProof);
+            }
             super::ordinary_root::verify_root(
                 setup,
                 grinding,

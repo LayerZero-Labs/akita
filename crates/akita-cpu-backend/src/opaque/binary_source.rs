@@ -290,9 +290,32 @@ where
     {
         return projection::prepare(backend, &binding, context, handle, request);
     }
+    if let Some(request) = request.downcast_ref::<
+        akita_types::binary_source::GroupedRootWitnessRequest<CommitmentHandle<F, E>>,
+    >() {
+        return grouped::prepare(backend, session, context, request);
+    }
     let request = request
-        .downcast_ref::<akita_types::binary_source::BinaryRootWitnessRequest<CommitmentHandle<F, E>>>()
+        .downcast_ref::<
+            akita_types::binary_source::BinaryRootWitnessRequest<CommitmentHandle<F, E>>,
+        >()
         .ok_or_else(|| AkitaError::InvalidInput("native root request family mismatch".into()))?;
+    prepare_binary_root(backend, session, context, handle, request, None)
+}
+
+fn prepare_binary_root<F, E>(
+    backend: &CpuBackend<F, E>,
+    session: &CpuProofSessionHandle,
+    context: &ProofContext,
+    handle: &CommitmentHandle<F, E>,
+    request: &akita_types::binary_source::BinaryRootWitnessRequest<CommitmentHandle<F, E>>,
+    grouped: Option<&akita_types::binary_source::GroupedNativeRootPlan>,
+) -> Result<(Vec<F>, Box<dyn std::any::Any + Send + Sync>), AkitaError>
+where
+    F: Field + CanonicalEncoding + 'static,
+    E: Field + 'static,
+{
+    let binding = backend.binding(session, context)?;
     let manifest = &request.manifest;
     let claim = &request.claim;
     let plan = &request.plan;
@@ -304,10 +327,16 @@ where
         .recursive_folds
         .first()
         .map_or(schedule.terminal.d_a(), |fold| fold.params.d_a());
-    let domain_len = akita_params::witness_commitment_domain_len(
-        schedule.root.output_witness_len,
-        destination_ring,
-    )?;
+    let group_index = context.group_index().ok_or(AkitaError::InvalidProof)?;
+    let domain_len = if let Some(grouped) = grouped {
+        grouped.binary().get(group_index).ok_or(AkitaError::InvalidProof)?
+            .local().repacking().domain_len()
+    } else {
+        akita_params::witness_commitment_domain_len(
+            schedule.root.output_witness_len,
+            destination_ring,
+        )?
+    };
     manifest.validate_carrier(&handle.committed.parameters)?;
     if let Some(claim) = claim {
         claim.validate(manifest.descriptor())?;
@@ -320,7 +349,8 @@ where
             != Some(manifest.setup_group())
         || manifest != &source.manifest
         || handle.committed.parameters != source.carrier_profile
-        || schedule.root.params.group_params(&root_layout, 0)?.profile != source.carrier_profile
+        || schedule.root.params.group_params(&root_layout, group_index)?.profile
+            != source.carrier_profile
         || handle.committed.retained.is_some()
         || plan.descriptor() != manifest.descriptor()
         || plan.rank() != manifest.a_rank()
@@ -363,7 +393,7 @@ where
             .admit_commitment(&ordinary_context, ordinary_handle.committed.commitment_id)?;
         segments
     } else {
-        if root_layout.num_groups() != 1 {
+        if grouped.is_none() && root_layout.num_groups() != 1 {
             return Err(AkitaError::InvalidInput(
                 "native root request omits an admitted ordinary group".into(),
             ));
@@ -435,7 +465,7 @@ pub(super) fn build_root_group<F, E>(
     session: &CpuProofSessionHandle,
     context: &ProofContext,
     preparation: &dyn std::any::Any,
-    challenges: &akita_challenges::Challenges,
+    challenges: &[akita_challenges::Challenges],
     logical_len: usize,
     destination_ring_dimension: usize,
 ) -> Result<Option<CpuWitnessHandle>, AkitaError>
@@ -444,6 +474,13 @@ where
     E: Field,
 {
     let binding = backend.binding(session, context)?;
+    if let Some(preparation) = preparation.downcast_ref::<grouped::Preparation>() {
+        return grouped::build(backend, session, context, preparation, challenges,
+            logical_len, destination_ring_dimension);
+    }
+    let [challenges] = challenges else {
+        return Err(AkitaError::InvalidProof);
+    };
     let preparation = preparation
         .downcast_ref::<BinaryRootPreparation>()
         .ok_or_else(|| {
@@ -461,6 +498,36 @@ where
             "native root build differs from its admitted successor".into(),
         ));
     }
+    let Some(mut digits) = build_binary_digits(preparation, challenges)? else {
+        return Ok(None);
+    };
+    if logical_len > digits.len()
+        || digits
+            .get(logical_len..)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter()
+            .any(|&digit| digit != 0)
+    {
+        return Err(AkitaError::InvalidInput(
+            "native root segments exceed the admitted live witness".into(),
+        ));
+    }
+    digits.truncate(logical_len);
+    let _span = tracing::info_span!("binary_root_import_witness").entered();
+    super::binary_root_sessions::import_root_witness(
+        backend,
+        session,
+        context,
+        digits,
+        destination_ring_dimension,
+    )
+    .map(Some)
+}
+
+fn build_binary_digits(
+    preparation: &BinaryRootPreparation,
+    challenges: &akita_challenges::Challenges,
+) -> Result<Option<Vec<i8>>, AkitaError> {
     let source = &preparation.source;
     let span = tracing::info_span!("binary_root_probe_response").entered();
     let Some(response) = fold_packed(
@@ -540,30 +607,13 @@ where
     }
     natural.extend(preparation.ordinary_segments.iter().map(Vec::as_slice));
     natural.extend(quotient_digits.as_deref());
-    let mut digits = preparation.plan.repacking().repack(&natural)?;
-    if logical_len > digits.len()
-        || digits
-            .get(logical_len..)
-            .ok_or(AkitaError::InvalidProof)?
-            .iter()
-            .any(|&digit| digit != 0)
-    {
-        return Err(AkitaError::InvalidInput(
-            "native root segments exceed the admitted live witness".into(),
-        ));
-    }
-    digits.truncate(logical_len);
+    let digits = preparation.plan.repacking().repack(&natural)?;
     drop(span);
-    let _span = tracing::info_span!("binary_root_import_witness").entered();
-    super::binary_root_sessions::import_root_witness(
-        backend,
-        session,
-        context,
-        digits,
-        destination_ring_dimension,
-    )
-    .map(Some)
+    Ok(Some(digits))
 }
+
+#[path = "grouped_binary_root.rs"]
+mod grouped;
 
 /// Extract the authenticated owner's carriers in canonical low-column-bit order.
 fn field_switch_source<F, E>(
@@ -591,7 +641,10 @@ where
             .and_then(|group| u64::try_from(group).ok())
             != Some(request.manifest.setup_group())
         || request.manifest != source.manifest
-        || schedule.root.params.group_params(&root_layout, 0)?.profile != source.carrier_profile
+        || schedule.root.params.group_params(
+            &root_layout,
+            context.group_index().ok_or(AkitaError::InvalidProof)?,
+        )?.profile != source.carrier_profile
         || handle.committed.parameters != source.carrier_profile
         || handle.committed.retained.is_some()
     {

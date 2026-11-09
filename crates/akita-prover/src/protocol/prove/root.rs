@@ -110,6 +110,10 @@ where
             )
         }
         Some(akita_types::opening_claims::GroupClaimKind::Ordinary) | None => {
+            #[cfg(feature = "labinius-trinomial")]
+            if handoff.request.root_row.grouped_root().is_some() {
+                return Err(AkitaError::InvalidProof);
+            }
             super::ordinary_root::prove_root(
                 expanded,
                 prefix_slots,
