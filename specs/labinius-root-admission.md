@@ -7,9 +7,11 @@ Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 ## Scope and profile
 
 The opt-in `labinius-sis` feature of `akita-params` supplies one closed root
-profile, a certified-width lookup, and the two admission functions every
-prover, verifier and sizing caller shares: `LabiniusRootShape::derive` for the
-geometry and `LabiniusRootShape::derive_encoding` for a proof prime. Enabling
+profile, a certified-width lookup, and two admission functions:
+`LabiniusRootShape::derive` for the geometry and
+`LabiniusRootShape::derive_encoding` for a proof prime. The standalone prover,
+verifier and PCS crates that called them were removed in 2026-Q4; their
+records are under [`archive/2026-Q4/`](archive/2026-Q4/). Enabling
 the feature does not select the extension or change the ordinary protocol.
 
 | Profile item | `LabiniusRootProfile::D648Q25BoundedW46` |
@@ -149,8 +151,9 @@ The cap depends on `m * D` through the union bound, not on C alone. When
 `beta_inf` is below the tail threshold the cap is deterministic and the abort
 bound is zero. Otherwise the cap is smaller than the worst case by design:
 `C * Gamma = 23552` at the sample geometry. Completeness is then
-probabilistic, and the honest prover searches a fold-response nonce as
-specified in [the clear opening](archive/2026-Q4/labinius-clear-opening.md#fold-response-nonce).
+probabilistic, and an honest prover must search a fold-response nonce, as
+the removed [clear opening](archive/2026-Q4/labinius-clear-opening.md#fold-response-nonce)
+did.
 Akita's tail bound conditions on the challenge supports and takes the signs of
 all `C * w` challenge monomials as independent and uniform. This family derives
 a challenge's signs from its support alone (`BinarySignRule::Shake256V1`), so
@@ -371,50 +374,17 @@ encoding exposes only its length, `prime_table_log_len`.
 
 ## Challenge-field admission
 
-The root reduction draws its field challenges from a field E containing the
-proof field, of exact cardinality `P^e` for extension degree e. Conditions 1
-to 3 concern P alone and are unaffected by E. The size of E is admitted by
-Akita's transcript-grinding rule
-([transcript grinding](transcript-grinding.md#security-model)): a challenge
-whose bad fraction is at most L over the cardinality needs the least g with
-`L * 2^128 <= P^e * 2^g` bits of proof of work, and `g > 25` is rejected.
-
-There is no separate admission test. Every field challenge of the reduction
-is a site of its
-[grinding plan](archive/2026-Q4/labinius-root-reduction.md#grinding-plan), with its own loss
-factor L, and each site pays its own g through an inline nonce. E is admitted
-exactly when every site in E has a target within the cap.
-`LoweredRootLayout::new::<F, E, _, _>` derives those sites, by the same
-function that builds the plan, and returns `AkitaError::InvalidSetup` when
-one of them cannot be priced. It derives them for the opening mode with both
-claims, whose sites include those of the other two modes with loss factors
-at least as large, so one layout serves every mode. The loss factors are
-
-```text
-D - 1, 2 * d - 2, n_A, 1, nu, 1, 17, mu, 1, 17, 1, 2
-```
-
-for alpha, xi, gamma, the prime row's scalar, for each combined instance its
-equality point, its batching scalar and one round, with `nu` and `mu` the
-logarithms of the two table lengths, and for the product instance of the
-prime opening its batching scalar and one round. When `D - 1` is the largest
-of them, E is admitted exactly when `(D - 1) * 2^103 <= P^e`.
-
-At the sample geometry `D - 1 = 647` is the largest, so the cardinality must
-be at least `647 * 2^103`, about `2^112.34`:
-
-| Proof prime | Extension degree | Site targets, least to largest | Result |
-| --- | --- | --- | --- |
-| `2^128 - 275` | 1 | 1 to 10 | admitted |
-| `2^64 - 59` | 2 | 1 to 10 | admitted |
-| `2^64 - 59` | 1 | 65 to 74 | rejected |
+Challenge-field admission concerns the field E that a root reduction draws its
+challenges from, not P. It was implemented by the removed root reduction and
+is recorded with it in
+[the archived root reduction](archive/2026-Q4/labinius-root-reduction.md#challenge-field-admission).
 
 ## Derivation bias
 
-The admitted binary-root setup uses exact rejection sampling modulo q
-([setup contract](archive/2026-Q4/labinius-setup-contract.md#typed-setup-streams)). It does not
+The removed admitted binary-root setup used exact rejection sampling modulo q
+([setup contract](archive/2026-Q4/labinius-setup-contract.md#typed-setup-streams)). It did not
 reduce P-field setup samples modulo q, and `AdmittedRootSetup::derive::<P>`
-does not apply a derivation-bias gate. The q matrix and P-field setup streams
+did not apply a derivation-bias gate. The q matrix and P-field setup streams
 have separate typed domains.
 
 `LabiniusRootShape::check_derivation_bias(P_stream)` remains available to
@@ -449,8 +419,7 @@ any proof prime:
 5. Derive `H`, `B_Q`, `B_K` and `B_KA` with checked arithmetic.
 
 Proof-prime admission and the retained legacy derivation-bias analysis are
-separate calls on the derived shape; challenge-field admission is made where
-the field pair enters, at the lowered layout. Caller-selected failures use
+separate calls on the derived shape. Caller-selected failures use
 `AkitaError::InvalidSetup`.
 
 For `(log_num_cells, log_fold_width, lambda_fold) = (22, 8, 128)`:

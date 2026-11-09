@@ -107,7 +107,6 @@ if [ "${pkg}" = "akita-prover" ]; then
   fi
 fi
 
-
 if [ "${pkg}" = "akita-verifier" ]; then
   # Spongefish's `yolocrypto` feature exposes raw sponge state for prover-side
   # nonce search. Only prover features may enable it, so the verifier's

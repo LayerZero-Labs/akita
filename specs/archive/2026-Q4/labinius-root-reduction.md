@@ -46,7 +46,7 @@ round message, every evaluation point and value, the message `y_Y` and all
 public weights. Integer no-wrap and unit-difference admission are statements
 about P, never about `|E|`. E is admitted exactly when every field-challenge
 site of the reduction has a proof-of-work target within Akita's cap
-([root admission](../../labinius-root-admission.md#challenge-field-admission)).
+([challenge-field admission](#challenge-field-admission)).
 Neither field is a parameter of the setup or of the clear commitment, and
 neither needs a root of unity. Two pairs are exercised:
 `F = E = Prime128Offset275`, and `F = Prime64Offset59` with
@@ -875,3 +875,45 @@ The transparent oracle adds 16777216 response bytes at this geometry and,
 with a prime claim, 4194304 bytes for uP. The
 8388608 image digits are absorbed public data, not proof bytes. The byte
 wrappers add no framing or final marker. EOF is the proof boundary.
+
+## Challenge-field admission
+
+Moved here from the live root-admission spec when the crates were removed.
+
+The root reduction draws its field challenges from a field E containing the
+proof field, of exact cardinality `P^e` for extension degree e. Conditions 1
+to 3 concern P alone and are unaffected by E. The size of E is admitted by
+Akita's transcript-grinding rule
+([transcript grinding](../../transcript-grinding.md#security-model)): a challenge
+whose bad fraction is at most L over the cardinality needs the least g with
+`L * 2^128 <= P^e * 2^g` bits of proof of work, and `g > 25` is rejected.
+
+There is no separate admission test. Every field challenge of the reduction
+is a site of its
+[grinding plan](#grinding-plan), with its own loss
+factor L, and each site pays its own g through an inline nonce. E is admitted
+exactly when every site in E has a target within the cap.
+`LoweredRootLayout::new::<F, E, _, _>` derives those sites, by the same
+function that builds the plan, and returns `AkitaError::InvalidSetup` when
+one of them cannot be priced. It derives them for the opening mode with both
+claims, whose sites include those of the other two modes with loss factors
+at least as large, so one layout serves every mode. The loss factors are
+
+```text
+D - 1, 2 * d - 2, n_A, 1, nu, 1, 17, mu, 1, 17, 1, 2
+```
+
+for alpha, xi, gamma, the prime row's scalar, for each combined instance its
+equality point, its batching scalar and one round, with `nu` and `mu` the
+logarithms of the two table lengths, and for the product instance of the
+prime opening its batching scalar and one round. When `D - 1` is the largest
+of them, E is admitted exactly when `(D - 1) * 2^103 <= P^e`.
+
+At the sample geometry `D - 1 = 647` is the largest, so the cardinality must
+be at least `647 * 2^103`, about `2^112.34`:
+
+| Proof prime | Extension degree | Site targets, least to largest | Result |
+| --- | --- | --- | --- |
+| `2^128 - 275` | 1 | 1 to 10 | admitted |
+| `2^64 - 59` | 2 | 1 to 10 | admitted |
+| `2^64 - 59` | 1 | 65 to 74 | rejected |
