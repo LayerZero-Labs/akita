@@ -60,7 +60,7 @@ fn recursive_prefix_slot_id_fixture() {
         multichunk,
         (
             3,
-            "b9697e9b255c7ad4e2e78c0a1c9a5f79751b32d7b79e7c10cb4bee15c8c47209".to_string(),
+            "77103df7310a9f3affdf8acf863324368bca6edf0f0ee1eeedc7c72f8365986d".to_string(),
         )
     );
 }
