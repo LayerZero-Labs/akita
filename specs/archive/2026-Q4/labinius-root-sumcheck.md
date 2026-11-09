@@ -1,7 +1,9 @@
 # LaBinius root sumchecks
 
-Status: implemented arithmetic kernels; the enclosing composition is specified in
-[`labinius-root-reduction.md`](labinius-root-reduction.md).
+Status: historical
+
+Archived 2026-Q4, when the `akita-labinius-pcs`, `-prover` and `-verifier` crates it
+described were removed. It is kept as the design record.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY in this document
 have the BCP 14 meanings defined by RFC 2119 and RFC 8174 when capitalized.
@@ -16,7 +18,7 @@ scalars, public weights, claims, round messages and round challenges are
 elements of `E`. The characteristic MUST be greater than 17: interpolation
 uses every node `0,...,17`, which MUST be distinct. Every proof prime
 admitted by
-[root admission](labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges)
+[root admission](../../labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges)
 satisfies this. Let `W` and `Y` be the committed response and image digit
 tables on `nu` and `mu` Boolean variables. The statement requires every
 `W(x)` and every `Y(x)` to belong to `[0, 15]` and
@@ -218,7 +220,7 @@ integers, checks divisibility by the commitment prime q and enforces the
 admitted carry range. It precedes alpha and does not build a quotient. The
 carry is owned by [the lowered relation](labinius-lowered-root.md#polynomial-rows)
 and its range by
-[root admission](labinius-root-admission.md#commitment-row-carry).
+[root admission](../../labinius-root-admission.md#commitment-row-carry).
 
 With a prime claim, `coefficient_weights` also adds
 `eta * eq(r_ring,j) * alpha^t` to coefficient t of column j. `prime_row_weights`

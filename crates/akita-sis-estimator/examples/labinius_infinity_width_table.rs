@@ -2,7 +2,7 @@
 //!
 //! `--from-csv` emits the runtime admission cells from the checked-in certified
 //! CSV without running a lattice search. Search mode emits both artifacts.
-//! `--q24` separately generates the q24 width and fixed-width certificate CSVs.
+//! The q24 certificates have their own example, `q24_infinity_width_table`.
 
 use akita_challenges::{BinaryChallengeProfile, BinaryScalarRing};
 use akita_params::sis::{
@@ -78,10 +78,6 @@ struct Args {
 }
 
 fn main() {
-    if env::args().nth(1).as_deref() == Some("--q24") {
-        generate_q24();
-        return;
-    }
     let args = Args::parse();
     if args.from_csv {
         let rows = certified_rows()
@@ -283,7 +279,7 @@ where
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: labinius_infinity_width_table --q24 [--output-dir PATH] | [--from-csv] [--rust-output PATH] [--output PATH] [--dims 162,324,648] [--max-rank N] [--search-cap N]"
+        "usage: labinius_infinity_width_table [--from-csv] [--rust-output PATH] [--output PATH] [--dims 162,324,648] [--max-rank N] [--search-cap N]"
     );
     process::exit(code);
 }
@@ -325,38 +321,4 @@ mod tests {
             assert_eq!(row.coeff_linf_bound, Source::collision_bound());
         }
     }
-}
-
-/// Separate opt-in output: the existing q25 files and runtime table stay intact.
-fn generate_q24() {
-    use akita_sis_estimator::labinius_width_table::q24;
-    let mut args = env::args().skip(2);
-    let output = match args.next().as_deref() {
-        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data"),
-        Some("--output-dir") => PathBuf::from(
-            args.next()
-                .unwrap_or_else(|| fatal("missing output directory")),
-        ),
-        Some(_) => fatal("usage: labinius_infinity_width_table --q24 [--output-dir PATH]"),
-    };
-    if args.next().is_some() {
-        fatal("unexpected q24 argument");
-    }
-    let started = Instant::now();
-    let widths = q24::generate_width_csv().unwrap_or_else(|error| fatal(&error.to_string()));
-    eprintln!(
-        "q24 width certificates completed in {:.3}s",
-        started.elapsed().as_secs_f64()
-    );
-    write_file(
-        &output.join("q24_commitment_prime_infinity_width.csv"),
-        &widths,
-    );
-    let started = Instant::now();
-    let cells = q24::generate_cells_csv().unwrap_or_else(|error| fatal(&error.to_string()));
-    write_file(&output.join("q24_infinity_cells.csv"), &cells);
-    eprintln!(
-        "q24 fixed-width certificates completed in {:.3}s",
-        started.elapsed().as_secs_f64()
-    );
 }

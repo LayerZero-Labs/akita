@@ -33,15 +33,11 @@ orchestration lives in `akita-pcs`.
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
 | `akita-zk-verifier` (`dev`) | Verifier-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
-| `akita-labinius-verifier` (`dev`) | Withdrawn standalone clear and root verification APIs; retained temporarily for removal |
-| `akita-labinius-prover` (`dev`) | Withdrawn standalone clear and root prover APIs; retained temporarily for removal |
-| `akita-labinius-pcs` (`dev`) | Withdrawn standalone binary-source PCS and its catalog generator; retained temporarily for removal |
 
 The native grouped binary root is the binary-source product. Its four kernel
-families live in `akita-cpu-backend/src/kernels/binary_source/`; no crate outside
-the three withdrawn standalone crates depends on those standalone crates. The
-withdrawn APIs include the F192 host path, arbitrary prime functionals, and the
-old Family64 PCS.
+families live in `akita-cpu-backend/src/kernels/binary_source/`. The former
+standalone LaBinius crates were removed, together with the F192 host path,
+arbitrary prime functionals, and the old Family64 PCS.
 
 ## Dependency Layers
 
@@ -65,43 +61,6 @@ graph TD
   Cpu["akita-cpu-backend"]
   Setup["akita-setup"]
   Pcs["akita-pcs"]
-  LabiniusVerifier["akita-labinius-verifier (dev)"]
-  LabiniusProver["akita-labinius-prover (dev)"]
-  LabiniusPcs["akita-labinius-pcs (dev)"]
-
-  LabiniusPcs --> LabiniusProver
-  LabiniusPcs --> LabiniusVerifier
-  LabiniusPcs --> Pcs
-  LabiniusPcs --> Cpu
-  LabiniusPcs --> Prover
-  LabiniusPcs --> Verifier
-  LabiniusPcs --> Config
-  LabiniusPcs --> Schedules
-  LabiniusPcs --> Params
-  LabiniusPcs --> Types
-  LabiniusPcs --> Algebra
-  LabiniusPcs --> Error
-  LabiniusPcs --> Ser
-  LabiniusPcs --> Field
-  LabiniusPcs -. labinius-catalog-gen .-> Planner
-  LabiniusPcs --> Challenges
-
-  LabiniusVerifier --> Algebra
-  LabiniusVerifier --> Error
-  LabiniusVerifier --> Sumcheck
-  LabiniusVerifier --> Challenges
-  LabiniusVerifier --> Params
-  LabiniusVerifier --> Types
-  LabiniusVerifier --> Transcript
-  LabiniusVerifier --> Field
-  LabiniusProver --> LabiniusVerifier
-  LabiniusProver --> Cpu
-  LabiniusProver --> Algebra
-  LabiniusProver --> Error
-  LabiniusProver --> Sumcheck
-  LabiniusProver --> Challenges
-  LabiniusProver --> Params
-  LabiniusProver --> Field
 
   Algebra --> Error
   Algebra --> Field
@@ -280,9 +239,3 @@ Successor export/import contracts and directed `Edge<A, B>` bridges live in
 constructor. The generic coordinator erases packets only for bridge dispatch;
 packet encoding and conversion belong to backend implementations. PCS integration
 tests implement external bridges using the public CPU packet API.
-
-The `labinius-catalog-gen` feature of `akita-labinius-pcs` enables its optional
-planner dependency for the offline catalog generator. Without that feature the
-crate loads its shipped catalogs through the ordinary artifact admission and
-does not depend on the planner; `scripts/check-crate-deps.sh akita-labinius-pcs`
-checks this for every runtime feature combination.

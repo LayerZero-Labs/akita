@@ -150,7 +150,7 @@ The cap depends on `m * D` through the union bound, not on C alone. When
 bound is zero. Otherwise the cap is smaller than the worst case by design:
 `C * Gamma = 23552` at the sample geometry. Completeness is then
 probabilistic, and the honest prover searches a fold-response nonce as
-specified in [the clear opening](labinius-clear-opening.md#fold-response-nonce).
+specified in [the clear opening](archive/2026-Q4/labinius-clear-opening.md#fold-response-nonce).
 Akita's tail bound conditions on the challenge supports and takes the signs of
 all `C * w` challenge monomials as independent and uniform. This family derives
 a challenge's signs from its support alone (`BinarySignRule::Shake256V1`), so
@@ -286,7 +286,7 @@ relation: it isolates one column of the prime left opening by cancelling a
 difference of two fold challenges modulo P, and the object a prime claim is
 about, the extracted source reduced modulo P, is defined only when that
 difference is a unit
-([lowered relation](labinius-lowered-root.md#prime-opening-and-the-unit-condition)).
+([lowered relation](archive/2026-Q4/labinius-lowered-root.md#prime-opening-and-the-unit-condition)).
 The commitment rows and the parity row are lifted to the integers and do not
 use it. Admission checks it for every opening mode, so a proof prime admitted
 for a binary claim is admitted for a prime claim, which adds no condition.
@@ -345,7 +345,7 @@ prime_table_log_len = ceil_log2(padded_coefficient_len * C)
 
 A packed coefficient p with offset o is stored as
 `p + o = sum_{l < digit_count} digit_l * 16^l`; the offset rule is owned by
-[the lowered relation](labinius-lowered-root.md#response-and-image-tables).
+[the lowered relation](archive/2026-Q4/labinius-lowered-root.md#response-and-image-tables).
 Every table position, including digit slots `l >= digit_count`, coefficient
 positions `t >= D` and positions above the natural extent, is subject to the
 same alphabet check. Public relation weights are zero at every padding
@@ -381,7 +381,7 @@ whose bad fraction is at most L over the cardinality needs the least g with
 
 There is no separate admission test. Every field challenge of the reduction
 is a site of its
-[grinding plan](labinius-root-reduction.md#grinding-plan), with its own loss
+[grinding plan](archive/2026-Q4/labinius-root-reduction.md#grinding-plan), with its own loss
 factor L, and each site pays its own g through an inline nonce. E is admitted
 exactly when every site in E has a target within the cap.
 `LoweredRootLayout::new::<F, E, _, _>` derives those sites, by the same
@@ -412,7 +412,7 @@ be at least `647 * 2^103`, about `2^112.34`:
 ## Derivation bias
 
 The admitted binary-root setup uses exact rejection sampling modulo q
-([setup contract](labinius-setup-contract.md#typed-setup-streams)). It does not
+([setup contract](archive/2026-Q4/labinius-setup-contract.md#typed-setup-streams)). It does not
 reduce P-field setup samples modulo q, and `AdmittedRootSetup::derive::<P>`
 does not apply a derivation-bias gate. The q matrix and P-field setup streams
 have separate typed domains.
@@ -620,10 +620,10 @@ Regenerate both q24 artifacts, with cells in parallel, using:
 
 ```bash
 rtk cargo run -p akita-sis-estimator --release --no-default-features \
-  --features labinius-sis,parallel --example labinius_infinity_width_table -- --q24
+  --features labinius-sis,parallel --example q24_infinity_width_table
 ```
 
-The optional `--output-dir PATH` after `--q24` chooses a comparison directory.
+The optional `--output-dir PATH` chooses a comparison directory.
 The `labinius_width_table` integration tests regenerate both CSV files
 byte for byte, retain the unchanged q25 regeneration test, and compare
 quantum discovery with the five reference cells. Without `parallel`, the
@@ -639,7 +639,7 @@ catalog integration remain separate work.
   `B_nu = 3 * m * D * (q - 1) * Delta + q * (2^e_KA - 1)`, belonged to the
   argument for an image table that was not range-checked. It is not needed
   and no code checks it; the reason is given with
-  [the lowered relation](labinius-lowered-root.md#source-binding-and-projection).
+  [the lowered relation](archive/2026-Q4/labinius-lowered-root.md#source-binding-and-projection).
   At the sample geometry its left side is about `2^70.1`, above `2^64 - 59`.
 - The image digits are not required to be those of canonical residues. Any
   alphabet-valid table satisfying the relation is accepted; only its residues
@@ -650,5 +650,5 @@ catalog integration remain separate work.
   It does not establish ring-ideal security.
 - Knowledge extraction across the fold challenges, the SIS reduction and
   Fiat-Shamir composition are open, as recorded in
-  [the root reduction](labinius-root-reduction.md#what-acceptance-proves-and-open-obligations).
+  [the root reduction](archive/2026-Q4/labinius-root-reduction.md#what-acceptance-proves-and-open-obligations).
   This is parameter admission, not protocol security admission.

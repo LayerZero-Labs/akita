@@ -1,8 +1,9 @@
 # LaBinius root reduction
 
-Status: implemented
-Book-chapter: book/src/how/architecture.md
-Tracking: https://github.com/LayerZero-Labs/akita/issues/45
+Status: historical
+
+Archived 2026-Q4, when the `akita-labinius-pcs`, `-prover` and `-verifier` crates it
+described were removed. It is kept as the design record.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY in this document
 have the BCP 14 meanings defined by RFC 2119 and RFC 8174 when capitalized.
@@ -38,14 +39,14 @@ stored base-16 digits; there is no digit-base parameter.
 The lowered relation runs over a field pair. The base field F is a prime
 field (`F: Field + CanonicalEncoding`) whose characteristic P passes
 `LabiniusRootShape::derive_encoding`
-([root admission](labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges)).
+([root admission](../../labinius-root-admission.md#proof-prime-admission-and-clear-integer-ranges)).
 The committed tables hold small integers of F. The challenge field E
 (`E: ExtField<F>`) holds every Fiat-Shamir field challenge, every sumcheck
 round message, every evaluation point and value, the message `y_Y` and all
 public weights. Integer no-wrap and unit-difference admission are statements
 about P, never about `|E|`. E is admitted exactly when every field-challenge
 site of the reduction has a proof-of-work target within Akita's cap
-([root admission](labinius-root-admission.md#challenge-field-admission)).
+([root admission](../../labinius-root-admission.md#challenge-field-admission)).
 Neither field is a parameter of the setup or of the clear commitment, and
 neither needs a root of unity. Two pairs are exercised:
 `F = E = Prime128Offset275`, and `F = Prime64Offset59` with
@@ -359,7 +360,7 @@ allocation and all size arithmetic MUST follow the verifier no-panic contract.
 
 Every field challenge of the reduction is a site of a public plan and is
 priced by Akita's rule
-([transcript grinding](transcript-grinding.md#security-model)). A site whose
+([transcript grinding](../../transcript-grinding.md#security-model)). A site whose
 conditional bad fraction is at most `L/|K|`, for its challenge set K, has the
 target
 
@@ -482,7 +483,7 @@ itself.
 ## Soundness ledger
 
 The ledger has the form of Akita's transcript-grinding accounting
-([transcript grinding](transcript-grinding.md#fold-work-decision-and-total-security-accounting)).
+([transcript grinding](../../transcript-grinding.md#fold-work-decision-and-total-security-accounting)).
 Each field challenge is a site i of the [grinding plan](#grinding-plan), with
 challenge set `K_i`, loss factor `L_i` and target `g_i`. For a challenge
 uniform conditional on the preceding transcript, fixed tables and
@@ -556,7 +557,7 @@ The fold-response nonce lets a prover obtain up to 4096 fold-challenge vectors
 for one transcript prefix. This is Akita's `FoldResponse` entry. `C/|S|` is
 the bound for one vector. Each candidate nonce is a random-oracle query and
 is charged to the query budget through the addresses it touches, as in
-[`fold-linf-rejection.md`](fold-linf-rejection.md); there is no separate
+[`fold-linf-rejection.md`](../../fold-linf-rejection.md); there is no separate
 12-bit debit and the fold budget `lambda_fold` is unchanged.
 
 Beta and beta' MUST be fresh, uniform conditional on the preceding
@@ -667,7 +668,7 @@ The 64-bit field as its own challenge field would need 65 to
 
 The KA term has degree below D, so it does not change the alpha bound. The
 derivation bias, an additive term of the SIS reduction, is owned by
-[root admission](labinius-root-admission.md#derivation-bias). Neither closes
+[root admission](../../labinius-root-admission.md#derivation-bias). Neither closes
 the composition obligations below.
 
 ## What acceptance proves, and open obligations
@@ -754,7 +755,7 @@ the deterministic envelope `C*Gamma` (23552 against `[-2184, 1911]` at the
 sample geometry), so a candidate can be rejected. Akita's cap derivation
 bounds by 7/8 the probability that one candidate's response exceeds the cap
 1266, under the sign model stated in
-[root admission](labinius-root-admission.md#fold-response), and the interval
+[root admission](../../labinius-root-admission.md#fold-response), and the interval
 contains `[-1266, 1266]`. If the 4096 candidates were independent at that bound, all
 would fail with probability at most `(7/8)^4096 < 2^-789`. The prover returns
 `InvalidInput` in that event. In a measurement over 40 seeds at the sample

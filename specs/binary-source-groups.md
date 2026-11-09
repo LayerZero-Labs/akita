@@ -308,9 +308,10 @@ the carrier. A word contributes `log2(ell)` bit-coordinate variables. Thus
 Small source shapes retain their true logical length and explicit zero mask.
 For a full `2^n'` bit table before small-size padding, carrier log is `n'-7`.
 
-The existing packing in `akita-labinius-verifier/src/source.rs` uses the same
-`t=4s+a` and alternating sign, but stores columns contiguously. For canonical
-carrier i its existing-kernel address is
+The CPU source-packing kernel (`akita-cpu-backend`
+`kernels/binary_source/weighted_source.rs`) uses the same `t=4s+a` and
+alternating sign, but stores columns contiguously. For canonical carrier i its
+kernel address is
 
 ```text
 h = (i mod C)*M + floor(i/C)
@@ -499,13 +500,14 @@ gates even when arithmetic and descriptor tests pass.
 - [Branch and extension contract](../docs/branches.md).
 - [Crate ownership](../docs/crate-graph.md) and
   [documentation policy](../docs/documentation.md).
-- [Live clear opening](labinius-clear-opening.md),
-  [field switch](labinius-field-switch.md) and
-  [packed F162 arithmetic](labinius-packed-f162.md).
-- [Live root admission](labinius-root-admission.md),
-  [setup contract](labinius-setup-contract.md),
-  [lowered root](labinius-lowered-root.md),
-  [root sumcheck](labinius-root-sumcheck.md),
-  [root reduction](labinius-root-reduction.md) and
-  [PCS](labinius-pcs.md).
+- [Field switch](labinius-field-switch.md),
+  [packed F162 arithmetic](labinius-packed-f162.md) and
+  [root admission](labinius-root-admission.md).
+- Historical design records for the removed standalone crates:
+  [clear opening](archive/2026-Q4/labinius-clear-opening.md),
+  [setup contract](archive/2026-Q4/labinius-setup-contract.md),
+  [lowered root](archive/2026-Q4/labinius-lowered-root.md),
+  [root sumcheck](archive/2026-Q4/labinius-root-sumcheck.md),
+  [root reduction](archive/2026-Q4/labinius-root-reduction.md) and
+  [PCS](archive/2026-Q4/labinius-pcs.md).
 - `specs/binary-source-checkpoint.md`, Theorems 7 and 8 (checkpoint proof, integrated separately).

@@ -1,8 +1,9 @@
 # LaBinius polynomial commitment
 
-Status: implemented
-Book-chapter: book/src/how/architecture.md
-Tracking: https://github.com/LayerZero-Labs/akita/issues/45
+Status: historical
+
+Archived 2026-Q4, when the `akita-labinius-pcs`, `-prover` and `-verifier` crates it
+described were removed. It is kept as the design record.
 
 This specification uses the uppercase requirement words of BCP 14
 ([RFC 2119](https://www.rfc-editor.org/rfc/rfc2119),
@@ -350,8 +351,8 @@ opens the tables bound before the challenges they depend on. Together with
 [the root sumchecks](labinius-root-sumcheck.md), this supplies the required
 commitment oracle. Root admission follows
 [the setup contract](labinius-setup-contract.md). Akita's assumptions and setup
-contract are in [the verifier contract](../docs/verifier-contract.md) and
-[security](../book/src/how/security.md). No new numerical oracle error is
+contract are in [the verifier contract](../../../docs/verifier-contract.md) and
+[security](../../../book/src/how/security.md). No new numerical oracle error is
 assigned here.
 
 Verification does not recompute the clear commitment or establish that an
