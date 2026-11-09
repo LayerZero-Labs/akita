@@ -240,7 +240,13 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
     {
         let stream = layout(d, &config, Some(rejection), count).unwrap();
         #[cfg(feature = "parallel")]
-        assert_eq!(stream.parallel(), count == 600);
+        {
+            #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
+            let capturing = std::env::var_os("AKITA_CAPTURE_CHALLENGES").is_some();
+            #[cfg(not(all(not(target_arch = "riscv64"), feature = "experiment-capture")))]
+            let capturing = false;
+            assert_eq!(stream.parallel(), count == 600 && !capturing);
+        }
         let ChallengePolicy::OperatorNorm { threshold, table } =
             ChallengePolicy::new(d, &config, Some(rejection)).unwrap()
         else {
