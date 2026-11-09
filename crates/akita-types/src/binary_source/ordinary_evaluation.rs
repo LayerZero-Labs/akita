@@ -8,7 +8,8 @@ use akita_error::{checked, AkitaError};
 use jolt_field::Field;
 
 impl OrdinaryNativeRootPlan {
-    pub(in crate::binary_source) fn evaluation_weights<E: Field>(
+    /// Compile the source evaluation equation at one point for every signed slot.
+    pub fn evaluation_weights<E: Field>(
         &self,
         repacking: &RootCoefficientRepacking,
         point: &[E],

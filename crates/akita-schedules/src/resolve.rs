@@ -16,6 +16,8 @@ pub struct ResolvedScheduleRow {
     profiles: CommittedGroupBatchProfile,
     schedule: FoldSchedule,
     canonical_root_transition: bool,
+    #[cfg(feature = "labinius-trinomial")]
+    grouped_root: Option<crate::native_root::NativeRootSources>,
 }
 
 impl ResolvedScheduleRow {
@@ -48,6 +50,13 @@ impl ResolvedScheduleRow {
         transition: &impl RootTransitionValidation,
     ) -> Result<Self, AkitaError> {
         schedule.validate_nonterminal_opening_execution(policy.claim_ext_degree)?;
+        #[cfg(feature = "labinius-trinomial")]
+        if let Some(plan) = transition.grouped_root() {
+            crate::audit::audit_grouped_schedule(&profiles, &schedule, policy, plan)?;
+        } else {
+            audit_resolved_schedule(&profiles, &schedule, policy)?;
+        }
+        #[cfg(not(feature = "labinius-trinomial"))]
         audit_resolved_schedule(&profiles, &schedule, policy)?;
         validate_schedule_ring_dims(&schedule)?;
         validate_canonical_transition_lengths(
@@ -64,6 +73,8 @@ impl ResolvedScheduleRow {
             profiles,
             schedule,
             canonical_root_transition: transition.is_ordinary(),
+            #[cfg(feature = "labinius-trinomial")]
+            grouped_root: transition.grouped_root().cloned(),
         })
     }
 
@@ -85,6 +96,12 @@ impl ResolvedScheduleRow {
     /// There is no separate runtime production-admission gate.
     pub const fn is_native_root(&self) -> bool {
         !self.canonical_root_transition
+    }
+
+    /// Trusted ordered sources of an explicitly admitted grouped root.
+    #[cfg(feature = "labinius-trinomial")]
+    pub fn grouped_root(&self) -> Option<&crate::native_root::NativeRootSources> {
+        self.grouped_root.as_ref()
     }
 
     /// Batch-level public schedule selection.
@@ -119,6 +136,11 @@ impl ResolvedScheduleRow {
 /// Extension seam: a root producer supplies its transition contract while the
 /// recursive suffix stays canonical; <https://github.com/LayerZero-Labs/akita/issues/285>.
 pub(crate) trait RootTransitionValidation {
+    #[cfg(feature = "labinius-trinomial")]
+    fn grouped_root(&self) -> Option<&crate::native_root::NativeRootSources> {
+        None
+    }
+
     fn validate_root(
         &self,
         root_layout: &akita_params::OpeningClaimsLayout,

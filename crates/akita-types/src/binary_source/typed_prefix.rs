@@ -871,3 +871,6 @@ pub use weights::TypedPrefixWeights;
 #[cfg(test)]
 #[path = "typed_prefix_tests.rs"]
 mod tests;
+
+#[path = "translated_prefix_weights.rs"]
+mod translated_weights;

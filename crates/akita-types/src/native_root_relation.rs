@@ -269,7 +269,7 @@ impl<E: Field> NativeRootWeights<E> {
 
     /// Join ordered linear oracles on one domain, adding an independent target.
     /// Reuse the first oracle's storage rather than copying its explicit terms.
-    pub(crate) fn merge(
+    pub fn merge(
         table_len: usize,
         components: impl IntoIterator<Item = Self>,
         claim: E,
@@ -319,6 +319,28 @@ impl<E: Field> NativeRootWeights<E> {
     }
     pub fn claim(&self) -> E {
         self.claim
+    }
+
+    /// Translate a local coefficient oracle into a larger assembled witness.
+    /// Local zero padding contributes no weight to any adjacent source.
+    pub fn translated(self, offset: usize, table_len: usize) -> Result<Self, AkitaError> {
+        let end = checked::sum([offset, self.table_len]).ok_or(AkitaError::InvalidProof)?;
+        if !table_len.is_power_of_two() || end > table_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        let table = self.materialize()?;
+        let mut terms = Vec::new();
+        terms.try_reserve_exact(table.iter().filter(|value| !value.is_zero()).count())
+            .map_err(|_| AkitaError::InvalidProof)?;
+        for (address, value) in table.into_iter().enumerate() {
+            if !value.is_zero() {
+                terms.push((
+                    checked::sum([offset, address]).ok_or(AkitaError::InvalidProof)?,
+                    value,
+                ));
+            }
+        }
+        Self::new(table_len, terms, self.claim)
     }
 
     /// Public MLE oracle for the ordinary fused Stage 2.

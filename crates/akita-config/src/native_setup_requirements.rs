@@ -166,3 +166,36 @@ impl<F> NativeSetupRequirements<F> {
             .collect()
     }
 }
+
+/// Bind actual ordered opening claims to a trusted grouped row and its setup.
+pub fn bind_grouped_root<E: Clone, C>(
+    row: &crate::ResolvedScheduleRow,
+    setup: &AkitaSetupDescriptor,
+    claims: &akita_types::OpeningClaims<'_, E, C>,
+) -> Result<GroupedTypedPrefix, AkitaError> {
+    let sources = row.grouped_root().ok_or_else(|| {
+        AkitaError::InvalidSetup("grouped root requires explicit source admission".into())
+    })?;
+    let next = row.schedule().recursive_folds.first().ok_or(AkitaError::InvalidProof)?;
+    let plan = akita_types::binary_source::GroupedNativeRootPlan::from_claims(
+        claims, row.profiles(), sources.signed_widths(), next.params.d_a(),
+    )?;
+    if plan.identity() != sources.identity() {
+        return Err(AkitaError::InvalidSetup("grouped root source plan mismatch".into()));
+    }
+    let first = next.params.setup_prefix().and_then(|prefix| prefix.slot_id())
+        .ok_or(AkitaError::InvalidProof)?;
+    let capacity = GroupedPrefixCapacity::new(&plan, next.params.own_group().profile, first)?;
+    required_native_setup_prefix_slot_ids_for_row(row, &capacity)?;
+    if akita_params::setup_matrix_capacity_for_schedule(row.schedule())?.num_field_elements
+        > setup.num_field_elements
+        || row.profiles().precommitteds.iter().chain(std::iter::once(&row.profiles().final_group))
+            .any(|profile| profile.group.num_vars() > setup.max_num_vars
+                || profile.group.num_polynomials() > setup.max_num_batched_polys)
+    {
+        return Err(AkitaError::InvalidSetup("grouped root setup envelope mismatch".into()));
+    }
+    let binding = GroupedTypedPrefix::bind_capacity(capacity, setup.clone())?;
+    binding.validate_plan(&plan)?;
+    Ok(binding)
+}

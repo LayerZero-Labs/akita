@@ -542,6 +542,18 @@ pub(crate) fn audit_resolved_schedule(
     schedule: &FoldSchedule,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
+    audit_schedule_with_root(profiles, schedule, policy, |group| {
+        audit_schedule_group(group, policy)
+    })
+}
+
+/// The source contract varies at the root; all structure and suffix checks are shared.
+fn audit_schedule_with_root(
+    profiles: &CommittedGroupBatchProfile,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+    mut root: impl FnMut(ScheduleGroup<'_>) -> Result<(), AkitaError>,
+) -> Result<(), AkitaError> {
     validate_policy(policy)?;
     profiles.validate(policy.decomposition.field_bits())?;
     schedule.validate_structure()?;
@@ -578,33 +590,117 @@ pub(crate) fn audit_resolved_schedule(
     }
 
     visit_schedule_groups(schedule, |group| {
-        let label = group.position().to_string();
-        match group {
-            ScheduleGroup::Frozen {
-                params,
-                num_response_chunks,
-                ..
-            } => audit_frozen_group(&label, params, num_response_chunks, policy),
-            ScheduleGroup::Final {
-                position,
-                params,
-                num_claims,
-                fold_level,
-            } => {
-                if position == ScheduleGroupPosition::RootFinal
-                    && !matches!(
-                        params.inner().matrix.security_route(),
-                        InnerCommitSecurityRoute::Linf(_)
-                    )
-                {
-                    return Err(invalid(&label, "root cannot use an L2 A security route"));
-                }
-                audit_committed_params(&label, params, num_claims, fold_level, policy)
+        match group.position() {
+            ScheduleGroupPosition::RootPrecommitted(_) | ScheduleGroupPosition::RootFinal => {
+                root(group)
             }
-            ScheduleGroup::Terminal {
-                params, fold_level, ..
-            } => audit_terminal(params, TerminalL2ModelState { fold_level }, policy),
+            _ => audit_schedule_group(group, policy),
         }
+    })
+}
+
+fn audit_schedule_group(
+    group: ScheduleGroup<'_>,
+    policy: &PlannerPolicy,
+) -> Result<(), AkitaError> {
+    let label = group.position().to_string();
+    match group {
+        ScheduleGroup::Frozen {
+            params,
+            num_response_chunks,
+            ..
+        } => audit_frozen_group(&label, params, num_response_chunks, policy),
+        ScheduleGroup::Final {
+            position,
+            params,
+            num_claims,
+            fold_level,
+        } => {
+            if position == ScheduleGroupPosition::RootFinal
+                && !matches!(
+                    params.inner().matrix.security_route(),
+                    InnerCommitSecurityRoute::Linf(_)
+                )
+            {
+                return Err(invalid(&label, "root cannot use an L2 A security route"));
+            }
+            audit_committed_params(&label, params, num_claims, fold_level, policy)
+        }
+        ScheduleGroup::Terminal {
+            params, fold_level, ..
+        } => audit_terminal(params, TerminalL2ModelState { fold_level }, policy),
+    }
+}
+
+#[cfg(feature = "labinius-trinomial")]
+pub(crate) fn audit_grouped_schedule(
+    profiles: &CommittedGroupBatchProfile,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+    sources: &crate::native_root::NativeRootSources,
+) -> Result<(), AkitaError> {
+    if policy.sis_modulus_profile != akita_params::SisModulusProfileId::Q64Offset59
+        || policy.claim_ext_degree != 2
+        || sources.profiles() != profiles
+    {
+        return Err(invalid("grouped root", "source inventory or field differs"));
+    }
+    let params = &schedule.root.params;
+    params.validate_block_geometry()?;
+    params.witness_chunk.validate()?;
+    validate_role_dims(params.role_dims())?;
+    params.fold_challenge_config().validate_for_ring_dim(params.d_a())
+        .map_err(|message| invalid("grouped root", message))?;
+    audit_open_matrix("grouped root", &params.open().matrix, policy)?;
+    let open_digits = num_digits_open(DecompositionParams {
+        log_basis: params.open().digits.log_basis,
+        ..policy.decomposition
+    });
+    if params.witness_chunk != policy.witness_chunk_at_level(0)
+        || params.open().digits.num_digits != open_digits
+        || params.open().matrix.input_width()
+            != expected_d_width("grouped root", params,
+                profiles.final_group.group.num_polynomials(), policy.claim_ext_degree)?
+    {
+        return Err(invalid("grouped root", "root D or ownership geometry differs"));
+    }
+    audit_bound("grouped root", params.open().matrix.coeff_linf_bound(),
+        rounded_up_collision_inf_norm(policy.sis_security_policy, policy.sis_modulus_profile,
+            SisMatrixRole::Open, params.d_d(), params.open().digits.log_basis))?;
+    audit_schedule_with_root(profiles, schedule, policy, |group| {
+        let source = match group {
+            ScheduleGroup::Frozen { params, .. } => params,
+            ScheduleGroup::Final { params, .. } => params.own_group(),
+            ScheduleGroup::Terminal { .. } => return Err(AkitaError::InvalidProof),
+        };
+        let label = group.position().to_string();
+        source.validate()?;
+        source.profile.validate_frozen_precommit(64)?;
+        audit_inner_matrix(&label, &source.profile.inner.matrix, policy)?;
+        audit_outer_matrix(&label, &source.profile.outer.matrix, policy)?;
+        let inner_bound = source.profile.inner.matrix.coeff_linf_bound()
+            .ok_or_else(|| invalid(&label, "native source cannot use an L2 matrix"))?;
+        for (role, dimension, declared, basis) in [
+            (SisMatrixRole::Inner, source.profile.inner.matrix.ring_dimension(),
+                inner_bound, source.profile.inner.digits.log_basis),
+            (SisMatrixRole::Outer, source.profile.outer.matrix.ring_dimension(),
+                source.profile.outer.matrix.coeff_linf_bound(),
+                source.profile.outer.digits.log_basis),
+        ] {
+            audit_bound(&label, declared, rounded_up_collision_inf_norm(
+                policy.sis_security_policy, policy.sis_modulus_profile, role, dimension, basis,
+            ))?;
+        }
+        if source.profile.outer.digits.num_digits != num_digits_open(DecompositionParams {
+            log_basis: source.profile.outer.digits.log_basis,
+            ..policy.decomposition
+        }) || source.opening.num_digits_open != num_digits_open(DecompositionParams {
+            log_basis: source.opening.log_basis_open,
+            ..policy.decomposition
+        }) {
+            return Err(invalid(&label, "native image or opening depth differs"));
+        }
+        Ok(())
     })
 }
 

@@ -87,6 +87,60 @@ impl<E: Field> TypedPrefixWeights<E> {
         Ok(())
     }
 
+    /// Assemble natural local streams at their authenticated prefix offsets.
+    pub fn from_translated(
+        domain_len: usize,
+        parts: impl IntoIterator<Item = (usize, Vec<E>)>,
+    ) -> Result<Self, AkitaError> {
+        if !domain_len.is_power_of_two() || domain_len < SLOTS {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut table = Vec::new();
+        table.try_reserve_exact(domain_len).map_err(|_| AkitaError::InvalidProof)?;
+        table.resize(domain_len, E::zero());
+        for (offset, weights) in parts {
+            let range = checked::range(offset, weights.len()).ok_or(AkitaError::InvalidProof)?;
+            for (target, value) in table.get_mut(range).ok_or(AkitaError::InvalidProof)?
+                .iter_mut().zip(weights)
+            {
+                *target += value;
+            }
+        }
+        let mut builder = Builder {
+            pool: vec![E::zero(); SLOTS], blocks: Vec::new(),
+            scales: Vec::new(), rows: Vec::new(),
+        };
+        for (block, row) in table.chunks_exact(SLOTS).enumerate() {
+            if row.iter().any(|value| !value.is_zero()) {
+                let index = builder.push_row(row)?;
+                builder.push_block(block * SLOTS, [E::one(), E::zero()], [index, ZERO_ROW]);
+            }
+        }
+        Ok(Self {
+            domain_len, width: SLOTS, pool: builder.pool, blocks: builder.blocks,
+            scales: builder.scales, rows: builder.rows,
+        })
+    }
+
+    /// Evaluate the same public weight served to the typed Stage 3 kernel.
+    pub fn evaluate(&self, point: &[E]) -> Result<E, AkitaError> {
+        if self.width != SLOTS || point.len() != self.domain_len.trailing_zeros() as usize {
+            return Err(AkitaError::InvalidProof);
+        }
+        let (low, high) = point.split_at_checked(SLOT_BITS).ok_or(AkitaError::InvalidProof)?;
+        let low = EqPolynomial::evals(low)?;
+        let mut result = E::zero();
+        for (live, &block) in self.blocks.iter().enumerate() {
+            let mut weight = E::zero();
+            for (scale, row) in self.block_terms(live)? {
+                weight += scale * row.iter().zip(&low)
+                    .fold(E::zero(), |sum, (&a, &b)| sum + a * b);
+            }
+            result += weight * eq_eval_at_index(high, block);
+        }
+        Ok(result)
+    }
+
     fn row(&self, row: u32) -> Result<&[E], AkitaError> {
         let start = checked::product([row as usize, self.width]).ok_or(AkitaError::InvalidProof)?;
         self.pool

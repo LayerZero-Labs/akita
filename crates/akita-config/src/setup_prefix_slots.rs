@@ -49,6 +49,11 @@ pub fn required_native_setup_prefix_slot_ids_for_row(
     row: &akita_schedules::ResolvedScheduleRow,
     capacity: &akita_types::binary_source::GroupedPrefixCapacity,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
+    if let Some(plan) = row.grouped_root() {
+        if plan.identity() != capacity.plan().identity() {
+            return Err(AkitaError::InvalidSetup("native source plan mismatch".into()));
+        }
+    }
     let schedule = row.schedule();
     let successor = schedule.recursive_folds.first().ok_or_else(|| {
         AkitaError::InvalidSetup("native setup requires a first successor".into())

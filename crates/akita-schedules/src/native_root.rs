@@ -11,12 +11,64 @@ use akita_challenges::FoldChallengeDistribution;
 use akita_error::{checked, AkitaError};
 use akita_params::{CommittedGroupBatchProfile, FoldParams, FoldSchedule, OpeningClaimsLayout};
 
+/// The source contract authenticated by a grouped native row.
+/// The caller obtains the identity from its validated grouped plan. The schedule
+/// layer validates frozen profiles and signed widths; the opening layer must
+/// reconstruct that plan from the actual manifests and compare its identity.
+#[derive(Clone, Debug)]
+pub struct NativeRootSources {
+    profiles: CommittedGroupBatchProfile,
+    signed_widths: [akita_params::ordinary_source::OrdinarySourceWidth; 4],
+    identity: Vec<u8>,
+}
+
+impl NativeRootSources {
+    pub fn new(
+        profiles: CommittedGroupBatchProfile,
+        signed_widths: [akita_params::ordinary_source::OrdinarySourceWidth; 4],
+        identity: Vec<u8>,
+    ) -> Result<Self, AkitaError> {
+        profiles.validate(64)?;
+        if profiles.precommitteds.len() != 7 || identity.is_empty() || identity.len() > 1 << 20 {
+            return Err(AkitaError::InvalidSetup("invalid grouped source inventory".into()));
+        }
+        for (profile, width) in profiles.precommitteds.iter().skip(4)
+            .chain(std::iter::once(&profiles.final_group)).zip(signed_widths)
+        {
+            width.validate_profile(profile)?;
+        }
+        for profile in profiles.precommitteds.iter().chain(std::iter::once(&profiles.final_group)) {
+            if profile.inner.matrix.sis_modulus_profile()
+                != akita_params::SisModulusProfileId::Q64Offset59
+                || profile.outer.matrix.sis_modulus_profile()
+                    != akita_params::SisModulusProfileId::Q64Offset59
+            {
+                return Err(AkitaError::InvalidSetup("grouped source field mismatch".into()));
+            }
+        }
+        Ok(Self { profiles, signed_widths, identity })
+    }
+
+    pub fn profiles(&self) -> &CommittedGroupBatchProfile {
+        &self.profiles
+    }
+
+    pub fn signed_widths(&self) -> &[akita_params::ordinary_source::OrdinarySourceWidth; 4] {
+        &self.signed_widths
+    }
+
+    pub fn identity(&self) -> &[u8] {
+        &self.identity
+    }
+}
+
 /// Trusted geometry of the native root's balanced-digit output and typed A prefix.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct NativeRootTransition {
     physical_cells: usize,
     log_digit_bound: u32,
     setup_prefix_natural_cells: usize,
+    sources: Option<NativeRootSources>,
 }
 
 impl NativeRootTransition {
@@ -44,34 +96,45 @@ impl NativeRootTransition {
             physical_cells,
             log_digit_bound,
             setup_prefix_natural_cells,
+            sources: None,
         })
     }
 
     /// Physical live span, including virtual tails between witness segments.
-    pub const fn physical_cells(self) -> usize {
+    pub const fn physical_cells(&self) -> usize {
         self.physical_cells
     }
     /// Logarithm of the balanced digit alphabet.
-    pub const fn log_digit_bound(self) -> u32 {
+    pub const fn log_digit_bound(&self) -> u32 {
         self.log_digit_bound
     }
     /// Natural cells of the typed A product's padded rank/coefficient tensor.
-    pub const fn setup_prefix_natural_cells(self) -> usize {
+    pub const fn setup_prefix_natural_cells(&self) -> usize {
         self.setup_prefix_natural_cells
+    }
+
+    /// Bind a trusted source inventory without changing the physical transition.
+    pub fn with_sources(mut self, sources: NativeRootSources) -> Self {
+        self.sources = Some(sources);
+        self
     }
 
     /// Re-audit an explicitly selected native transition and every ordinary suffix field.
     pub fn resolve(
-        self,
+        &self,
         profiles: CommittedGroupBatchProfile,
         schedule: FoldSchedule,
         policy: &PlannerPolicy,
     ) -> Result<ResolvedScheduleRow, AkitaError> {
-        ResolvedScheduleRow::with_root_transition(profiles, schedule, policy, &self)
+        ResolvedScheduleRow::with_root_transition(profiles, schedule, policy, self)
     }
 }
 
 impl RootTransitionValidation for NativeRootTransition {
+    fn grouped_root(&self) -> Option<&NativeRootSources> {
+        self.sources.as_ref()
+    }
+
     fn validate_root(
         &self,
         _root_layout: &OpeningClaimsLayout,

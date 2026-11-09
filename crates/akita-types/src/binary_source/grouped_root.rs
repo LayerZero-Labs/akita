@@ -1,6 +1,6 @@
 //! Ordered capacity geometry for a staged four-group p64 session.
 
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::GroupCommitPhaseParams;
@@ -186,6 +186,22 @@ impl GroupedNativeRootPlan {
         })
     }
 
+    /// Ordered slices of the single concatenated root D message.
+    pub fn d_payload_ranges(&self) -> Result<Vec<std::ops::Range<usize>>, AkitaError> {
+        let mut ranges = Vec::new();
+        let mut end = 0;
+        for binary in &self.binary {
+            let source = binary.source();
+            let label = source.manifest.d_label(source.word, source.prime.planes().len())?;
+            let len = checked::product([label.rank as usize, source.manifest.b_ring_dimension()])
+                .ok_or(AkitaError::InvalidProof)?;
+            let range = checked::range(end, len).ok_or(AkitaError::InvalidProof)?;
+            end = range.end;
+            ranges.push(range);
+        }
+        Ok(ranges)
+    }
+
     pub fn binary(&self) -> &[GroupedBinaryPlan] {
         &self.binary
     }
@@ -216,3 +232,41 @@ impl GroupedNativeRootPlan {
 #[cfg(test)]
 #[path = "grouped_root_tests.rs"]
 mod tests;
+
+impl GroupedNativeRootPlan {
+    /// Reconstruct the plan from ordered public claims and trusted source contracts.
+    pub fn from_claims<E: Clone, C>(
+        claims: &crate::OpeningClaims<'_, E, C>,
+        profiles: &akita_params::CommittedGroupBatchProfile,
+        widths: &[OrdinarySourceWidth; 4],
+        destination: usize,
+    ) -> Result<Self, AkitaError> {
+        use crate::opening_claims::GroupClaimKind;
+        if claims.num_groups() != 8 || profiles.precommitteds.len() != 7 {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut binary = Vec::new();
+        for (index, group) in claims.groups().iter().take(4).enumerate() {
+            let GroupClaimKind::Binary { manifest, claim, prime } = group.kind() else {
+                return Err(AkitaError::InvalidProof);
+            };
+            if manifest.setup_group() != index as u64 || prime.claims().len() != 2 {
+                return Err(AkitaError::InvalidProof);
+            }
+            binary.push(GroupedBinarySource {
+                manifest: manifest.as_ref().clone(),
+                carrier: *profiles.precommitteds.get(index).ok_or(AkitaError::InvalidProof)?,
+                setup_group: index as u64, word: claim.is_some(), prime: prime.clone(),
+            });
+        }
+        for group in claims.groups().iter().skip(4) {
+            if group.kind() != &GroupClaimKind::Ordinary || group.num_points() != 2 {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        let signed = profiles.precommitteds.iter().skip(4)
+            .chain(std::iter::once(&profiles.final_group)).copied()
+            .zip(widths.iter().copied()).collect::<Vec<_>>();
+        Self::new(&binary, &signed, destination)
+    }
+}

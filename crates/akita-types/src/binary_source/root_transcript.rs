@@ -375,3 +375,94 @@ mod p64_tests {
         assert_eq!(values, vec![E::from_base_fn(|i| F::from_u64([7, 9][i]))]);
     }
 }
+
+/// Bind the entire ordered grouped statement before any root challenge.
+/// The legacy statement atom and its message order remain independent.
+pub fn grouped_root_statement<F, E, S, C>(
+    state: &mut S,
+    binding: &super::GroupedTypedPrefix,
+    claims: &crate::OpeningClaims<'_, E, C>,
+    payloads: &[&[F]],
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F>,
+    S: ProofChannel,
+{
+    use crate::opening_claims::GroupClaimKind;
+    akita_params::binary_setup::BinaryFieldProfile::P64.check_field_pair(
+        akita_params::field_modulus::<F>()?, E::DEGREE,
+    )?;
+    let plan = binding.plan();
+    let signed = plan.ordinary().ok_or(AkitaError::InvalidProof)?;
+    if claims.num_groups() != 8 || payloads.len() != 8 || plan.binary().len() != 4
+        || signed.plans().len() != 4
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let site = |group, stage, round| ProtocolSiteId {
+        family: SITE_FAMILY_ROOT_STATEMENT, group, stage, round, ..ProtocolSiteId::default()
+    };
+    let mut header = b"AkitaGroupedRoot/p64/v1".to_vec();
+    header.extend_from_slice(&8u64.to_le_bytes());
+    header.extend_from_slice(&4u64.to_le_bytes());
+    header.extend_from_slice(binding.identity());
+    akita_transcript::public_bytes(state, site(0, 9, 0), &header)?;
+    for (index, (group, payload)) in claims.groups().iter().zip(payloads).enumerate() {
+        let group_index = u32::try_from(index).map_err(|_| AkitaError::InvalidProof)?;
+        if let Some(local) = plan.binary().get(index) {
+            let GroupClaimKind::Binary { manifest, claim, prime } = group.kind() else {
+                return Err(AkitaError::InvalidProof);
+            };
+            if manifest.as_ref() != &local.source().manifest
+                || prime != &local.source().prime || claim.is_some() != local.source().word
+                || payload.len() != manifest.payload_coefficients()?
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            akita_transcript::public_bytes(
+                state, site(group_index, 3, 0), &manifest.canonical_bytes(),
+            )?;
+            if let Some(claim) = claim {
+                claim.validate(manifest.descriptor())?;
+                akita_transcript::public_bytes(
+                    state, site(group_index, 4, 0), &claim.canonical_bytes(),
+                )?;
+            }
+            akita_transcript::public_bytes(
+                state, site(group_index, 5, 0), &prime.canonical_bytes(),
+            )?;
+        } else {
+            let source = signed.plans().get(index - 4).ok_or(AkitaError::InvalidProof)?;
+            if group.kind() != &GroupClaimKind::Ordinary || group.num_points() != 2
+                || payload.len()
+                    != source.profile().outer_compression_plan()?.terminal_coefficients()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            let mut contract = super::BinaryCommittedGroupManifest::carrier_profile_identity(
+                source.profile(),
+            )?.to_vec();
+            contract.extend_from_slice(&source.source_width().ok_or(AkitaError::InvalidProof)?
+                .bits().to_le_bytes());
+            contract.extend_from_slice(&2u64.to_le_bytes());
+            akita_transcript::public_bytes(state, site(group_index, 10, 0), &contract)?;
+        }
+        let mut lifted = Vec::new();
+        lifted.try_reserve_exact(payload.len()).map_err(|_| AkitaError::InvalidProof)?;
+        lifted.extend(payload.iter().copied().map(E::lift_base));
+        akita_transcript::public_extensions::<F, E, _>(state, site(group_index, 11, 0), &lifted)?;
+        if index >= 4 {
+            for (point, reading) in group.point_evaluations().enumerate() {
+                let point = u32::try_from(point).map_err(|_| AkitaError::InvalidProof)?;
+                akita_transcript::public_extensions::<F, E, _>(
+                    state, site(group_index, 12, point), reading.point,
+                )?;
+                akita_transcript::public_extensions::<F, E, _>(
+                    state, site(group_index, 13, point), reading.evaluations,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}

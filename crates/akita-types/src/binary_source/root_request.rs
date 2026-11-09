@@ -40,3 +40,10 @@ pub struct BinaryProjectionWitness {
     pub residuals: Vec<[i128; 648]>,
     pub matrix: std::sync::Arc<Vec<Vec<[i128; 648]>>>,
 }
+
+/// Complete private inventory for one assembled grouped root witness.
+pub struct GroupedRootWitnessRequest<H> {
+    pub binding: super::GroupedTypedPrefix,
+    pub terminals: Vec<Option<BinaryTerminalClaim>>,
+    pub handles: Vec<H>,
+}

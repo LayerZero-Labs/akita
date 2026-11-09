@@ -67,7 +67,7 @@ mod runtime_chunking_tests;
 #[cfg(test)]
 mod schedule_artifact_tests;
 #[cfg(feature = "labinius-trinomial")]
-pub use native_setup_requirements::NativeSetupRequirements;
+pub use native_setup_requirements::{bind_grouped_root, NativeSetupRequirements};
 #[cfg(feature = "labinius-trinomial")]
 pub use setup_prefix_slots::required_native_setup_prefix_slot_ids_for_row;
 mod setup_prefix_slots;

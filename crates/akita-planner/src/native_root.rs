@@ -285,7 +285,7 @@ mod tests {
         let admitted = ValidatedScheduleCatalog::try_new_native_root(
             "native_admission_fixture",
             [],
-            [(row.profiles().clone(), schedule.clone(), transition)],
+            [(row.profiles().clone(), schedule.clone(), transition.clone())],
             policy,
             Config::ring_challenge_config,
         )
