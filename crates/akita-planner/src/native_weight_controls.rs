@@ -108,10 +108,20 @@ pub(super) fn compare(readings_only: bool) {
         })
         .collect::<Vec<_>>();
     let ordinary = plan.ordinary().unwrap();
+    // Zero batches still require the compressed terminal payload shape.
     let signed_payloads = ordinary
         .plans()
         .iter()
-        .map(|source| vec![ext::<E>([47, 53]); source.profile().outer.matrix.output_rank() * 64])
+        .map(|source| {
+            vec![
+                ext::<E>([47, 53]);
+                source
+                    .profile()
+                    .outer_compression_plan()
+                    .unwrap()
+                    .terminal_coefficients()
+            ]
+        })
         .collect::<Vec<_>>();
     let first = ordinary
         .plans()
