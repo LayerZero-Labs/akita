@@ -74,9 +74,22 @@ pub(crate) fn digit_relation_rows_streamed_prover_bounds<
         }};
     }
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => run!(params),
-        ProtocolCrtNttParams::Q64(params) => run!(params),
-        ProtocolCrtNttParams::Q128(params) => run!(params),
+        ProtocolCrtNttParams::Q32(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
+        {
+            run!(params)
+        }
+        ProtocolCrtNttParams::Q64(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } =>
+        {
+            run!(params)
+        }
+        ProtocolCrtNttParams::Q128(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } =>
+        {
+            run!(params)
+        }
+        _ => Err(unselectable_crt_profile_error::<F>()),
     }
 }
 
