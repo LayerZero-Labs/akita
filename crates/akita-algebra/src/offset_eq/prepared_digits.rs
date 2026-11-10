@@ -241,6 +241,37 @@ impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
         if maximum >= (1usize << self.point_bits) {
             return Err(invalid());
         }
+        // Contract repeated low residues after the row walk. Linearity moves
+        // each low-window multiplication outside the long row loop.
+        let width = self.low_mask + 1;
+        if rows >= 4 * width {
+            let template = weights
+                .with_weight(first, AffineWeight::zero_like)
+                .ok_or_else(invalid)?;
+            let mut left_buckets = vec![template.zero_like(); width];
+            let mut right_buckets = vec![template.zero_like(); width];
+            self.walk(base, first, end, |row, residue, left, right| {
+                weights.with_weight(row, |weight| {
+                    left_buckets[residue].add_scaled(weight, left);
+                    right_buckets[residue].add_scaled(weight, right);
+                })
+            })?;
+            match &self.tables {
+                Tables::Unit { no_carry, carry } => {
+                    for i in 0..width {
+                        out.add_scaled(&left_buckets[i], no_carry[i]);
+                        out.add_scaled(&right_buckets[i], carry[i]);
+                    }
+                }
+                Tables::Folded { no_carry, carry } => {
+                    for i in 0..width {
+                        out.add(&left_buckets[i].multiply(&no_carry[i]));
+                        out.add(&right_buckets[i].multiply(&carry[i]));
+                    }
+                }
+            }
+            return Ok(());
+        }
         match &self.tables {
             Tables::Unit { no_carry, carry } => {
                 self.walk(base, first, end, |row, residue, left, right| {
@@ -518,6 +549,51 @@ mod tests {
                         }
                         assert_eq!(rows(&prepared, base, 3, 7, &weights), expected);
                     }
+                }
+            }
+        }
+    }
+    #[test]
+    fn bucketed_prepared_rows_match_dense_for_unit_and_folded_windows() {
+        for boolean in [false, true] {
+            let point = (0..16)
+                .map(|i| {
+                    if boolean {
+                        F::from_u64((37 >> i) & 1)
+                    } else {
+                        F::from_u64(i + 7)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let digits = (0..5)
+                .scan(F::one(), |v, _| {
+                    let out = *v;
+                    *v *= F::from_u64(3);
+                    Some(out)
+                })
+                .collect::<Vec<_>>();
+            let weights = (0..128).map(|i| F::from_u64(i + 13)).collect::<Vec<_>>();
+            for low in [Vec::new(), vec![F::from_u64(11), F::from_u64(19)]] {
+                let prepared = prepare(&point, &digits, &low);
+                for base in [0, 7, 31] {
+                    let first = 7;
+                    let count = 79;
+                    let mut expected = F::zero();
+                    for row in 0..count {
+                        for lane in 0..low.len().max(1) {
+                            for (d, &digit) in digits.iter().enumerate() {
+                                let address = base
+                                    + row * low.len().max(1) * digits.len()
+                                    + lane * digits.len()
+                                    + d;
+                                expected += weights[first + row]
+                                    * low.get(lane).copied().unwrap_or_else(F::one)
+                                    * digit
+                                    * eq_eval_at_index(&point, address);
+                            }
+                        }
+                    }
+                    assert_eq!(rows(&prepared, base, first, count, &weights), expected);
                 }
             }
         }
