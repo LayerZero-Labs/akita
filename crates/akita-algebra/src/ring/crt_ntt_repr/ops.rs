@@ -12,8 +12,13 @@ use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
 use crate::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_error::AkitaError;
 
+use crate::cfg_into_iter;
+#[allow(unused_imports)]
+use jolt_field::solinas::parallel::*;
+
 use super::convert::CenteredI16NttConverter;
 use super::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
+use super::{RADIX_SUM_BITS, RADIX_SUM_PLANES};
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// The additive identity (all zeros in every CRT limb).
@@ -21,6 +26,107 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self {
             limbs: [[MontCoeff::from_raw(W::default()); D]; K],
         }
+    }
+
+    /// Public transposed product: `out[col] = Σ_row rows[row][col] * weights[row]`.
+    ///
+    /// All row slices must have equal width. Unsigned 32-bit weight planes are
+    /// reconstructed together. If the CRT profile cannot hold a full plane,
+    /// smaller subplanes are reconstructed in separate passes and summed in F.
+    /// Every pass reserves the factor-four rounding margin required by
+    /// [`Self::radix_sum_to_ring`].
+    /// Matrix entries must be centered lifts from `F` under `params`.
+    /// This operation is not constant time; matrix and weights must be public.
+    pub fn mat_vec_transposed<F: Field + CanonicalEncoding>(
+        rows: &[&[Self]],
+        weights: &[CyclotomicRing<F, D>],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        if rows.len() != weights.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: rows.len(),
+                actual: weights.len(),
+            });
+        }
+        let width = rows.first().map_or(0, |row| row.len());
+        if rows.iter().any(|row| row.len() != width) {
+            return Err(AkitaError::InvalidInput(
+                "transposed matrix rows have unequal widths".into(),
+            ));
+        }
+        if rows.is_empty() || width == 0 {
+            return Ok(Vec::new());
+        }
+        let modulus = (-F::one())
+            .to_u128_checked()
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("transposed field modulus exceeds 128 bits".into())
+            })?;
+        let capacity = params.crt_capacity();
+        let subplane_bits = (1..=RADIX_SUM_BITS)
+            .rev()
+            .find(|&bits| capacity.supports_modulus(rows.len(), D, modulus, 1 << (bits + 2)))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("CRT capacity cannot hold a transposed column".into())
+            })?;
+        let canonical = weights
+            .iter()
+            .map(|ring| {
+                let mut values = [0u128; D];
+                for (dst, coefficient) in values.iter_mut().zip(ring.coefficients()) {
+                    *dst = coefficient.to_u128_checked().ok_or_else(|| {
+                        AkitaError::InvalidInput("transposed weight exceeds 128 bits".into())
+                    })?;
+                }
+                Ok(values)
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let max = canonical.iter().flatten().copied().max().unwrap_or(0);
+        let plane_count =
+            ((u128::BITS - max.leading_zeros()).div_ceil(RADIX_SUM_BITS) as usize).max(1);
+        // Each pass is plane-major and shares its transformed weights across
+        // columns. Narrow profiles split each 32-bit word without overlapping
+        // the next word; Q128 needs just one pass.
+        let passes: Vec<_> = (0..RADIX_SUM_BITS)
+            .step_by(subplane_bits as usize)
+            .map(|sub_shift| {
+                let bits = subplane_bits.min(RADIX_SUM_BITS - sub_shift);
+                let mask = (1u128 << bits) - 1;
+                let planes: Vec<Self> = (0..plane_count)
+                    .flat_map(|plane| {
+                        let shift = RADIX_SUM_BITS * plane as u32 + sub_shift;
+                        canonical.iter().map(move |values| {
+                            let coefficients =
+                                values.map(|value| ((value >> shift) & mask) as i128);
+                            Self::from_centered_coefficients(&coefficients, params)
+                        })
+                    })
+                    .collect();
+                (F::from_u128_reduced(1u128 << sub_shift), planes)
+            })
+            .collect();
+        cfg_into_iter!(0..width)
+            .map(|column| {
+                let mut output = None;
+                for (scale, planes) in &passes {
+                    let mut sums: [Self; RADIX_SUM_PLANES] = std::array::from_fn(|_| Self::zero());
+                    for (sum, plane) in sums.iter_mut().zip(planes.chunks_exact(rows.len())) {
+                        for (row, weight) in rows.iter().zip(plane) {
+                            sum.add_assign_pointwise_mul(&row[column], weight, params);
+                        }
+                    }
+                    let result = Self::radix_sum_to_ring(&sums[..plane_count], params)?;
+                    output = Some(match output {
+                        None => result,
+                        Some(accumulator) => accumulator + result.scale(scale),
+                    });
+                }
+                output.ok_or_else(|| {
+                    AkitaError::InvalidSetup("transposed reconstruction has no planes".into())
+                })
+            })
+            .collect()
     }
 
     /// Multiply a row-major prepared matrix by one signed-i16 ring vector.
@@ -654,3 +760,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "transposed_tests.rs"]
+mod transposed_tests;

@@ -277,7 +277,43 @@ fn bench_quotient_inputs<const K: usize, const D: usize>(
     group.finish();
 }
 
+fn bench_transposed<const D: usize>(c: &mut Criterion, name: &str, rank: usize, width: usize) {
+    use akita_algebra::{CanonicalEncoding, CyclotomicRing};
+    use jolt_field::Prime128Offset275 as F;
+    let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
+    let mut state = 0x243f_6a88_85a3_08d3_u128;
+    let mut ring = || {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|_| {
+            state = state
+                .wrapping_mul(0x2360_ed05_1fc6_5da4_4385_df64_9fcc_f645)
+                .wrapping_add(1);
+            F::from_u128_reduced(state)
+        }))
+    };
+    let entries: Vec<_> = (0..rank * width)
+        .map(|_| CyclotomicCrtNtt::from_ring(&ring(), &params))
+        .collect();
+    let rows: Vec<_> = entries.chunks_exact(width).collect();
+    let weights: Vec<CyclotomicRing<F, D>> = (0..rank).map(|_| ring()).collect();
+    let mut group = c.benchmark_group("mat_vec_transposed");
+    group.bench_function(name, |b| {
+        b.iter(|| {
+            CyclotomicCrtNtt::mat_vec_transposed(
+                black_box(&rows),
+                black_box(&weights),
+                black_box(&params),
+            )
+            .unwrap()
+        })
+    });
+    group.finish();
+}
+
 fn benches(c: &mut Criterion) {
+    bench_transposed::<64>(c, "a_d_1x4736_r64", 1, 4736);
+    // The plan's rank-five headline estimate, not a production rank promise.
+    bench_transposed::<256>(c, "residual_b_5x7361_r256", 5, 7361);
+
     bench_profile::<Q32_NUM_PRIMES, 64>(c, "q32", Q32_PRIMES);
     bench_profile::<Q32_NUM_PRIMES, 128>(c, "q32", Q32_PRIMES);
     bench_profile::<Q32_NUM_PRIMES, 256>(c, "q32", Q32_PRIMES);

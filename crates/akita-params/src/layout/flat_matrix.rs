@@ -61,6 +61,12 @@ impl<F: Field> PartialEq for FlatMatrix<F> {
 
 impl<F: Field> Eq for FlatMatrix<F> {}
 
+impl<F: Field> AsRef<[F]> for FlatMatrix<F> {
+    fn as_ref(&self) -> &[F] {
+        self.as_field_slice()
+    }
+}
+
 impl<F: Field> FlatMatrix<F> {
     /// Number of stored base-field elements.
     #[inline]
@@ -109,24 +115,7 @@ impl<F: Field> FlatMatrix<F> {
         num_rows: usize,
         num_cols: usize,
     ) -> Result<RingMatrixView<'_, F, D>, AkitaError> {
-        let needed = num_rows
-            .checked_mul(num_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("matrix view shape overflow".to_string()))?;
-        let field_len = needed.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("matrix view field length overflow".to_string())
-        })?;
-        let data = self.as_field_slice().get(..field_len).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "requested {field_len} field elements for a {num_rows}x{num_cols} D={D} matrix, but setup only has {}",
-                self.num_field_elements()
-            ))
-        })?;
-        RingMatrixView {
-            data,
-            num_rows,
-            num_cols,
-        }
-        .check_layout()
+        RingMatrixView::from_field_slice(self.as_field_slice(), num_rows, num_cols)
     }
 
     /// Runtime-dimension counterpart of [`Self::ring_view`].
@@ -407,19 +396,29 @@ pub struct RingMatrixView<'a, F: Field, const D: usize> {
 }
 
 impl<'a, F: Field, const D: usize> RingMatrixView<'a, F, D> {
-    fn check_layout(self) -> Result<Self, AkitaError> {
-        let row_field_len = self.num_cols.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("matrix row field length overflow".to_string())
-        })?;
-        let expected_len = self.num_rows.checked_mul(row_field_len).ok_or_else(|| {
-            AkitaError::InvalidSetup("matrix view field length overflow".to_string())
-        })?;
-        if self.data.len() != expected_len {
-            return Err(AkitaError::InvalidSetup(
-                "matrix view backing length mismatch".to_string(),
-            ));
-        }
-        Ok(self)
+    /// Borrow a row-major prefix without copying its field coefficients.
+    /// Rejects zero columns or ring dimensions, and insufficient or overflowing
+    /// footprints.
+    pub fn from_field_slice(
+        data: &'a [F],
+        num_rows: usize,
+        num_cols: usize,
+    ) -> Result<Self, AkitaError> {
+        let row_field_len = akita_error::checked::product([num_cols, D])
+            .filter(|_| D > 0 && num_cols > 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("matrix row length overflow or zero dimension".into())
+            })?;
+        let field_len = akita_error::checked::product([num_rows, row_field_len])
+            .ok_or_else(|| AkitaError::InvalidSetup("matrix view shape overflow".into()))?;
+        let data = data
+            .get(..field_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("matrix view prefix is undersized".into()))?;
+        Ok(Self {
+            data,
+            num_rows,
+            num_cols,
+        })
     }
 
     /// Number of rows in the view.
@@ -481,6 +480,9 @@ impl<'a, F: Field, const D: usize> RingMatrixView<'a, F, D> {
         }
     }
 }
+
+#[path = "flat_matrix/combine.rs"]
+mod combine;
 
 #[cfg(test)]
 mod tests {
@@ -579,6 +581,24 @@ mod tests {
         assert_eq!(view_a.row(1).unwrap()[0], elements[16]);
         assert_eq!(view_b.row(0).unwrap()[0], elements[0]);
         assert_eq!(view_b.row(1).unwrap()[0], elements[8]);
+    }
+
+    #[test]
+    fn borrowed_view_rejects_zero_columns_before_row_iteration() {
+        for rows in [0, 1, 5] {
+            let result = RingMatrixView::<F, 64>::from_field_slice(&[], rows, 0)
+                .map(|view| view.rows().count());
+            assert!(matches!(result, Err(AkitaError::InvalidSetup(_))));
+        }
+        let zero_dimension =
+            RingMatrixView::<F, 0>::from_field_slice(&[], 1, 1).map(|view| view.rows().count());
+        assert!(matches!(zero_dimension, Err(AkitaError::InvalidSetup(_))));
+
+        // An empty set of rows with a nonzero stride iterates safely.
+        let empty = RingMatrixView::<F, 64>::from_field_slice(&[], 0, 1).unwrap();
+        assert_eq!(empty.rows().count(), 0);
+        let flat = FlatMatrix::<F>::from_flat_data(Vec::new());
+        assert!(flat.ring_view::<64>(1, 0).is_err());
     }
 
     #[test]
