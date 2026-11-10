@@ -321,7 +321,8 @@ pub(super) fn point_domain(point_len: usize) -> Result<usize, AkitaError> {
 }
 
 impl<E: Field> SetupAccumulator<E> {
-    /// Authenticate the closing commitment from the installed registry and produce an ordinary opening claim.
+    /// Build an ordinary opening claim using a commitment from the installed registry.
+    /// This checks identity and shape, not the prefix context or the claimed evaluation.
     /// Pass this as a precommitted group to a compatible admitted schedule, with Lagrange basis.
     pub fn prefix_opening_claim<F>(
         &self,
