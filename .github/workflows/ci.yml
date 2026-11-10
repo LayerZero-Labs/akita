@@ -319,6 +319,14 @@ jobs:
           --
           proof_stream_smoke::
           --test-threads=1
+      - name: Combined-family setup at exact capacities (no disk-persistence)
+        if: matrix.backend == 'transcript-keccak'
+        run: >-
+          cargo test --release -p akita-pcs --test integration
+          --no-default-features
+          --features parallel,transcript-keccak
+          --
+          --exact akita_fp128_e2e::heterogeneous::combined_family_setup_matches_per_family_proofs
 
   test-timing:
     name: Test timing
