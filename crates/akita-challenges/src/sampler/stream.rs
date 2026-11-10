@@ -331,7 +331,9 @@ impl SparseChallengeStream {
             self.shell.ring_d,
             self.shell.config.count_pm1.max(self.shell.config.count_pm2),
         )?;
+        let position_hints = crate::checked_hint::positions_active();
         let decoder = CandidateDecoder {
+            position_hints,
             stream: self,
             message,
             binomials: &binomials,
@@ -415,7 +417,14 @@ impl SparseChallengeStream {
         if self.parallel() {
             return (0..self.count).into_par_iter().map(decode).collect();
         }
-        (0..self.count).map(decode).collect()
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(self.count)
+            .map_err(|_| AkitaError::InvalidInput("challenge allocation failed".into()))?;
+        for index in 0..self.count {
+            result.push(decode(index)?);
+        }
+        Ok(result)
     }
 
     fn first_accepted(
@@ -464,7 +473,9 @@ impl SparseChallengeStream {
     /// is, and every parallel region wakes the whole thread pool.
     #[cfg(feature = "parallel")]
     fn parallel(&self) -> bool {
-        self.count.saturating_mul(self.shell.config.weight()) >= PARALLEL_DECODE_WORK_THRESHOLD
+        !crate::checked_hint::positions_active()
+            && self.count.saturating_mul(self.shell.config.weight())
+                >= PARALLEL_DECODE_WORK_THRESHOLD
     }
 }
 
@@ -648,6 +659,56 @@ impl BinomialTable {
             .ok_or_else(|| AkitaError::Internal("sparse binomial table is too small".into()))
     }
 
+    /// Authenticate a strictly increasing subset by its exact colex rank.
+    fn check_positions(
+        &self,
+        rank: u128,
+        n: usize,
+        words: &[u64],
+        first: usize,
+        out: &mut [u32],
+    ) -> Result<(), AkitaError> {
+        let count = out.len();
+        if n > self.max_n || count > self.max_k || count > n {
+            return Err(AkitaError::InvalidProof);
+        }
+        let rows = self.max_n + 1;
+        // Construction checked rows*(max_k+1). A strict increasing k-subset
+        // has colex rank < C(n,k); reject saturation before validating its sum.
+        let limit = *self
+            .entries
+            .get(count * rows + n)
+            .ok_or(AkitaError::InvalidProof)?;
+        if limit == u128::MAX || rank >= limit {
+            return Err(AkitaError::InvalidProof);
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        let mut previous = None;
+        let mut sum = 0u128;
+        for (i, slot) in out.iter_mut().enumerate() {
+            let at = first.checked_add(i).ok_or(AkitaError::InvalidProof)?;
+            let word = *words.get(at / 4).ok_or(AkitaError::InvalidProof)?;
+            let position = ((word >> (16 * (at % 4))) & 65535) as usize;
+            if position > n - count + i || previous.is_some_and(|p| position <= p) {
+                return Err(AkitaError::InvalidProof);
+            }
+            let offset = (i + 1)
+                .checked_mul(rows)
+                .and_then(|column| column.checked_add(position))
+                .ok_or(AkitaError::InvalidProof)?;
+            let value = *self.entries.get(offset).ok_or(AkitaError::InvalidProof)?;
+            sum = sum.checked_add(value).ok_or(AkitaError::InvalidProof)?;
+            *slot = position as u32;
+            previous = Some(position);
+        }
+        if sum != rank {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
+
     /// Unrank `rank < C(n, k)` into a `k`-subset of `0..n`, colexicographic,
     /// written in increasing order into `out`.
     ///
@@ -720,6 +781,7 @@ impl BinomialTable {
 }
 
 struct CandidateDecoder<'a> {
+    position_hints: bool,
     stream: &'a SparseChallengeStream,
     message: &'a [u8],
     binomials: &'a BinomialTable,
@@ -748,11 +810,31 @@ impl CandidateDecoder<'_> {
         let pm1_rank = rank - pm2_rank * stream.shell.pm1_rank_space;
         let mut positions = crate::SparseChallengePositions::from_elem(0, weight);
         let (pm1, pm2) = positions.split_at_mut(a);
-        self.binomials
-            .unrank(pm1_rank, stream.shell.ring_d, a, pm1)?;
-        if b > 0 {
+        if self.position_hints {
+            let width = weight.div_ceil(4);
+            let (hints, offset) =
+                crate::checked_hint::take_positions(width)?.ok_or(AkitaError::InvalidProof)?;
+            let words = hints
+                .get(offset..offset.checked_add(width).ok_or(AkitaError::InvalidProof)?)
+                .ok_or(AkitaError::InvalidProof)?;
+            if !weight.is_multiple_of(4)
+                && words.last().is_some_and(|&w| w >> (16 * (weight % 4)) != 0)
+            {
+                return Err(AkitaError::InvalidProof);
+            }
             self.binomials
-                .unrank(pm2_rank, stream.shell.ring_d - a, b, pm2)?;
+                .check_positions(pm1_rank, stream.shell.ring_d, words, 0, pm1)?;
+            self.binomials
+                .check_positions(pm2_rank, stream.shell.ring_d - a, words, a, pm2)?;
+        } else {
+            self.binomials
+                .unrank(pm1_rank, stream.shell.ring_d, a, pm1)?;
+            if b > 0 {
+                self.binomials
+                    .unrank(pm2_rank, stream.shell.ring_d - a, b, pm2)?;
+            }
+        }
+        if b > 0 {
             map_to_complement(pm1, pm2, stream.shell.ring_d)?;
         }
         if weight <= 48 {
