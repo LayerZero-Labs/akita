@@ -12,7 +12,7 @@ mod tests {
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
     use jolt_field::{
-        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
+        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128Offset6A23801F, Prime32Offset99,
         Prime64Offset59, Zero,
     };
     use jolt_poly::{CompressedPoly, OmittedConstantPoly};
@@ -30,7 +30,7 @@ mod tests {
         DEFAULT_SIS_SECURITY_POLICY, SETUP_SUMCHECK_DEGREE,
     };
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
     const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
 
@@ -303,7 +303,7 @@ mod tests {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             2,
             2,
@@ -315,7 +315,7 @@ mod tests {
 
         for log_basis in 2..=6 {
             let lp = CommittedGroupParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 D,
                 log_basis,
                 2,
@@ -352,7 +352,7 @@ mod tests {
     fn planned_level_bytes_follow_successor_padded_relation_domain() {
         let challenge = SparseChallengeConfig::pm1_only(3);
         let current = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             64,
             3,
             2,
@@ -363,7 +363,7 @@ mod tests {
         .with_decomp(1, 1, 2, 2, 2)
         .unwrap();
         let successor = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             128,
             3,
             2,
@@ -430,7 +430,7 @@ mod tests {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             2,
             2,
@@ -441,7 +441,7 @@ mod tests {
         let table_key = sis_l2_table_key_for_collision_sq(
             DEFAULT_SIS_SECURITY_POLICY,
             SisL2TableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D as u32,
             1u128 << 50,
         )
@@ -459,7 +459,7 @@ mod tests {
 
         for shape in shapes {
             let mut lp = CommittedGroupParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 D,
                 4,
                 2,
@@ -522,7 +522,7 @@ mod tests {
         const D_A: usize = 128;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let mut lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D_A,
             4,
             2,
@@ -553,7 +553,7 @@ mod tests {
         );
 
         let mut next_lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D_A,
             2,
             2,
@@ -607,7 +607,7 @@ mod tests {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             4,
             2,
@@ -618,7 +618,7 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let next_lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             2,
             2,
@@ -667,7 +667,7 @@ mod tests {
     fn test_pricing_helper_rejects_missing_binding_policy() {
         const D: usize = 64;
         let lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             4,
             2,
@@ -714,7 +714,7 @@ mod tests {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             2,
             2,
@@ -728,7 +728,7 @@ mod tests {
 
         for log_basis in 2..=6 {
             let lp = CommittedGroupParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 D,
                 log_basis,
                 2,
@@ -784,7 +784,7 @@ mod tests {
 
         for log_basis in 2..=6 {
             let mut lp = CommittedGroupParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 D,
                 log_basis,
                 2,

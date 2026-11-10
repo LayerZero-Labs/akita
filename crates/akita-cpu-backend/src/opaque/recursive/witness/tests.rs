@@ -4,7 +4,7 @@ use crate::opaque::{CpuBackend, RootOpeningSource, RootPolyShape};
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
 
 #[test]
 fn suffix_batch_fold_rejects_mixed_extents_and_count_mismatch() {
@@ -307,7 +307,9 @@ fn opening_view_uses_commitment_domain_after_commitment_padding() {
 fn logical_rows_are_contiguous_for_partial_final_fold() {
     let digits: Vec<i8> = (0..20).collect();
     let w = RecursiveWitnessFlat::from_i8_digits(digits);
-    let view = w.view::<jolt_field::Prime128OffsetA7F7, 2>().expect("view");
+    let view = w
+        .view::<jolt_field::Prime128Offset6A23801F, 2>()
+        .expect("view");
     let num_live_blocks = 4;
     let num_positions_per_block = (w.live_coeff_len() / 2).div_ceil(num_live_blocks);
 

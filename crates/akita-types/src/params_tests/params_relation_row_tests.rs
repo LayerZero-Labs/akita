@@ -4,7 +4,7 @@ use crate::proof::relation::{
 };
 use akita_params::layout::relation_layout::{RelationRowFamily, RelationWitnessGeometry};
 use akita_params::WitnessLayout;
-use jolt_field::{One, Prime128OffsetA7F7, Zero};
+use jolt_field::{One, Prime128Offset6A23801F, Zero};
 
 #[test]
 fn compression_quotient_rows_are_included_before_evaluation_trace() {
@@ -144,7 +144,7 @@ fn relation_rhs_row_count_matches_level_params() {
     );
 
     let group_terminal = vec![
-        Prime128OffsetA7F7::one();
+        Prime128Offset6A23801F::one();
         rhs_layout
             .group_compression_plan(0)
             .expect("F plan")
@@ -152,7 +152,7 @@ fn relation_rhs_row_count_matches_level_params() {
             .terminal_coefficients()
     ];
     let opening_terminal = vec![
-        Prime128OffsetA7F7::one();
+        Prime128Offset6A23801F::one();
         rhs_layout
             .opening_compression_plan()
             .expect("H plan")
