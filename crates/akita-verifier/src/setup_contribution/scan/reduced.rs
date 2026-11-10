@@ -170,16 +170,13 @@ where
     A: ProductSum<E>,
 {
     let required = plan.projection_geometry().required();
-    if plan.d_weights().len() != plan.d_rows()
-        || scan_groups.len() != plan.groups().len()
-        || partitions.len() != plan.groups().len()
-    {
+    if scan_groups.len() != plan.groups().len() || partitions.len() != plan.groups().len() {
         return Err(AkitaError::InvalidSetup(
             "cached setup scan geometry is malformed".into(),
         ));
     }
     let setup_flat = setup_view.as_slice();
-    let job_rings = super::super::segments::SETUP_SCAN_JOB_RINGS;
+    let job_rings = SETUP_SCAN_JOB_RINGS;
     let num_jobs = required.div_ceil(job_rings);
     cfg_try_fold_reduce!(
         0..num_jobs,

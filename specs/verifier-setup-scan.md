@@ -4,7 +4,11 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-11-04 |
-| Status | active |
+| Status | implemented |
+| PR | [#327](https://github.com/LayerZero-Labs/akita/pull/327) |
+| Supersedes | |
+| Superseded-by | |
+| Book-chapter | book/src/how/verifying/setup_contribution.md |
 | Scope | Byte-preserving speedups of the direct setup-contribution scan (`relation_setup_scan`) |
 
 ## Summary
@@ -141,10 +145,25 @@ quadratic fp64 extensions. Every other field, including fp128 and therefore
 every fp128 CI profile, uses `CanonicalProductSum`, which reduces each
 product.
 
-The delayed sum is exact. A job sums at most `SETUP_SCAN_JOB_RINGS` products
-of reduced field elements, and the shared-functional reduced scan at most
-that many per functional class, at most 12,288 in all. The two delayed
-accumulators document a headroom of at least `2^61` products.
+The delayed sums are exact. Each one adds products of reduced field
+elements, and the two delayed accumulators document a headroom of at least
+`2^61` products. Every accumulator stays far below that:
+
+- **Weight slot.** A slot collects, for each group whose segment covers its
+  ring, one D product, one product per B slice term, and one A product: at
+  most `groups × (2 + B slice terms)` products. Segments of one group are
+  disjoint, so each group contributes at most once.
+- **Job sum.** `evaluate_weighted_scan` adds one product per ring of its job,
+  at most `SETUP_SCAN_JOB_RINGS`. This covers the single-group, fused, and
+  shared-functional reduced scans.
+- **General reduced path.** `evaluate_groups_reduced_with`, which handles
+  mixed dimensions or distinct functionals, keeps one scalar per functional
+  class with the same per-ring bound as a weight slot, and a job term that
+  adds at most one product per class per ring: at most
+  `SETUP_SCAN_JOB_RINGS × classes`, with `classes ≤ 3 × groups`.
+
+Group, B slice term, and class counts are lengths of in-memory arrays, so
+every bound above is many orders of magnitude below `2^61`.
 
 ### Rejected: column-first contraction
 

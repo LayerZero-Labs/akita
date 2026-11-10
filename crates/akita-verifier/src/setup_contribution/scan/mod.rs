@@ -186,8 +186,7 @@ where
         required,
         groups = plan.groups().len(),
         logical_group_rings,
-        physical_ring_evaluations = required,
-        jobs = required.div_ceil(super::segments::SETUP_SCAN_JOB_RINGS),
+        jobs = required.div_ceil(SETUP_SCAN_JOB_RINGS),
         fused_groups = plan.groups().len() > 1,
         reduced_evaluation = matches!(&kernel, DirectScanKernel::ReducedEvaluation { .. }),
         base_d = BASE_D,
@@ -197,14 +196,17 @@ where
     )
     .entered();
     let setup_len = setup.shared_matrix().num_field_elements() / BASE_D;
-    if plan.projection_geometry().base_ring_dim() != BASE_D
-        || required > setup_len
-        || partitions
-            .iter()
-            .any(|partition| partition.required > required)
-    {
+    if plan.projection_geometry().base_ring_dim() != BASE_D || required > setup_len {
         return Err(AkitaError::InvalidSetup(
             "shared matrix is too small for selected verifier layout".into(),
+        ));
+    }
+    if partitions
+        .iter()
+        .any(|partition| partition.required > required)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup scan partition extends past its plan's required rings".into(),
         ));
     }
     // The scan reads only the `required` leading rings.
@@ -284,9 +286,15 @@ impl<'a, E: Field> ScanGroup<'a, E> {
 ///
 /// Each job assembles its rings' weights segment by segment, a block of
 /// [`WEIGHT_BLOCK_RINGS`] at a time, then adds `w(b)·⟨ring_b, pows⟩` for every
-/// nonzero-weight ring into one product sum. A job sums at most
-/// `SETUP_SCAN_JOB_RINGS` products, inside the headroom `SUM_IS_EXACT` grants,
-/// so the delayed sum equals the reduced one.
+/// nonzero-weight ring into one product sum.
+///
+/// Where `SUM_IS_EXACT` holds, both accumulators delay reduction, and both
+/// stay inside the headroom it grants, so the delayed sums equal the reduced
+/// ones. A weight slot collects at most `groups × (2 + B slice terms)`
+/// products (one D, one per B slice term, and one A for each group whose
+/// segment covers the ring), and a job sums at most [`SETUP_SCAN_JOB_RINGS`]
+/// products. The general reduced path's bounds are in
+/// `specs/verifier-setup-scan.md`.
 pub(super) fn evaluate_weighted_scan<F, E, const BASE_D: usize>(
     plan: &SetupContributionPlan<E>,
     setup_view: &RingMatrixView<'_, F, BASE_D>,
@@ -307,6 +315,11 @@ where
         )
     }
 }
+
+/// Base rings in one parallel scan job. At fp128/D64 this is 2 MiB of
+/// contiguous setup data, large enough to amortize scheduling while exposing
+/// hundreds of root jobs. Each job walks the segments that overlap it.
+pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 
 /// Base rings whose weights a scan job assembles before contracting them.
 ///
@@ -332,12 +345,7 @@ where
         expected: BASE_D,
         actual: pows.len(),
     })?;
-    if plan.d_weights().len() != plan.d_rows() {
-        return Err(AkitaError::InvalidSetup(
-            "cached setup scan geometry is malformed".into(),
-        ));
-    }
-    let job_rings = super::segments::SETUP_SCAN_JOB_RINGS;
+    let job_rings = SETUP_SCAN_JOB_RINGS;
     let num_jobs = required.div_ceil(job_rings);
     cfg_try_fold_reduce!(
         0..num_jobs,
@@ -347,7 +355,7 @@ where
             let hi = lo.saturating_add(job_rings).min(required);
             let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
             let mut sum = A::zero();
-            let mut slots: [A; WEIGHT_BLOCK_RINGS] = std::array::from_fn(|_| A::zero());
+            let mut job_slots: [A; WEIGHT_BLOCK_RINGS] = std::array::from_fn(|_| A::zero());
             for (block, block_setup) in setup.chunks(WEIGHT_BLOCK_RINGS).enumerate() {
                 let block_lo = block
                     .checked_mul(WEIGHT_BLOCK_RINGS)
@@ -356,7 +364,7 @@ where
                 let block_hi = block_lo
                     .checked_add(block_setup.len())
                     .ok_or(AkitaError::InvalidProof)?;
-                let slots = slots
+                let block_slots = job_slots
                     .get_mut(..block_setup.len())
                     .ok_or(AkitaError::InvalidProof)?;
                 for group in groups {
@@ -367,11 +375,19 @@ where
                             break;
                         }
                         let overlap = segment.lo.max(block_lo)..segment.hi.min(block_hi);
-                        let slots = slots
-                            .get_mut(overlap.start - block_lo..overlap.end - block_lo)
+                        let slot_start = overlap
+                            .start
+                            .checked_sub(block_lo)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let slot_end = overlap
+                            .end
+                            .checked_sub(block_lo)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let segment_slots = block_slots
+                            .get_mut(slot_start..slot_end)
                             .ok_or(AkitaError::InvalidProof)?;
                         add_segment_weights(
-                            slots,
+                            segment_slots,
                             overlap,
                             segment,
                             group.weights,
@@ -380,7 +396,7 @@ where
                     }
                 }
                 // Rings with a zero weight contribute nothing.
-                for (ring, slot) in block_setup.iter().zip(slots) {
+                for (ring, slot) in block_setup.iter().zip(block_slots) {
                     let weight = std::mem::replace(slot, A::zero()).finish();
                     if !weight.is_zero() {
                         sum.add_product(weight, E::dot_base(pows, ring.coefficients()));

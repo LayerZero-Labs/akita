@@ -60,11 +60,12 @@ pub(super) fn role_projection<E: Field>(
     })
 }
 
-/// One setup-ring weight assembled from role products.
+/// An accumulator for a sum of products of field elements.
 ///
-/// [`DelayedProductSum`] defers reduction for fields whose product sums are
-/// exact; [`CanonicalProductSum`] reduces every product. Both finish to the
-/// same field element.
+/// The setup scan uses one for each ring's weight, for each job's outer sum,
+/// and for the reduced path's per-class scalars. [`DelayedProductSum`] defers
+/// reduction for fields whose product sums are exact; [`CanonicalProductSum`]
+/// reduces every product. Both finish to the same field element.
 pub(super) trait ProductSum<E: Unreduced> {
     fn zero() -> Self;
     fn add_product(&mut self, lhs: E, rhs: E);

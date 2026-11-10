@@ -21,11 +21,6 @@ struct PackedALayout<'a, E> {
     ratio: usize,
 }
 
-/// Target scan-job size in base rings. At fp128/D64 this is 2 MiB of
-/// contiguous setup data, large enough to amortize scheduling while exposing
-/// hundreds of root jobs. Each job walks the segments that overlap it.
-pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
-
 /// Partition `group`'s projected setup footprint into packed D/B/A segments.
 pub(super) fn scan_partition<E: Field>(
     group: &SetupContributionGroupPlan<E>,

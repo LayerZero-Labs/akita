@@ -16,6 +16,7 @@ use akita_types::{
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
 mod address_spans;
+mod delayed_scan;
 mod direct_evaluation_regressions;
 mod fused_scan;
 mod packed_direct;
@@ -427,15 +428,15 @@ fn lifted_test_scan(plan: SetupContributionPlan<F>) -> DirectScan<F> {
     )
     .expect("lifted test scan")
 }
-fn finalize_test_plan(
+fn finalize_test_plan<E: Field>(
     d_rows: usize,
     d_physical_cols: usize,
-    groups: Vec<(SetupContributionGroupPlan<F>, DirectScanWeights<F>)>,
+    groups: Vec<(SetupContributionGroupPlan<E>, DirectScanWeights<E>)>,
     role_dims: CommitmentRingDims,
-) -> DirectScan<F> {
+) -> DirectScan<E> {
     let (groups, direct_groups): (Vec<_>, Vec<_>) = groups.into_iter().unzip();
     let d_weights = (0..d_rows)
-        .map(|idx| test_scalar(43 + 4 * idx as u128))
+        .map(|idx| E::from_u64(43 + 4 * idx as u64))
         .collect::<Vec<_>>()
         .into();
     let plan =
@@ -444,7 +445,7 @@ fn finalize_test_plan(
     DirectScan::with_mode(
         plan,
         DirectScanMode::Lifted {
-            alpha: test_scalar(3),
+            alpha: E::from_u64(3),
             groups: direct_groups,
         },
     )
@@ -452,18 +453,18 @@ fn finalize_test_plan(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn test_group_plan(
+fn test_group_plan<E: Field>(
     d_col_range: std::ops::Range<usize>,
     t_cols: usize,
     z_cols: usize,
     n_a: usize,
     n_b: usize,
-    e_eq_slice: Vec<F>,
-    t_eq_slice: Vec<F>,
-    z_eq_slice: Vec<F>,
-    a_row_weights: Vec<F>,
-    b_weights: Vec<F>,
-) -> (SetupContributionGroupPlan<F>, DirectScanWeights<F>) {
+    e_eq_slice: Vec<E>,
+    t_eq_slice: Vec<E>,
+    z_eq_slice: Vec<E>,
+    a_row_weights: Vec<E>,
+    b_weights: Vec<E>,
+) -> (SetupContributionGroupPlan<E>, DirectScanWeights<E>) {
     let physical_b = PhysicalBSetupPlan::new(
         akita_params::CommitmentSliceGeometry::try_new(
             akita_params::CommitmentSliceCount::ONE,
