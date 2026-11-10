@@ -287,6 +287,7 @@ dependencies = [
  "akita-transcript",
  "jolt-field",
  "jolt-poly",
+ "keccak 0.2.2",
  "rand_core",
  "shake",
  "tracing",
