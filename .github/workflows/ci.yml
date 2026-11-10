@@ -169,7 +169,8 @@ jobs:
 
   test-schedule-artifact-drift:
     name: Schedule artifact drift
-    runs-on: ubuntu-latest
+    # Planning and the SIS check are CPU bound and scale with cores.
+    runs-on: GitHubRunner-Large-Public
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -189,15 +190,21 @@ jobs:
           scripts/check-external-schedule-artifacts.sh
           cargo test --release -p akita-config --test trusted_schedule_artifact
       - name: Regenerate schedule artifacts in temporary storage
-        # Planning measured about 18 minutes on CI with two workers, and runner
-        # variance alone has moved this step by about 1.3x. The bound stops a
-        # runaway search. Growth in search size (states, candidates,
+        # Planning took 18-25 minutes on a 4-vCPU runner with two workers, and
+        # runner variance alone has moved this step by about 1.3x. The bound
+        # stops a runaway search. Growth in search size (states, candidates,
         # descriptors) fails the --planner-cost-baseline check instead; slower
         # per-candidate pricing is caught only by this timeout.
         timeout-minutes: 35
-        env:
-          AKITA_SCHEDULE_GEN_JOBS: 2
         run: |
+          # One worker per core, capped at one per 3 GiB of memory. The
+          # heaviest row (fp64_dense nv=26) peaks at about 1.7 GB.
+          cpus=$(nproc)
+          mem_gib=$(free -g | awk '/^Mem:/ {print $2}')
+          jobs=$(( cpus < mem_gib / 3 ? cpus : mem_gib / 3 ))
+          jobs=$(( jobs > 1 ? jobs : 1 ))
+          echo "runner: ${cpus} CPUs, ${mem_gib} GiB; planner workers: ${jobs}"
+          export AKITA_SCHEDULE_GEN_JOBS="$jobs"
           artifact_dir="$RUNNER_TEMP/akita-schedule-artifacts"
           mkdir -p "$artifact_dir"
           cargo run --release -p akita-planner --features catalog-gen \
@@ -212,19 +219,9 @@ jobs:
           cargo run --release -p akita-planner \
             --features catalog-security \
             --example catalog_security -- --check
-      - name: Dense multi-chunk PCS e2e
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_dense_mc
-      - name: One-hot multi-chunk catalog wiring
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_onehot_mc_catalog_resolves
-      - name: Bounded dense source PCS e2e
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- heterogeneous::bounded_
-          cargo test --release -p akita-config --test bounded_dense_source
-      - name: Combined-family setup at exact capacities
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
+      # The Test job runs the catalog-backed PCS e2e tests (`akita_fp128_e2e`
+      # and akita-config `bounded_dense_source`), so this job does not rebuild
+      # them. They once needed schedule-table features that only this job set.
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
