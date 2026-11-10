@@ -2,6 +2,7 @@
 name = "akita-recursion-guest"
 version = "0.1.0"
 edition = "2021"
+rust-version.workspace = true
 description = "Jolt guest program: deserializes Akita verifier inputs and runs the Akita verifier."
 license = "Apache-2.0 OR MIT"
 publish = false

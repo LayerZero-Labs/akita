@@ -440,11 +440,10 @@ pub(crate) fn lift_role_tensor<E: Field>(
     )
 }
 
-/// Collapse equal-width unit families into one explicit affine unit axis.
-///
-/// Families are chunk-major with `families_per_unit` semantic lanes inside
-/// each chunk. Unequal or non-affine layouts retain their original families.
-fn compact_affine_unit_families<E: Field>(
+/// Collapse affine runs within each semantic unit lane into unit axes.
+/// Repeating the contraction recovers nested rectangular runs; mismatched
+/// geometry remains separate. Each added axis preserves the exact sum.
+pub(crate) fn compact_affine_unit_families<E: Field>(
     families: Vec<EqPairTensorFamily<E>>,
     families_per_unit: usize,
 ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
@@ -453,65 +452,87 @@ fn compact_affine_unit_families<E: Field>(
             "setup tensor families disagree with unit lanes".into(),
         ));
     }
-    let unit_count = families.len() / families_per_unit;
-    if unit_count <= 1 {
+    if families.len() / families_per_unit <= 1 {
         return Ok(families);
     }
-
-    let mut compact = Vec::with_capacity(families_per_unit);
+    let mut compact = Vec::new();
+    compact
+        .try_reserve_exact(families.len())
+        .map_err(|_| AkitaError::InvalidInput("setup affine family allocation failed".into()))?;
     for lane in 0..families_per_unit {
-        let first = families.get(lane).ok_or(AkitaError::InvalidProof)?;
-        let second = families
-            .get(families_per_unit + lane)
-            .ok_or(AkitaError::InvalidProof)?;
-        let Some(left_stride) = second.left_offset.checked_sub(first.left_offset) else {
-            return Ok(families);
-        };
-        let Some(right_stride) = second.right_offset.checked_sub(first.right_offset) else {
-            return Ok(families);
-        };
-        for unit in 1..unit_count {
-            let family_index = unit
-                .checked_mul(families_per_unit)
-                .and_then(|index| index.checked_add(lane))
-                .ok_or_else(|| AkitaError::InvalidSetup("setup unit index overflow".into()))?;
-            let family = families.get(family_index).ok_or(AkitaError::InvalidProof)?;
-            let expected_left = first
-                .left_offset
-                .checked_add(left_stride.checked_mul(unit).ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup unit left stride overflow".into())
-                })?)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup unit left offset overflow".into())
-                })?;
-            let expected_right = first
-                .right_offset
-                .checked_add(right_stride.checked_mul(unit).ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup unit right stride overflow".into())
-                })?)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup unit right offset overflow".into())
-                })?;
-            if family.left_offset != expected_left
-                || family.right_offset != expected_right
-                || family.scalar != first.scalar
-                || family.axes != first.axes
-            {
-                return Ok(families);
+        let mut current = Vec::new();
+        current
+            .try_reserve_exact(families.len() / families_per_unit)
+            .map_err(|_| AkitaError::InvalidInput("setup affine lane allocation failed".into()))?;
+        current.extend(
+            families
+                .iter()
+                .skip(lane)
+                .step_by(families_per_unit)
+                .cloned(),
+        );
+        loop {
+            let before = current.len();
+            let mut next = Vec::new();
+            next.try_reserve_exact(before).map_err(|_| {
+                AkitaError::InvalidInput("setup affine run allocation failed".into())
+            })?;
+            let mut start = 0usize;
+            while let Some(first) = current.get(start) {
+                let mut end = start + 1;
+                let stride = current.get(end).and_then(|second| {
+                    second
+                        .left_offset
+                        .checked_sub(first.left_offset)
+                        .zip(second.right_offset.checked_sub(first.right_offset))
+                        .filter(|&(left, right)| left != 0 || right != 0)
+                });
+                // The canonical transport permits at most eight tensor axes.
+                if let Some((left, right)) = stride
+                    .filter(|_| first.axes.len() < crate::setup_claims::MAX_SETUP_QUERY_TENSOR_AXES)
+                {
+                    while let Some(candidate) = current.get(end) {
+                        let unit = end - start;
+                        let left_offset = left
+                            .checked_mul(unit)
+                            .and_then(|n| first.left_offset.checked_add(n));
+                        let right_offset = right
+                            .checked_mul(unit)
+                            .and_then(|n| first.right_offset.checked_add(n));
+                        if candidate.scalar != first.scalar
+                            || candidate.axes != first.axes
+                            || left_offset != Some(candidate.left_offset)
+                            || right_offset != Some(candidate.right_offset)
+                        {
+                            break;
+                        }
+                        end += 1;
+                    }
+                }
+                if end - start >= 2 {
+                    let (left, right) = stride.ok_or(AkitaError::InvalidProof)?;
+                    let mut axes = first.axes.clone();
+                    axes.try_reserve(1).map_err(|_| {
+                        AkitaError::InvalidInput("setup affine axis allocation failed".into())
+                    })?;
+                    axes.push(EqPairTensorAxis::unit(end - start, left, right));
+                    next.push(EqPairTensorFamily::new(
+                        first.left_offset,
+                        first.right_offset,
+                        first.scalar,
+                        axes,
+                    )?);
+                } else {
+                    next.push(first.clone());
+                }
+                start = end;
+            }
+            current = next;
+            if current.len() == before {
+                break;
             }
         }
-        let mut axes = first.axes.clone();
-        axes.push(EqPairTensorAxis::unit(
-            unit_count,
-            left_stride,
-            right_stride,
-        ));
-        compact.push(EqPairTensorFamily::new(
-            first.left_offset,
-            first.right_offset,
-            first.scalar,
-            axes,
-        )?);
+        compact.extend(current);
     }
     Ok(compact)
 }
@@ -537,4 +558,103 @@ fn push_projected_tensor<E: Field>(
         }),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod affine_family_tests {
+    use super::*;
+    use akita_algebra::offset_eq::eval_boolean_pair_tensor_families;
+    use jolt_field::{One, Prime128Offset6A23801F as F, Ring};
+
+    #[test]
+    fn inherited_query_grid_compacts_without_changing_its_weight() {
+        let mut source = Vec::new();
+        for claim in 0..8 {
+            for unit in 0..40 {
+                source.push(
+                    EqPairTensorFamily::new(
+                        unit * 5504,
+                        524288 + claim * 933888 + unit * 688,
+                        F::one(),
+                        vec![
+                            EqPairTensorAxis::unit(688, 1, 1),
+                            EqPairTensorAxis::dense(
+                                270040,
+                                0,
+                                vec![F::from_u64(11), F::from_u64(13)],
+                            ),
+                        ],
+                    )
+                    .unwrap(),
+                );
+            }
+        }
+        let compact = compact_affine_unit_families(source.clone(), 1).unwrap();
+        assert_eq!(source.len(), 320);
+        assert_eq!(compact.len(), 1);
+        for boolean in [false, true] {
+            let left = (2..25)
+                .map(|i| F::from_u64(if boolean { i % 2 } else { i }))
+                .collect::<Vec<_>>();
+            let right = (25..48)
+                .map(|i| F::from_u64(if boolean { i % 2 } else { i }))
+                .collect::<Vec<_>>();
+            let expected =
+                eval_boolean_pair_tensor_families::<_, false, false>(&left, &right, &source)
+                    .unwrap();
+            assert_eq!(
+                eval_boolean_pair_tensor_families::<_, false, false>(&left, &right, &compact)
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn affine_compaction_keeps_semantic_lanes_and_distinct_scalars() {
+        let mut source = Vec::new();
+        for unit in 0..8 {
+            for lane in 0..2 {
+                source.push(
+                    EqPairTensorFamily::new(
+                        unit * 8 + lane,
+                        unit * 16 + lane,
+                        F::from_u64(lane as u64 + 2),
+                        vec![EqPairTensorAxis::unit(2, 1, 1)],
+                    )
+                    .unwrap(),
+                );
+            }
+        }
+        let compact = compact_affine_unit_families(source.clone(), 2).unwrap();
+        assert_eq!(compact.len(), 2);
+        let left = vec![F::from_u64(3); 7];
+        let right = vec![F::from_u64(5); 8];
+        assert_eq!(
+            eval_boolean_pair_tensor_families::<_, false, false>(&left, &right, &compact).unwrap(),
+            eval_boolean_pair_tensor_families::<_, false, false>(&left, &right, &source).unwrap(),
+        );
+        assert!(compact_affine_unit_families(source.clone(), 0).is_err());
+        assert!(compact_affine_unit_families(source, 3).is_err());
+    }
+
+    #[test]
+    fn affine_compaction_respects_transport_axis_bound() {
+        let axes = (0..8)
+            .map(|i| EqPairTensorAxis::unit(2, 1usize << i, 1usize << i))
+            .collect::<Vec<_>>();
+        // Public fields can carry axes that have not been normalized together.
+        let source = (0..4)
+            .map(|i| EqPairTensorFamily {
+                left_offset: i * 256,
+                right_offset: i * 512,
+                scalar: F::one(),
+                axes: axes.clone(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            compact_affine_unit_families(source.clone(), 1).unwrap(),
+            source
+        );
+    }
 }
