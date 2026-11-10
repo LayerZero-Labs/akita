@@ -152,7 +152,7 @@ fn precommit_admission_fixture() -> (
         },
         sis_security_policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_params::SisTableDigest::CURRENT,
-        sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+        sis_modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
         num_response_chunks: 1,
     };
     let num_digits_fold = 2;
@@ -397,7 +397,7 @@ fn precommit_admission_prices_the_consuming_response_chunk_count() {
 
 #[test]
 fn native_group_dimensions_are_independent_of_final_group_order() {
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = lp.preceding_group_mut_for_test(0).unwrap();
@@ -456,13 +456,13 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         &relation_geometry,
         lp.witness_chunk.num_chunks,
         akita_params::RelationQuotientPlan::quotient_lift(akita_params::r_decomp_levels::<
-            Prime128OffsetA7F7,
+            Prime128Offset6A23801F,
         >(lp.open().digits.log_basis))
         .unwrap(),
     )
     .expect("witness layout");
     assert_eq!(
-        lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)
+        lp.output_witness_len::<Prime128Offset6A23801F>(&batch, 1)
             .expect("output witness length"),
         witness_layout.live_coeff_len()
     );
@@ -540,7 +540,7 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
 
 #[test]
 fn compact_witness_addresses_match_independent_formula_matrix() {
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
 
     for group_count in [1usize, 2, 3] {
         let (base_lp, batch) = address_oracle_fixture(group_count);
@@ -552,7 +552,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 num_activated_levels: usize::from(num_chunks > 1),
             };
             let quotient_depth =
-                akita_params::r_decomp_levels::<Prime128OffsetA7F7>(lp.open().digits.log_basis);
+                akita_params::r_decomp_levels::<Prime128Offset6A23801F>(lp.open().digits.log_basis);
             let relation_geometry =
                 akita_params::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
                     .expect("relation geometry");
@@ -861,7 +861,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
             assert_eq!(layout.tail_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
-                lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)
+                lp.output_witness_len::<Prime128Offset6A23801F>(&batch, 1)
                     .expect("canonical witness length"),
                 cursor
             );

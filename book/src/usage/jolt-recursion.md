@@ -86,7 +86,7 @@ guest's fixed source view. The default is 20 variables. The 32 variable target
 uses the same $D = 256$ source view and is the large recursion benchmark.
 
 The recursion workspace is separate from the main Cargo workspace. It pins
-Rust 1.95, the RISC-V targets, and one exact Jolt revision. This keeps Jolt's
+Rust 1.99.1, the RISC-V targets, and one exact Jolt revision. This keeps Jolt's
 toolchain and patched dependencies out of the main Akita dependency graph.
 
 ## Run the native artifact and guest trace

@@ -54,7 +54,7 @@ fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
     for profile in [
         akita_params::sis::SisModulusProfileId::Q32Offset99,
         akita_params::sis::SisModulusProfileId::Q64Offset59,
-        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
     ] {
         let dimensions = akita_params::compression_ring_dimensions(profile);
         let doubled = dimensions

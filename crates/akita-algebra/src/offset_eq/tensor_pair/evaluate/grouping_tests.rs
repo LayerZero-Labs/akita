@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{One, Prime128OffsetA7F7 as F, Ring};
+use jolt_field::{One, Prime128Offset6A23801F as F, Ring};
 
 fn check_distinct_and_repeated_weights(weights: Vec<u64>) {
     let count = weights.len();
