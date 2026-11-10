@@ -249,7 +249,7 @@ jobs:
         with:
           tool: cargo-nextest
       - name: Run the response-proof tests without disk-persistence
-        run: cargo nextest run -p akita-pcs --lib --profile ci --cargo-profile ci-test --no-default-features --features parallel,test-support 'zk::'
+        run: cargo nextest run -p akita-pcs --lib --profile ci --cargo-profile ci-test --no-default-features --features parallel,test-support,transcript-keccak 'zk::'
 
   test-zk:
     # Zero knowledge (`specs/whiteout-akita.md` §5.5): the workspace tests
@@ -273,28 +273,28 @@ jobs:
         uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # carg-nextest
         with:
           tool: cargo-nextest
-      - name: The zk feature alone wires every zero-knowledge backend
-        # Downstream-shaped: the library without dev-dependencies, which
-        # would otherwise turn on akita-cpu-backend/zk for it.
-        run: cargo check -p akita-pcs --lib --no-default-features --features zk
+      - name: The zk feature wires every zero-knowledge backend
+        # Downstream-shaped: select the transcript explicitly and omit
+        # dev-dependencies, which would otherwise enable akita-cpu-backend/zk.
+        run: cargo check -p akita-pcs --lib --no-default-features --features zk,transcript-keccak
       - name: The zk feature compiles no prover sampler (I6, A46)
         # A verifier enables `zk`; only `zk-prover` may reach jolt-zk's
         # `whiteout-prover`, jolt-dit or jolt-crypto's samplers.
         run: |
           cargo tree -p akita-pcs --features zk -e features,normal > "$RUNNER_TEMP/zk-tree.txt"
           ! grep -E 'whiteout-prover|jolt-dit|feature "sample' "$RUNNER_TEMP/zk-tree.txt"
-      - name: The zk-prover feature alone wires the hiding sampler
-        run: cargo check -p akita-pcs --lib --no-default-features --features zk-prover
+      - name: The zk-prover feature wires the hiding sampler
+        run: cargo check -p akita-pcs --lib --no-default-features --features zk-prover,transcript-keccak
       - name: Run the workspace tests with zero knowledge
         run: |
           cargo nextest run --workspace --lib --bins --tests --profile ci --cargo-profile ci-test \
-            --no-default-features --features parallel,disk-persistence,zk,akita-pcs/test-support,akita-pcs/logging-transcript
+            --no-default-features --features parallel,disk-persistence,zk,akita-pcs/test-support,akita-pcs/logging-transcript,transcript-keccak
       - name: Run the zero-knowledge tests without the setup cache
         # A cached, wider setup can hide an undersized one (as for the
         # response proof above).
         run: |
           cargo nextest run -p akita-pcs --profile ci --cargo-profile ci-test \
-            --no-default-features --features parallel,test-support,logging-transcript \
+            --no-default-features --features parallel,test-support,logging-transcript,transcript-keccak \
             --test zero_knowledge --test zk_end_to_end --test masked_prefix
 
   test-schedule-artifact-drift:
