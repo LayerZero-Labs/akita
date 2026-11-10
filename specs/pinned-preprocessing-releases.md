@@ -30,7 +30,8 @@ from a description in the repository. A binary trusts only the
 file it uses against the release manifest before anything reaches a prover
 or verifier. A required merge check regenerates every published release from
 scratch, so a published release is always what the code at that commit
-produces.
+produces. The check is a required status check of the repository's branch
+protection; the security argument assumes it.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are used as described in
 RFC 2119.
@@ -107,7 +108,7 @@ release                                  bundle_id = H(tag || manifest)
 ├─ files                                 written by the generator
 │   ├─ registry/<stream>/<profile>       one commitment per profile any set needs
 │   ├─ catalog/<set>, catalog-view/…     catalogs and guest views
-│   └─ optional: hints/…, matrix/…, page-hashes/…, terminal-cache/…
+│   └─ optional: hints/…, catalog-view/…, terminal-cache/…
 └─ manifest
     ├─ packaging header, stream identities
     ├─ registry: (stream_id, profile_key, prefix_commitment_digest) per commitment
@@ -223,26 +224,33 @@ transcript (protocol and descriptor versions) are not part of it.
 ```text
 algorithm_identity = u8(COMPRESSION_POLICY.tag())          4 today
                   || u8(GroupCommitPhaseParams::VERSION)    4 today
-                  || u32(SETUP_PREFIX_PAYLOAD_VERSION)      new constant
-                  || known_answer_digest                    32 bytes
+                  || u32(SETUP_PREFIX_PAYLOAD_VERSION)      1
+                  || known_answer_digest(field)             32 bytes
 
-known_answer_digest = H(tag("akita/preprocessing/known-answer/v1")
+known_answer_digest(field) = SHA3-256(tag("akita/preprocessing/known-answer/v1")
                         || u32(corpus_version)
-                        || test_stream_identity
+                        || test_stream_identity(field)
                         || list(bytes(profile_descriptor_i) || bytes(payload_i)))
 ```
 
 The known-answer digest pins the behaviour of the commitment code on a
 versioned corpus of small profiles over a fixed test stream, checked into the
-repository. It is a compiled constant. CI MUST recompute it on every
-supported instruction set (x86-64 with and without IFMA52, AArch64). A second
-CI test MUST map every profile in every anchored release to a corpus class
-(field, A and B ring dimensions, inner and outer route, slice count,
-compression chain length, multi-block layout) and fail if a class is missing.
-The corpus catches a kernel or encoding change that forgot a version bump;
-size-specific paths are covered by full regeneration in the merge check.
-Extending the corpus changes every prefix commitment digest, so it is a
-code transition.
+repository. There is one per field (SIS modulus profile), over the corpus
+entries of that field, and the algorithm identity of a profile uses the
+digest of its field. Payloads do not depend on the digest-hash selection, so
+the corpus is always hashed with SHA3-256 and one compiled constant per field
+serves both selections. CI MUST recompute the digests on every supported
+instruction set (x86-64 with and without IFMA52, AArch64). The computation
+commits every entry twice, on its own and together with the other entries
+over one expanded matrix, as generation exports a release (Generation
+strategy), and fails when the two differ. A second CI test MUST map every
+profile in every anchored release to a corpus class (field, A and B ring
+dimensions, inner route, slice count, compression chain length, multi-block
+layout; the outer route is L-infinity by type) and fail if a class is
+missing. The corpus catches a kernel or encoding change that forgot a version
+bump; size-specific paths are covered by full regeneration in the merge
+check. Extending the corpus changes the prefix commitment digests of its
+field, so it is a code transition.
 
 **Profile.**
 
@@ -278,17 +286,10 @@ derived; protocol Stage 3 absorbs it. It is distinct from the transcript's
 `CommitmentDigest`, which digests a root commitment.
 
 **Files.** Each file is hashed with its name, so content cannot be moved to
-another file. Matrix pages are hashed individually so that a loader can check
-a range without hashing the whole matrix. With `P = page_field_elements`,
-`page_i = ser(S[iP]) || … || ser(S[(i+1)P − 1])`, with no length prefix or
-padding. For a stream of `N` elements, `page-hashes` holds exactly
-`ceil(N/P)` hashes; the final page is derived in full even if it extends
-past `N`. A range loader authenticates every complete page the range touches
-before keeping the requested elements.
+another file.
 
 ```text
 file_hash   = H(tag("akita/preprocessing/file/v1") || str(name) || bytes(content))
-page_hash_i = H(tag("akita/preprocessing/page/v1") || stream_id || u64(i) || page_i)
 ```
 
 | File | Content | Used by |
@@ -296,16 +297,27 @@ page_hash_i = H(tag("akita/preprocessing/page/v1") || stream_id || u64(i) || pag
 | `registry/<hex(stream_id)>/<hex(profile_key)>` | `payload` | Both |
 | `hints/<hex(stream_id)>/<hex(profile_key)>` | optional; the hint part of the exported `SetupPrefixSlot<F>`, serialized with `Compress::No`, without the slot id and public commitment | CPU reference prover |
 | `catalog/<set>` | catalog artifact bytes | Both |
-| `catalog-view/<set>/<hex(row digest)>` | selected-row verifier view | Guest |
-| `matrix/<hex(stream_id)>/<first>-<last>` | optional complete pages `page_first || … || page_last` | Guest, constrained provers |
-| `page-hashes/<hex(stream_id)>` | `page_hash_i` concatenated in page order | Loaders of matrix ranges |
+| `catalog-view/<set>/<hex(row digest)>` | selected-row verifier view | Guest, guest producer checks |
 | `terminal-cache/<hex(stream_id)>/<hex(row digest)>/<target>/<capacity>` | prepared terminal cache with its binding header | Guest |
 | `certificate/<hex(stream_id)>/<hex(profile_key)>` | reserved for a future proof of derivation | None yet |
 
 In file names, `row digest` is the row's `ScheduleRowDigest` (the
-`row_digest` of `OpeningScheduleSelection`); page numbers and `<capacity>`
-are ASCII decimal without leading zeros; `<target>` is a guest target name
-exactly as listed in the manifest's `target` list.
+`row_digest` of `OpeningScheduleSelection`); `<capacity>` is ASCII decimal
+without leading zeros; `<target>` is a guest target name exactly as listed in
+the manifest's `target` list.
+
+The matrix is not shipped. Every host consumer derives it from the seed, and
+a guest embeds its prefix in an approved image, which the approval step
+re-derives (Recursion guest). A later release format MAY add matrix pages and
+per-page hashes for constrained provers; the names `matrix/` and
+`page-hashes/` are reserved for it.
+
+A file may be stored as consecutive non-empty parts `<name>.part-0`,
+`<name>.part-1`, … for transport. The part size is a generator option, not
+part of the manifest, so it never changes `bundle_id`; a reader rejects an
+empty part, which bounds the parts it opens by the file length. The
+generator rejects any file larger than the cap of the loader that reads it,
+and removes any stored copy or part of a file before writing it.
 
 **Set record and manifest.** The set record is everything a loader needs to
 accept or reject a parameter set before reading other files. The manifest
@@ -325,7 +337,7 @@ set_record = str(set name) || str(config family) || bytes(decomposition)
 manifest = tag("akita/preprocessing/manifest/v1") || u32(format_version)
         || u8(digest_hash)
         || str(release name) || u8(kind: 0 = akita, 1 = jolt)
-        || str(generator version) || list(str(target)) || u64(max file part)
+        || str(generator version) || list(str(target))
         || list(stream_identity || u64(element count))
         || list(stream_id || profile_key || prefix_commitment_digest)
         || list(bytes(set_record))
@@ -346,8 +358,6 @@ Fields not defined above:
 - `format_version` is `1`.
 - `target`: a guest target the release provides files for, as named in the
   generator's role argument.
-- `max file part`: the largest size in bytes of one stored part of a release
-  file; larger files are split into parts of this size for transport.
 - `element count`: the number of field elements of the stream the release
   covers, the largest capacity any set or profile needs.
 
@@ -400,14 +410,18 @@ Admission sizes the setup from what is actually needed:
   not known before execution, so no row is filtered by one trace shape. A
   program row is admitted only if every slot that
   `required_setup_prefix_slot_ids_for_schedule` derives from its audited
-  schedule maps to a universe profile. The loader MUST NOT accept a
-  separately supplied list of slot ids. The **catalog identity** is, for a
-  set without program rows, the base catalog; with program rows, the
-  **merged catalog**, `ValidatedScheduleCatalog::try_new` over every base
-  row and every program row (what Jolt's `extend_catalog` builds).
-  `try_new` orders rows by row digest, so the identity does not depend on
-  the order rows are supplied in, and it resolves every base key to the same
-  selection as the base catalog. A **single-row load** (a verifier for one
+  schedule maps to a universe profile. Those slots include the root's
+  accumulated setup prefix (`root_accumulated_setup_prefix_len`), so a
+  universe covers the profiles of accumulated rows too. The loader MUST NOT
+  accept a separately supplied list of slot ids. The **catalog identity**
+  is, for a set without program rows, the base catalog; with program rows,
+  the **merged catalog**: the base catalog extended with the program rows
+  (`ValidatedScheduleCatalog::extend`), which audits only the program rows
+  and equals `ValidatedScheduleCatalog::try_new` over every base row and
+  every program row (what Jolt's `extend_catalog` builds). Rows are ordered
+  by row digest, so the identity does not depend on the order rows are
+  supplied in, and it resolves every base key to the same selection as the
+  base catalog. A **single-row load** (a verifier for one
   selection, such as a guest) MUST resolve its selection within that
   identity, reject a selection outside the A1 rows, and use the identity's
   selected-row verifier view (`to_verifier_view`), which carries the
@@ -444,14 +458,19 @@ Production and custom deployments use the same loader; only the anchor
 differs.
 
 - Akita compiles its anchor from `akita-anchors`, Jolt from a crate of its
-  own. Each lists the pairs of the releases committed under `params/`. Anchor
-  crates MUST stay outside the generator's dependency closure, so adding a
-  release never changes a `bundle_id`; `scripts/check-crate-deps.sh` enforces
-  this.
+  own. Each lists the pairs of the releases committed under `params/`. Every
+  directory under `params/` MUST hold both a description and a manifest, so
+  no anchored manifest lacks the description the merge check regenerates it
+  from. Anchor crates MUST stay outside the generator's dependency closure,
+  so adding a release never changes a `bundle_id`;
+  `scripts/check-crate-deps.sh` enforces this.
 - Anchors MUST be declared as compile-time constants from a `&'static` list,
   and production loaders MUST accept only those values. `TrustAnchor` has no
-  deserializer and no `FromStr`; a lint rejects run-time construction in
-  production code. An anchor read from storage voids every guarantee here.
+  deserializer and no `FromStr`. `clippy::disallowed_methods` denies
+  `TrustAnchor::new` in the workspace `clippy.toml`, and the anchor constant
+  allows the lint on that item only; the lint resolves paths, so an alias
+  does not hide a call. An integration adds the same entry to its own
+  configuration. An anchor read from storage voids every guarantee here.
 - The integration MUST derive the set name from its own state (Jolt: flavor,
   K, chunk profile), never from transported bytes alone. Jolt also carries
   the `bundle_id` and set names in its program preprocessing and requires
@@ -501,8 +520,7 @@ rebuilding but need freshness and rollback protection, and are out of scope.
 3. **Hashed bytes are used bytes.** A loader MUST read each file into a
    private, immutable buffer while hashing it, check the manifest length
    before allocating, decode exactly that buffer, and never reopen or reread
-   the file. Matrix ranges MAY be read through private page-sized snapshots,
-   each checked against `page-hashes`. A loaded value MUST NOT be refreshed
+   the file. A loaded value MUST NOT be refreshed
    from storage except through the loader; this covers lazy caches (such as
    setups regenerated on first use) and memory-mapped files. Program
    rows are the one non-file input: they arrive as an argument,
@@ -527,16 +545,23 @@ rebuilding but need freshness and rollback protection, and are out of scope.
    loader of one program reproduces it. Every path that builds a
    setup from loaded bytes becomes loader-private or an `unsafe fn` whose
    contract is that the caller guarantees derivation:
-   - `AkitaVerifierSetup` fields, `from_parts`, and its deserializer (it
-     becomes the unchecked type for tests, benchmarks, and the loader);
-   - `AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked`
-     (the loader's seed-derived mode calls it internally), `Validate::No`
-     setup decoding;
+   - `AkitaVerifierSetup` fields and `from_parts`; it has no deserializer
+     (it becomes the unchecked type for tests, benchmarks, and the loader);
+   - `AkitaExpandedSetup` fields (private) and
+     `from_trusted_seed_derived_parts_unchecked` (a guest loader calls it on
+     the embedded matrix prefix), `Validate::No` setup decoding;
    - `borrow_trusted`, `TrustedTerminalCache` in `for_selection`;
-   - `AkitaProverSetup` public fields, `to_verifier_setup`;
-   - `AkitaCommitmentScheme::setup_verifier`, `setup_verifier_for_schedule`,
-     `verifier`;
-   - the `AkitaVerifier` constructor taking a `LocallyDerivedVerifierSetup`.
+   - `AkitaVerifier::new` and `for_selection`, and
+     `AkitaCommitmentScheme::verifier`;
+   - `LocallyDerivedVerifierSetup::assume_locally_derived`, which only the
+     host-only producer of local profile derivation calls.
+
+   `AkitaProverSetup` has private fields and is only derived from its seed in
+   the process or issued by the prover loader, so `to_verifier_setup` and
+   the `AkitaCommitmentScheme::setup_verifier*` conversions built on it are
+   safe. The setup-batch consumers of the registry
+   (`SetupAccumulator::prefix_opening_claim`, `decide_setup_accumulator`)
+   read only setups built through these paths.
 
    Jolt and the production guest deny these with
    `clippy::disallowed_methods`, and compile-fail tests check that
@@ -551,9 +576,8 @@ rebuilding but need freshness and rollback protection, and are out of scope.
    A backend MAY build its own prover tables (its own hint layout) from the
    matrix prefix in `PinnedProverSetup`; the public commitment it uses MUST
    be the anchored payload. A backend that keeps its own copy of the matrix
-   MUST either re-derive it from the seed or check it against `page-hashes`
-   before use, and SHOULD key caches derived from it by `stream_id` and
-   profile key.
+   MUST re-derive it from the seed before use, and SHOULD key caches derived
+   from it by `stream_id` and profile key.
 8. **Audit mode.** The generator crate can regenerate the registry and set
    records of any release and compare them with its manifest. It runs on
    hosts that can link `akita-cpu-backend`.
@@ -591,16 +615,20 @@ rebuilding but need freshness and rollback protection, and are out of scope.
 - [ ] Compile-fail tests show production constructors reject non-loader
       values; production code cannot construct a `TrustAnchor` at run time;
       Clippy fails on Jolt and the guest when they call a denied `unsafe fn`.
-- [ ] Protocol Stage 3 absorbs a prefix commitment digest recomputed in the
-      proof, and a proof fails when a commitment it uses differs.
+- [ ] Protocol Stage 3 absorbs, at both slot-binding sites, a prefix
+      commitment digest computed from the commitment the fold reads; the
+      next challenge depends on the digest, and a proof fails when a
+      commitment it uses differs.
 - [ ] Both releases of a description-only transition load; the old one is
       rejected once its pairs are removed.
 - [ ] A release generated from a different seed works with a custom anchor
       and the same loader.
-- [ ] The repository holds at least one manifest, and a required merge check
-      regenerates it when its description, manifest, anchor, `Cargo.lock`,
+- [ ] The repository holds at least one manifest, every directory under
+      `params/` holds a description and a manifest, and a required merge
+      check regenerates every release when its description, manifest,
+      anchor, a file a description names, `Cargo.lock`,
       `rust-toolchain.toml`, or any crate in the generator's dependency
-      closure changes.
+      closure changes; the trigger fails closed.
 - [ ] Jolt loads through the loader, admits program rows only within the
       universe and with the anchored producer profiles, takes no
       setup-prefix commitment or catalog from serde-transported verifier
@@ -627,8 +655,7 @@ rebuilding but need freshness and rollback protection, and are out of scope.
 - Admission: A1 and A4 agree for full loads; a single-row load admits only
   its selection and rejects one outside A1; a program whose precommitted
   group is wider than its trace keeps every row; admission keeps the rows of
-  every trace length within the program bounds; matrix ranges ending
-  mid-page.
+  every trace length within the program bounds.
 - Catalog identity: one honest Jolt proof verifies through a full host
   loader and a single-row guest loader, both reproducing the stored merged
   catalog digest; supplying the same rows in another order gives the same
@@ -676,10 +703,10 @@ polynomials); details in Measurements.
 
 ```text
 akita-types        manifest, set record, anchor types; manifest decoding;
-                   hash and anchor checks
-akita-config       set-record check against CommitmentConfig,
-                   prefix_commitment_digest, seed-derived mode,
-                   row admission; shared by both loaders
+                   hash and anchor checks; prefix_commitment_digest
+akita-config       set-record check against CommitmentConfig, seed-derived
+                   mode, commitment loading, row admission and producer
+                   profiles; shared by both loaders
 akita-verifier     verifier loader → PinnedVerifierSetup, PinnedTerminalCache
 akita-cpu-backend  prover loader → PinnedProverSetup
 akita-setup        disk cache of release files keyed by bundle_id (settles #210)
@@ -747,7 +774,12 @@ Rules:
 - A construction loads the one-hot set and the dense sets it needs from one
   manifest. Every precommitted group profile in a program row MUST equal the
   frozen profile for that layout in its anchored producer set: bounded-dense
-  for bounded producers, full-dense for full-width field increments.
+  for bounded producers, full-dense for full-width field increments. The
+  frozen profile is the final-group profile of the producer set's
+  standalone row of that layout (one group, no accumulated setup prefix),
+  which the catalog key makes unique per layout. A host loads the producer
+  catalogs; a guest loads the release's view of each standalone row it needs
+  and checks the row it verifies against them.
 - A program row never supplies a commitment; every commitment it uses comes
   from the anchored registry.
 - The serde `AkitaVerifierSetup` in `pcs_setup` and its transport are
@@ -775,33 +807,43 @@ compute the missing commitments themselves. Unlike seed-derived mode, there
 is no manifest digest to compare with. The verifier MUST NOT import a
 commitment from the prover or a file. The result is a distinct
 `LocallyDerivedVerifierSetup`, produced only by a host-only crate downstream
-of `akita-cpu-backend` and `akita-planner`, and accepted only by an
-`unsafe fn` `AkitaVerifier` constructor (Invariant 6). It is never available
-in the guest.
+of `akita-cpu-backend` and `akita-planner` through the `unsafe fn`
+`LocallyDerivedVerifierSetup::assume_locally_derived` (Invariant 6), and
+accepted only by `AkitaVerifier::from_locally_derived`, which an integration
+that does not opt in denies with `clippy::disallowed_methods`. It is never
+available in the guest.
 
 ### Transcript binding
 
-Protocol Stage 3 already absorbs the compressed slot id through
-`stage3_public_slot` (from `bind_setup_prefix_slot` in
-`crates/akita-verifier/src/stages/stage3.rs`, and at the matching point in
-`crates/akita-prover/src/protocol/prove/fold/sumcheck.rs`). At that call it
-MUST now absorb `serialize_compressed(slot id) || prefix_commitment_digest`,
-the digest as 32 raw bytes, as one public byte string padded to whole words
-like every other absorb. Prover and verifier MUST recompute the digest in
-every proof from the registry entry the fold reads, never from a stored
-value. Every fold with a setup prefix passes Stage 3 once, so every use is
-bound once. The slot id stays absorbed although the schedule determines it,
-so the digest is always read in the context of its slot. The embedded
-transcript's specification, which says setup-prefix commitments are not
-absorbed, MUST be updated with this change.
+Protocol Stage 3 absorbs the selected setup-prefix slot through
+`stage3_public_slot`, at two sites that MUST stay in step:
+
+- the ordinary path, `bind_setup_prefix_slot` in
+  `crates/akita-verifier/src/stages/stage3.rs` and the matching point in
+  `crates/akita-prover/src/protocol/prove/fold/sumcheck.rs`;
+- the offloaded outer-batch path, where an inherited setup batch is checked
+  through the successor's prefix: `bind_outer_prefix` in
+  `crates/akita-types/src/setup_claims/transcript.rs`, called from the
+  verifier's `setup_batch/outer.rs` and from the same prover function.
+
+At both it MUST absorb `serialize_compressed(slot id) ||
+prefix_commitment_digest`, the digest as 32 raw bytes, as one public byte
+string padded to whole words like every other absorb. The digest MUST be
+computed from the commitment the fold reads, never supplied from outside:
+`AkitaVerifierSetup::from_parts`, the setup's only constructor, computes the
+digest of every slot of its immutable registry once, and the prover computes
+it from the slot it reads. Every fold with a setup prefix passes one of the
+two sites once, so every use is bound once. The slot id stays absorbed
+although the schedule determines it, so the digest is always read in the
+context of its slot. The embedded transcript's specification states the
+binding.
 
 The binding makes each proof name the commitments it was checked against.
 Soundness comes from the load-time checks: once loading fixes a commitment,
-the prover cannot choose it. The binding costs a transcript change
-(`PROTOCOL_VERSION` and `AKITA_INSTANCE_DESCRIPTOR_VERSION` bumps, regenerated
-catalogs) and a Jolt revision bump, so it SHOULD land before the first
-release, and MAY share a version bump with other transcript changes that land
-together.
+the prover cannot choose it. The binding changes the transcript, so it bumps
+`PROTOCOL_VERSION`; descriptor bytes do not change, so
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` stays, and catalogs regenerate unchanged.
+It needs a Jolt revision bump and lands before the first release.
 
 Two things are deliberately not absorbed. The anchor is local policy and
 changes whenever any release is added, so it would break proofs between
@@ -836,7 +878,10 @@ release files and checked by the loader; the build step MUST NOT embed a
 combined verifier key whose commitments came from anywhere else, which
 replaces Jolt's current single prepared-key payload. A guest verifying
 grouped Jolt proofs embeds the inner program's `ProgramPreprocessing` and
-admits its rows with the same loader call as the host. One approved image
+admits its rows with the same admission checks as the host: the merged
+catalog digest through its view, and the producer check of the row it
+verifies through the release's views of the standalone producer rows it
+needs. One approved image
 covers one inner program.
 
 Files that depend on program rows cannot be release files, since the rows
@@ -881,12 +926,17 @@ uploaded as GitHub release assets; they are untrusted transport, since the
 loader checks them against the manifest.
 
 A required merge check regenerates every anchored release from scratch and
-compares bytes whenever its description, manifest, or anchor changes,
-`Cargo.lock` or `rust-toolchain.toml` changes, or any crate in the
-generator's dependency closure changes (from `cargo metadata`). That closure
-covers nearly all of Akita, so most changes trigger it. In Jolt, the closure
-includes the Akita crates. A scheduled job also regenerates every release,
-and anyone can run audit mode locally.
+compares bytes whenever its description, manifest, or anchor changes, a file
+a description names (a catalog or a universe slot file) changes, `Cargo.lock`
+or `rust-toolchain.toml` changes, or any crate in the generator's dependency
+closure changes (from `cargo tree`). Paths in a description MUST be
+normalized paths relative to the repository root, so changed paths match
+them exactly. The step that decides whether to regenerate MUST fail, not
+skip, when it cannot compute the closure, the named files, or the changed
+paths. That closure covers nearly all of Akita, so most changes trigger it.
+In Jolt, the closure includes the Akita crates. The check is required
+through the repository's branch protection. A scheduled job also regenerates
+every release, and anyone can run audit mode locally.
 
 ### Security argument
 
@@ -957,8 +1007,13 @@ author of any custom release.
 
 ### Measurements
 
+These measurements predate the K=16 catalogs, the terminal block digests,
+setup accumulation with offloaded Stage 3, and the reduced recursive rows
+(#258, #293, #294, #277), which changed catalogs and setup sizes; they are
+kept for their ratios and need remeasuring.
+
 One Jolt recipe (one-hot, K=16, chunk profile w1r0, 57 polynomials), on the
-Akita revision Jolt main depends on, on one multi-core x86-64 machine,
+Akita revision Jolt main depended on at the time, on one multi-core x86-64 machine,
 release build, `parallel` on, disk persistence off. `max_num_vars` is
 `log2(trace length) + 4`, so `nv = 26` is a 2^22-cycle program; the matrix
 stops growing at `nv = 35`. Each configuration ran once. Times are ratios
@@ -1017,21 +1072,26 @@ Grouped rows were sampled with a reimplementation of Jolt's `plan_row`, with
 ### Generation strategy
 
 1. Derive each stream's matrix once, at the largest capacity any set or
-   profile needs, hashing pages in the same pass.
+   profile needs.
 2. Collect profiles across all sets; slot ids that differ only in
    `natural_len` map to one entry.
 3. Share exactly shared work: one digit decomposition per
    `(ring dimension, basis)`, one prepared A transform per
    `(ring dimension, width)`.
-4. Generate commitments in parallel, bounded by memory. Each borrows its
-   source from the derived matrix and frees it once its payload and hints are
-   written.
+4. Commit a stream's profiles in order, each in parallel internally, so a
+   profile can reuse the inner rows of a narrower one exported before it.
+   Each borrows its source from the derived matrix; each exported slot is
+   consumed as its payload and hints are written.
 5. Reuse inner commitment rows between nested profiles only if stream, A ring
    dimension and rank, positions per block, digit basis and count, and block
-   boundaries all match; recompute outer layers and compare with independent
-   generation. Measure how often this applies first.
-6. Build guest caches per `(stream, row, target, capacity)`.
-7. Write the files, then the manifest.
+   boundaries all match; outer layers are always recomputed. The
+   known-answer computation commits its corpus both ways and requires the
+   same payloads.
+6. Build each guest cache once per `(stream, row, target, capacity)`, from
+   one verifier setup per capacity, built in ascending order and freed before
+   the next.
+7. Check every file against its loader's cap, then write the files and the
+   manifest.
 
 ### Steps
 
@@ -1074,7 +1134,11 @@ Grouped rows were sampled with a reimplementation of Jolt's `plan_row`, with
 - #210: recomputing setup-prefix commitments when loading disk caches
 - #186: trusted in-place setup and terminal-cache views
 - #187: selected-row catalog views
-- #253, #254, #255, #260: protocol v8 transcript, embedded transcript, and
-  the SHA3-256 descriptor digest
+- #253, which folded in #254, #255, and #260: the transcript on
+  jolt-transcript, the embedded transcript, and the SHA3-256 descriptor
+  digest
+- #294: setup accumulation and offloaded Stage 3, the second slot-binding
+  site
+- #313: trusted in-place setup views without the copying-decode cap
 - #261: seed-derived setup-prefix export
 - RFC 2119: requirement levels
