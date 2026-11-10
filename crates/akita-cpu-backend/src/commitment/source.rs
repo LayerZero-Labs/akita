@@ -215,11 +215,11 @@ pub(crate) struct ShortNormType {
 }
 
 impl ShortNormType {
-    /// Describe a checked packed signed bit width.
+    /// Describe a checked packed signed width.
     pub(crate) fn new(signed_bit_width: u8) -> Result<Self, AkitaError> {
         if !(1..=8).contains(&signed_bit_width) {
             return Err(AkitaError::InvalidInput(format!(
-                "packed short-norm signed bit width {signed_bit_width} is outside 1..=8"
+                "packed short-norm signed width {signed_bit_width} is outside 1..=8"
             )));
         }
         Ok(Self { signed_bit_width })

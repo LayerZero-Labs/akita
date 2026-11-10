@@ -41,7 +41,6 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
             primes,
             manifest.field_profile(),
         )?;
-
         commitment
             .profile()
             .validate_frozen_precommit(F::MODULUS_BITS)?;

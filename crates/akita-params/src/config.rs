@@ -6,7 +6,7 @@ use akita_error::AkitaError;
 ///
 /// The gadget base is `b = 2^log_basis`. Each ring coefficient is decomposed
 /// into balanced digits in `[-b/2, b/2)`. The exact depth comes from
-/// [`crate::sis::num_digits_for_bound`]. A bounded signed bit width can need one
+/// [`crate::sis::num_digits_for_bound`]. A bounded signed width can need one
 /// more digit than `ceil(log_commit_bound / log_basis)` because the balanced
 /// interval reaches one value farther on the negative side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

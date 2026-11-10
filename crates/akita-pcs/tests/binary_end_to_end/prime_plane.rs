@@ -78,7 +78,7 @@ fn prime_plane_word_and_several_polynomials() {
     init_rayon_pool();
     run_on_large_stack(|| {
         for planes in [1, 2, 5] {
-            fixture(false, planes, planes, planes == 1);
+            fixture(false, planes, planes, planes != 2);
         }
     });
 }
@@ -372,6 +372,8 @@ fn fixture(mixed: bool, planes: usize, owners: usize, mutations: bool) {
     let packed_proof = prove(primes.clone(), packed.private_handle);
     assert_eq!(packed_proof.0, proof, "packed prime/projection proof drift");
     assert_eq!(packed_proof.1, continuation, "packed continuation drift");
+    // The `-true-` keeps the file names of captures made when a binary group's
+    // word claim was optional, so those captures still compare.
     byte_contract::compare_baseline(
         &proof,
         &format!("binary-prime-{mixed}-true-{planes}-{owners}.bin"),
@@ -486,7 +488,7 @@ fn fixture(mixed: bool, planes: usize, owners: usize, mutations: bool) {
     let mut altered = proof.clone();
     altered[projection::d_payload(&ranges).start] ^= 1;
     rejects(
-        "EP D payload coefficient",
+        "D payload coefficient",
         &altered,
         &commitment,
         primes.clone(),

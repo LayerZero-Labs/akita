@@ -109,7 +109,7 @@ fn check(shape: Shape, seed: u64) {
     }
 }
 
-/// Fourteen root shapes, shared by the differential test and the padding
+/// Fifteen root shapes, shared by the differential test and the padding
 /// regression. They include every claim, plane and owner combination of the
 /// prime-plane end-to-end tests.
 ///
@@ -151,6 +151,11 @@ fn shapes() -> Vec<Shape> {
         },
         Shape {
             prime_planes: 5,
+            ..base
+        },
+        Shape {
+            prime_planes: 3,
+            extra_rings: 5,
             ..base
         },
         Shape { owners: 2, ..base },
