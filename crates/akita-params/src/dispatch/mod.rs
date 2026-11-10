@@ -24,7 +24,7 @@ pub use policy::{
 /// PCS base-field tier for protocol and NTT dispatch arm tables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProtocolRingDispatchTierId {
-    /// 128-bit production field (`Prime128OffsetA7F7` and siblings).
+    /// 128-bit production field (`Prime128Offset6A23801F` and siblings).
     Fp128,
     /// 64-bit small field.
     Fp64,
@@ -54,7 +54,7 @@ pub const fn protocol_dispatch_tier_for_sis_profile(
     profile: SisModulusProfileId,
 ) -> ProtocolRingDispatchTierId {
     match profile {
-        SisModulusProfileId::Q128OffsetA7F7 => ProtocolRingDispatchTierId::Fp128,
+        SisModulusProfileId::Q128Offset6A23801F => ProtocolRingDispatchTierId::Fp128,
         SisModulusProfileId::Q64Offset59 => ProtocolRingDispatchTierId::Fp64,
         SisModulusProfileId::Q32Offset99 => ProtocolRingDispatchTierId::Fp32,
     }
@@ -185,12 +185,12 @@ pub fn validate_role_dims_for_field<F: Field + CanonicalEncoding>(
 mod tests {
     use super::*;
     use crate::dispatch_for_field;
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn protocol_dispatch_tier_classifies_fields() {
         assert_eq!(
-            protocol_dispatch_tier::<Prime128OffsetA7F7>(),
+            protocol_dispatch_tier::<Prime128Offset6A23801F>(),
             ProtocolRingDispatchTierId::Fp128
         );
         assert_eq!(
@@ -214,8 +214,8 @@ mod tests {
             (1u128 << 64) - 59
         );
         assert_eq!(
-            field_modulus::<Prime128OffsetA7F7>().unwrap(),
-            u128::MAX - 0xffff_a7f6
+            field_modulus::<Prime128Offset6A23801F>().unwrap(),
+            u128::MAX - 0x6a23_801e
         );
         assert_eq!(
             field_modulus_be_bytes::<Prime32Offset99>().unwrap()[28..],
@@ -229,7 +229,7 @@ mod tests {
             assert_eq!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
-                    Prime128OffsetA7F7,
+                    Prime128Offset6A23801F,
                     d,
                     |D| Ok(D)
                 )
@@ -241,7 +241,7 @@ mod tests {
             assert!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
-                    Prime128OffsetA7F7,
+                    Prime128Offset6A23801F,
                     d,
                     |D| Ok(D)
                 )
@@ -296,7 +296,7 @@ mod tests {
         for d in [16usize, 32] {
             assert!(dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Outer),
-                Prime128OffsetA7F7,
+                Prime128Offset6A23801F,
                 d,
                 |D| Ok(D)
             )
@@ -304,7 +304,7 @@ mod tests {
         }
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
-            Prime128OffsetA7F7,
+            Prime128Offset6A23801F,
             64usize,
             |D| Ok(D)
         )
@@ -333,28 +333,28 @@ mod tests {
     fn shared_ntt_dispatch_fp128_includes_first_compression_stage_and_reaches_d1024() {
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Ntt,
-            Prime128OffsetA7F7,
+            Prime128Offset6A23801F,
             16usize,
             |D| Ok(D)
         )
         .is_ok());
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Ntt,
-            Prime128OffsetA7F7,
+            Prime128Offset6A23801F,
             64usize,
             |D| Ok(D)
         )
         .is_ok());
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Ntt,
-            Prime128OffsetA7F7,
+            Prime128Offset6A23801F,
             512usize,
             |D| Ok(D)
         )
         .is_ok());
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Ntt,
-            Prime128OffsetA7F7,
+            Prime128Offset6A23801F,
             1024usize,
             |D| Ok(D)
         )
@@ -447,20 +447,20 @@ mod tests {
             outer: 512,
             opening: 64,
         };
-        assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_b).is_err());
+        assert!(validate_role_dims_for_field::<Prime128Offset6A23801F>(fp128_high_b).is_err());
 
         let fp128_high_a = CommitmentRingDims {
             inner: 1024,
             outer: 256,
             opening: 64,
         };
-        assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_a).is_ok());
+        assert!(validate_role_dims_for_field::<Prime128Offset6A23801F>(fp128_high_a).is_ok());
 
         let fp128_too_high_a = CommitmentRingDims {
             inner: 2048,
             outer: 64,
             opening: 64,
         };
-        assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_too_high_a).is_err());
+        assert!(validate_role_dims_for_field::<Prime128Offset6A23801F>(fp128_too_high_a).is_err());
     }
 }

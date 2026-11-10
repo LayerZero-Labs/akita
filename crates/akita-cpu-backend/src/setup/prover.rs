@@ -236,7 +236,7 @@ mod tests {
         let inner_bound = akita_params::sis::rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             PREFIX_D,
             3,
             &akita_challenges::SparseChallengeConfig::production_for_ring_dim(PREFIX_D)
@@ -246,14 +246,14 @@ mod tests {
         )
         .expect("audited prefix A bound");
         let inner_digits = akita_params::sis::compute_num_digits_field_width(
-            SisModulusProfileId::Q128OffsetA7F7.field_bits(),
+            SisModulusProfileId::Q128Offset6A23801F.field_bits(),
             1,
         );
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: SisTableDigest::CURRENT,
-                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
                 role: SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
                 coeff_linf_bound: inner_bound,
@@ -265,7 +265,7 @@ mod tests {
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: SisTableDigest::CURRENT,
-                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
                 role: SisMatrixRole::Outer,
                 ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
                 coeff_linf_bound: 3,
@@ -275,7 +275,7 @@ mod tests {
         .expect("audited prefix B matrix");
         let commitment_rows = outer_commit_matrix.output_rank();
         let compression_plan = CompressionChainPlan::for_complete_source(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             commitment_rows * PREFIX_D,
         )
         .expect("prefix compression plan");

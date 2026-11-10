@@ -1,7 +1,7 @@
 use super::*;
 use akita_params::layout::relation_layout::{RelationGroupRows, RelationRowGeometry};
 use akita_params::{CommitmentRingDims, CommitmentSliceCount, OpeningMethod};
-use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};
+use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128Offset6A23801F, Ring, Zero};
 
 type F = Fp32<251>;
 type E = FpExt2<F, NegOneNr>;
@@ -178,7 +178,7 @@ fn mixed_role_dims_relation_rhs_coeff_len_matches_per_segment_widths() {
 
 #[test]
 fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
-    type G = Prime128OffsetA7F7;
+    type G = Prime128Offset6A23801F;
     let final_dims = CommitmentRingDims {
         inner: 256,
         outer: 128,

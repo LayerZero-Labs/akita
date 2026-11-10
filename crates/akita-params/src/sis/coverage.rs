@@ -82,7 +82,7 @@ const fn max_inner_coeff_linf_bound(modulus_profile: SisModulusProfileId) -> u12
     match modulus_profile {
         SisModulusProfileId::Q32Offset99 => Q32_MAX_INNER_COEFF_LINF_BOUND,
         SisModulusProfileId::Q64Offset59 => Q64_MAX_INNER_COEFF_LINF_BOUND,
-        SisModulusProfileId::Q128OffsetA7F7 => Q128_MAX_INNER_COEFF_LINF_BOUND,
+        SisModulusProfileId::Q128Offset6A23801F => Q128_MAX_INNER_COEFF_LINF_BOUND,
     }
 }
 
@@ -90,7 +90,7 @@ const fn challenge_extension_degree(modulus_profile: SisModulusProfileId) -> usi
     match modulus_profile {
         SisModulusProfileId::Q32Offset99 => 4,
         SisModulusProfileId::Q64Offset59 => 2,
-        SisModulusProfileId::Q128OffsetA7F7 => 1,
+        SisModulusProfileId::Q128Offset6A23801F => 1,
     }
 }
 
@@ -147,7 +147,7 @@ pub(super) fn cached_inner_coeff_linf_bounds(
     let cache = match modulus_profile {
         SisModulusProfileId::Q32Offset99 => &Q32_INNER_COEFF_LINF_BOUNDS[index],
         SisModulusProfileId::Q64Offset59 => &Q64_INNER_COEFF_LINF_BOUNDS[index],
-        SisModulusProfileId::Q128OffsetA7F7 => &Q128_INNER_COEFF_LINF_BOUNDS[index],
+        SisModulusProfileId::Q128Offset6A23801F => &Q128_INNER_COEFF_LINF_BOUNDS[index],
     };
     Some(cache.get_or_init(|| derive_inner_coeff_linf_bounds(modulus_profile, ring_dimension)))
 }
@@ -203,7 +203,7 @@ fn derive_inner_coeff_linf_bounds(
                 }),
         );
     }
-    if modulus_profile == SisModulusProfileId::Q128OffsetA7F7 {
+    if modulus_profile == SisModulusProfileId::Q128Offset6A23801F {
         bounds.extend(
             Q128_MULTI_CHUNK_INNER_REFINEMENTS
                 .iter()
@@ -280,7 +280,7 @@ pub fn sis_role_cells() -> Vec<SisRoleCell> {
     let profiles = [
         SisModulusProfileId::Q32Offset99,
         SisModulusProfileId::Q64Offset59,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
     ];
     let mut cells = Vec::new();
     for role in SIS_MATRIX_ROLES.iter().copied() {
@@ -383,7 +383,7 @@ mod tests {
         for &(dimension, bound) in Q128_MULTI_CHUNK_INNER_REFINEMENTS {
             assert!(sis_role_cell(
                 SisMatrixRole::Inner,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 dimension,
                 bound,
             )
@@ -404,7 +404,7 @@ mod tests {
         for profile in [
             SisModulusProfileId::Q32Offset99,
             SisModulusProfileId::Q64Offset59,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
         ] {
             let expected = profile != SisModulusProfileId::Q32Offset99;
             assert_eq!(

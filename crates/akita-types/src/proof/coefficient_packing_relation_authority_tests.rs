@@ -71,9 +71,9 @@ fn public_rhs_accepts_zero_packing_consistency_and_rejects_nonzero_payload() {
 
 #[test]
 fn degree_one_packing_consistency_rhs_must_be_zero() {
-    type Base = Prime128OffsetA7F7;
+    type Base = Prime128Offset6A23801F;
     let fixture = fixture::<Base, Base>(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         128,
         64,
         64,

@@ -11,7 +11,9 @@ use akita_params::sis::compute_num_digits_field_width;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{
+    CanonicalEncoding, Field, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
+};
 
 const FIELD_COEFFICIENTS: usize = 1 << 22;
 const POSITIONS_PER_BLOCK: usize = 512;
@@ -93,7 +95,7 @@ fn suffix_case<const D: usize>(c: &mut Criterion) {
     group.throughput(Throughput::Elements(FIELD_COEFFICIENTS as u64));
     group.bench_function(format!("d{D}"), |b| {
         b.iter(|| {
-            black_box(decompose_recursive_witness::<Prime128OffsetA7F7, D>(
+            black_box(decompose_recursive_witness::<Prime128Offset6A23801F, D>(
                 black_box(&witness),
                 black_box(&challenges),
                 POSITIONS_PER_BLOCK,
@@ -122,13 +124,13 @@ fn bench_decompose_fold(c: &mut Criterion) {
     dense_case::<Prime64Offset59, 128>(c, "fp64", 64, 10);
     dense_case::<Prime64Offset59, 512>(c, "fp64", 64, 11);
 
-    dense_case::<Prime128OffsetA7F7, 64>(c, "fp128", 128, 9);
-    dense_case::<Prime128OffsetA7F7, 128>(c, "fp128", 128, 9);
-    dense_case::<Prime128OffsetA7F7, 256>(c, "fp128", 128, 9);
-    dense_case::<Prime128OffsetA7F7, 512>(c, "fp128", 128, 9);
-    dense_case::<Prime128OffsetA7F7, 1024>(c, "fp128", 128, 9);
-    dense_case::<Prime128OffsetA7F7, 2048>(c, "fp128", 128, 9);
-    dense_case::<Prime128OffsetA7F7, 64>(c, "fp128", 128, 11);
+    dense_case::<Prime128Offset6A23801F, 64>(c, "fp128", 128, 9);
+    dense_case::<Prime128Offset6A23801F, 128>(c, "fp128", 128, 9);
+    dense_case::<Prime128Offset6A23801F, 256>(c, "fp128", 128, 9);
+    dense_case::<Prime128Offset6A23801F, 512>(c, "fp128", 128, 9);
+    dense_case::<Prime128Offset6A23801F, 1024>(c, "fp128", 128, 9);
+    dense_case::<Prime128Offset6A23801F, 2048>(c, "fp128", 128, 9);
+    dense_case::<Prime128Offset6A23801F, 64>(c, "fp128", 128, 11);
 
     suffix_case::<64>(c);
     suffix_case::<128>(c);

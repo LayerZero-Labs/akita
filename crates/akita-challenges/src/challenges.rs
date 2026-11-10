@@ -709,7 +709,7 @@ mod sampled_family_tests {
 #[cfg(test)]
 mod signed_evaluation_tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128Offset6A23801F as F;
     #[test]
     fn sampled_signed_batches_match_the_sparse_polynomial() {
         let config = SparseChallengeConfig {
@@ -743,7 +743,7 @@ mod signed_evaluation_tests {
 #[cfg(test)]
 mod embedding_view_tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128Offset6A23801F as F;
     #[test]
     fn checked_embeddings_are_lazy_composable_and_preserve_public_values() {
         let config = SparseChallengeConfig {

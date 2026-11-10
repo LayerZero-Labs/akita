@@ -10,7 +10,7 @@ use akita_params::{
     FoldSchedule, OpeningClaimsLayout,
 };
 use akita_types::AkitaExpandedSetup;
-use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{Ext2, FpExt4, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 
 /// Minimum proof-optimized log-basis.
 ///
@@ -35,7 +35,9 @@ const fn proof_optimized_inner_basis_range(
     let max = match profile {
         akita_params::SisModulusProfileId::Q32Offset99 => 10,
         akita_params::SisModulusProfileId::Q64Offset59
-        | akita_params::SisModulusProfileId::Q128OffsetA7F7 => PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
+        | akita_params::SisModulusProfileId::Q128Offset6A23801F => {
+            PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX
+        }
     };
     (PROOF_OPTIMIZED_LOG_BASIS_MIN, max)
 }

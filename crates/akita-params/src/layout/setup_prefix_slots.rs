@@ -162,7 +162,7 @@ fn deserialize_sis_modulus_profile<R: Read>(
     match tag[0] {
         0 => Ok(SisModulusProfileId::Q32Offset99),
         1 => Ok(SisModulusProfileId::Q64Offset59),
-        2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
+        2 => Ok(SisModulusProfileId::Q128Offset6A23801F),
         _ => Err(SerializationError::InvalidData(
             "invalid SIS modulus profile tag".to_string(),
         )),

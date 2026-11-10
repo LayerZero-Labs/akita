@@ -20,7 +20,7 @@ pub const DEFAULT_EUCLIDEAN_TARGET_BITS: f64 = SisSecurityPolicy::Quantum169BitA
 pub const EUCLIDEAN_FAMILIES: &[AkitaModulusProfileId] = &[
     AkitaModulusProfileId::Q32Offset99,
     AkitaModulusProfileId::Q64Offset59,
-    AkitaModulusProfileId::Q128OffsetA7F7,
+    AkitaModulusProfileId::Q128Offset6A23801F,
 ];
 /// Exact ring-dimension domain owned by the independent Euclidean table.
 pub const EUCLIDEAN_RING_DIMS: &[u32] = &[32, 64, 128, 256, 512];
@@ -297,8 +297,7 @@ fn max_secure_width_row(
     estimator_config: &EstimateConfig,
 ) -> Result<EuclideanWidthRow> {
     let search_cap = row_search_cap(d, table_config.search_cap)?;
-    let mut probe =
-        |width| estimate_width(family, d, rank, width, collision_l2_sq, estimator_config);
+    let probe = |width| estimate_width(family, d, rank, width, collision_l2_sq, estimator_config);
     let result = max_true_in_prefix(search_cap, |width| {
         probe(width).map(|cost| security_met(cost.rop, table_config.target_bits))
     })?;
@@ -307,7 +306,7 @@ fn max_secure_width_row(
     } else {
         Some(probe(result.max_value)?)
     };
-    let next_cost = result.next_value.map(&mut probe).transpose()?;
+    let next_cost = result.next_value.map(probe).transpose()?;
     Ok(EuclideanWidthRow {
         family,
         d,

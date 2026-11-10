@@ -516,9 +516,9 @@ mod projection_tests {
     use akita_algebra::offset_eq::{
         eq_eval_at_index, eval_boolean_pair_tensor_families, OffsetEqWindow,
     };
-    use jolt_field::{One, Prime128OffsetA7F7, Ring};
+    use jolt_field::{One, Prime128Offset6A23801F, Ring};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     #[test]
     fn role_materialization_rejects_ratio_beyond_relation_address() {

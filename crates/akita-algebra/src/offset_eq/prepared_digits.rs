@@ -388,7 +388,7 @@ where
 mod tests {
     use super::*;
     use crate::offset_eq::{eq_eval_at_index, eval_affine_digit_intervals};
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
 
     fn prepare(point: &[F], digits: &[F], low: &[F]) -> PreparedDigits<F, F> {
         PreparedDigits::new(point, digits, low).unwrap().unwrap()

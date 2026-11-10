@@ -2,7 +2,7 @@
 name = "akita-sis-estimator"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version.workspace = true
 license = "Apache-2.0 OR MIT"
 description = "Offline SIS lattice estimator for Akita table generation"
 repository = "https://github.com/LayerZero-Labs/akita"
