@@ -112,7 +112,7 @@ fn versioned_frame_round_trips_mixed_fold_routes() {
         frame.extend(position_tape(&stream, &message, &expected));
         draws.push((family, stream, message, expected));
     }
-    crate::install_checked_hints(&frame).unwrap();
+    crate::install_checked_hints(&frame, frame.len()).unwrap();
     for (family, stream, message, expected) in draws {
         // Ordinary decode ignores the installed tape, even above the parallel threshold.
         assert_eq!(stream.decode(&message).unwrap().unwrap(), expected);
@@ -161,12 +161,12 @@ fn malformed_position_records_reject_through_fold_drawing() {
     padding[16 + 31 * 2] = 1;
     let truncated = frame[..frame.len() - 8].to_vec();
     for invalid in [changed_position, padding, truncated] {
-        crate::install_checked_hints(&invalid).unwrap();
+        crate::install_checked_hints(&invalid, frame.len()).unwrap();
         assert!(Draw(&message).draw_fold_challenges(&family, 3, 1).is_err());
         crate::abort_checked_hints().unwrap();
     }
     frame.extend_from_slice(&0u64.to_le_bytes());
-    crate::install_checked_hints(&frame).unwrap();
+    crate::install_checked_hints(&frame, frame.len()).unwrap();
     assert!(Draw(&message)
         .draw_fold_challenges(&family, 3, 1)
         .unwrap()

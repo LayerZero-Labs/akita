@@ -1,33 +1,45 @@
 use akita_error::AkitaError;
-use std::{borrow::Cow, cell::RefCell, sync::Arc};
+use std::{borrow::Cow, cell::RefCell};
 
 #[cfg(test)]
 mod table_tests;
 
-type HintWords = (Arc<[u64]>, usize);
+#[cfg(test)]
+mod allocation_tests;
+
+pub(crate) enum HintTape {
+    Quartets,
+    Positions,
+}
 
 struct Tape {
-    words: Arc<[u64]>,
+    words: Vec<u64>,
     used: usize,
 }
 impl Tape {
     fn new(bytes: &[u8]) -> Result<Self, AkitaError> {
-        let mut words = native_words(bytes)?.into_owned();
+        let mut words = match native_words(bytes)? {
+            Cow::Owned(words) => words,
+            Cow::Borrowed(words) => {
+                let mut owned = Vec::new();
+                owned
+                    .try_reserve_exact(words.len())
+                    .map_err(|_| AkitaError::InvalidProof)?;
+                owned.extend_from_slice(words);
+                owned
+            }
+        };
         for word in &mut words {
             *word = u64::from_le(*word);
         }
-        Ok(Self {
-            words: words.into(),
-            used: 0,
-        })
+        Ok(Self { words, used: 0 })
     }
-    fn take(&mut self, count: usize) -> Result<HintWords, AkitaError> {
+    fn take(&mut self, count: usize) -> Result<&[u64], AkitaError> {
         let begin = self.used;
-        self.used = begin
-            .checked_add(count)
-            .filter(|&n| n <= self.words.len())
-            .ok_or(AkitaError::InvalidProof)?;
-        Ok((Arc::clone(&self.words), begin))
+        let end = begin.checked_add(count).ok_or(AkitaError::InvalidProof)?;
+        let words = self.words.get(begin..end).ok_or(AkitaError::InvalidProof)?;
+        self.used = end;
+        Ok(words)
     }
     fn finished(&self) -> bool {
         self.used == self.words.len()
@@ -41,41 +53,54 @@ thread_local! {
     static HINTS: RefCell<Option<Hints>> = const { RefCell::new(None) };
 }
 
-/// Untrusted hints. Every used quartet or position rank is checked against
-/// transcript bits; the versioned frame adds a separate position-hint tape.
+/// Install untrusted hints within a trusted verifier resource budget.
+///
+/// `max_bytes` bounds the entire input, including the versioned frame header.
+/// Derive it from trusted schedule/configuration data or an application memory
+/// budget, never from the untrusted advice's declared length. Every used quartet
+/// or position rank is still authenticated against transcript bits.
 ///
 /// Call [`finish_checked_hints`] after successful verification to require complete
 /// consumption, or [`abort_checked_hints`] after a verification error. Both clear
 /// the installed hints so the current thread can verify another proof.
-pub fn install_checked_hints(bytes: &[u8]) -> Result<(), AkitaError> {
-    if bytes.is_empty() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let (quartets, positions) = if let Some(rest) = bytes.strip_prefix(b"AKITAH02") {
-        let size = rest
-            .get(..8)
-            .and_then(|b| b.try_into().ok())
-            .map(u64::from_le_bytes)
-            .and_then(|n| usize::try_from(n).ok())
-            .ok_or(AkitaError::InvalidProof)?;
-        let rest = rest.get(8..).ok_or(AkitaError::InvalidProof)?;
-        let (quartets, positions) = rest
-            .split_at_checked(size)
-            .ok_or(AkitaError::InvalidProof)?;
-        (Tape::new(quartets)?, Some(Tape::new(positions)?))
-    } else {
-        (Tape::new(bytes)?, None)
-    };
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] if a session already exists, the input
+/// exceeds `max_bytes`, the frame is malformed, or tape allocation fails. Session,
+/// length and framing checks precede all tape allocation; failed installation
+/// leaves the previous session unchanged.
+pub fn install_checked_hints(bytes: &[u8], max_bytes: usize) -> Result<(), AkitaError> {
     HINTS.with(|state| {
         let mut state = state
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidProof)?;
-        if state.is_some() {
+        if state.is_some() || bytes.is_empty() || bytes.len() > max_bytes {
+            return Err(AkitaError::InvalidProof);
+        }
+        let (quartets, positions) = if let Some(rest) = bytes.strip_prefix(b"AKITAH02") {
+            let size = rest
+                .get(..8)
+                .and_then(|b| b.try_into().ok())
+                .map(u64::from_le_bytes)
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or(AkitaError::InvalidProof)?;
+            let rest = rest.get(8..).ok_or(AkitaError::InvalidProof)?;
+            let (quartets, positions) = rest
+                .split_at_checked(size)
+                .ok_or(AkitaError::InvalidProof)?;
+            (quartets, Some(positions))
+        } else {
+            (bytes, None)
+        };
+        if !quartets.len().is_multiple_of(8)
+            || positions.is_some_and(|p| !p.len().is_multiple_of(8))
+        {
             return Err(AkitaError::InvalidProof);
         }
         *state = Some(Hints {
-            quartets,
-            positions,
+            quartets: Tape::new(quartets)?,
+            positions: positions.map(Tape::new).transpose()?,
         });
         Ok(())
     })
@@ -111,29 +136,33 @@ pub fn abort_checked_hints() -> Result<(), AkitaError> {
 pub(crate) fn active() -> bool {
     HINTS.with(|s| s.borrow().is_some())
 }
-pub(crate) fn take(count: usize) -> Result<HintWords, AkitaError> {
-    HINTS.with(|state| {
-        state
-            .try_borrow_mut()
-            .map_err(|_| AkitaError::InvalidProof)?
-            .as_mut()
-            .ok_or(AkitaError::InvalidProof)?
-            .quartets
-            .take(count.checked_mul(4).ok_or(AkitaError::InvalidProof)?)
-    })
-}
 pub(crate) fn positions_active() -> bool {
     HINTS.with(|s| s.borrow().as_ref().is_some_and(|h| h.positions.is_some()))
 }
-pub(crate) fn take_positions(count: usize) -> Result<HintWords, AkitaError> {
+
+/// Consume a bounded slice without allocating another owner or copying words.
+/// The decoder cannot retain a borrow after the thread-local session is released.
+pub(crate) fn take<T>(
+    kind: HintTape,
+    count: usize,
+    decode: impl FnOnce(&[u64]) -> Result<T, AkitaError>,
+) -> Result<T, AkitaError> {
     HINTS.with(|state| {
-        state
+        let mut state = state
             .try_borrow_mut()
-            .map_err(|_| AkitaError::InvalidProof)?
-            .as_mut()
-            .and_then(|h| h.positions.as_mut())
-            .ok_or(AkitaError::InvalidProof)?
-            .take(count)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let hints = state.as_mut().ok_or(AkitaError::InvalidProof)?;
+        let (tape, words) = match kind {
+            HintTape::Quartets => (
+                &mut hints.quartets,
+                count.checked_mul(4).ok_or(AkitaError::InvalidProof)?,
+            ),
+            HintTape::Positions => (
+                hints.positions.as_mut().ok_or(AkitaError::InvalidProof)?,
+                count,
+            ),
+        };
+        decode(tape.take(words)?)
     })
 }
 
@@ -232,16 +261,20 @@ mod frame_tests {
             frame.extend_from_slice(&n.to_le_bytes());
         }
         for (quartets, positions) in [(0, 0), (1, 0), (0, 2), (1, 2)] {
-            install_checked_hints(&frame).unwrap();
+            install_checked_hints(&frame, frame.len()).unwrap();
             if quartets != 0 {
-                let (q, start) = take(quartets).unwrap();
-                assert_eq!(start, 0);
-                assert_eq!(&q[..], &[1, 2, 3, 4]);
+                take(HintTape::Quartets, quartets, |q| {
+                    assert_eq!(q, &[1, 2, 3, 4]);
+                    Ok(())
+                })
+                .unwrap();
             }
             if positions != 0 {
-                let (p, start) = take_positions(positions).unwrap();
-                assert_eq!(start, 0);
-                assert_eq!(&p[..], &[5, 6]);
+                take(HintTape::Positions, positions, |p| {
+                    assert_eq!(p, &[5, 6]);
+                    Ok(())
+                })
+                .unwrap();
             }
             assert_eq!(
                 finish_checked_hints().is_ok(),
@@ -249,15 +282,15 @@ mod frame_tests {
             );
             assert!(!active());
             assert!(!positions_active());
-            assert!(take(1).is_err());
+            assert!(take(HintTape::Quartets, 1, |_| Ok(())).is_err());
         }
-        install_checked_hints(&frame).unwrap();
+        install_checked_hints(&frame, frame.len()).unwrap();
         abort_checked_hints().unwrap();
         assert!(!active());
         assert!(!positions_active());
-        install_checked_hints(&frame).unwrap();
-        take(1).unwrap();
-        take_positions(2).unwrap();
+        install_checked_hints(&frame, frame.len()).unwrap();
+        take(HintTape::Quartets, 1, |_| Ok(())).unwrap();
+        take(HintTape::Positions, 2, |_| Ok(())).unwrap();
         finish_checked_hints().unwrap();
     }
     #[test]
@@ -268,7 +301,7 @@ mod frame_tests {
             [b"AKITAH02".as_slice(), &0u64.to_le_bytes(), &[0; 7]].concat(),
             [b"AKITAH02".as_slice(), &u64::MAX.to_le_bytes()].concat(),
         ] {
-            assert!(install_checked_hints(&frame).is_err());
+            assert!(install_checked_hints(&frame, frame.len()).is_err());
         }
     }
 }

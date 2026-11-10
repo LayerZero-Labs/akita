@@ -417,26 +417,34 @@ impl SparseChallengeStream {
             return Err(AkitaError::InvalidProof);
         }
         let message_words = crate::checked_hint::native_words(message)?;
-        let (hints, begin) = crate::checked_hint::take(self.count)?;
-        let mut output = Vec::with_capacity(self.count);
-        for index in 0..self.count {
-            let low = u64::from_le(message_words[index * 2]);
-            let high = u64::from_le(message_words[index * 2 + 1]);
-            let rank = ((high as u128) << 23) | ((low >> 41) as u128);
-            if rank >= self.shell.rank_space {
-                return Err(AkitaError::InvalidProof);
-            }
-            let signs = low & ((1u64 << 41) - 1);
-            let pos = begin + index * 4;
-            let words = [hints[pos], hints[pos + 1], hints[pos + 2], hints[pos + 3]];
-            // Upper padding is a canonical zero, so unused bits cannot carry unchecked state.
-            if (words[0] | words[1] | words[2] | words[3]) >> 40 != 0 {
-                return Err(AkitaError::InvalidProof);
-            }
-            crate::checked_hint::validate(&words, rank, self.shell.pm1_rank_space, signs)?;
-            output.push(words);
-        }
-        Ok(output)
+        crate::checked_hint::take(
+            crate::checked_hint::HintTape::Quartets,
+            self.count,
+            |hints| {
+                let mut output = Vec::new();
+                output
+                    .try_reserve_exact(self.count)
+                    .map_err(|_| AkitaError::InvalidProof)?;
+                for index in 0..self.count {
+                    let low = u64::from_le(message_words[index * 2]);
+                    let high = u64::from_le(message_words[index * 2 + 1]);
+                    let rank = ((high as u128) << 23) | ((low >> 41) as u128);
+                    if rank >= self.shell.rank_space {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let signs = low & ((1u64 << 41) - 1);
+                    let pos = index * 4;
+                    let words = [hints[pos], hints[pos + 1], hints[pos + 2], hints[pos + 3]];
+                    // Upper padding is a canonical zero, so unused bits cannot carry unchecked state.
+                    if (words[0] | words[1] | words[2] | words[3]) >> 40 != 0 {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    crate::checked_hint::validate(&words, rank, self.shell.pm1_rank_space, signs)?;
+                    output.push(words);
+                }
+                Ok(output)
+            },
+        )
     }
 
     fn decode_all(
@@ -859,19 +867,17 @@ impl CandidateDecoder<'_> {
         let (pm1, pm2) = positions.split_at_mut(a);
         if self.position_hints {
             let width = weight.div_ceil(4);
-            let (hints, offset) = crate::checked_hint::take_positions(width)?;
-            let words = hints
-                .get(offset..offset.checked_add(width).ok_or(AkitaError::InvalidProof)?)
-                .ok_or(AkitaError::InvalidProof)?;
-            if !weight.is_multiple_of(4)
-                && words.last().is_some_and(|&w| w >> (16 * (weight % 4)) != 0)
-            {
-                return Err(AkitaError::InvalidProof);
-            }
-            self.binomials
-                .check_positions(pm1_rank, stream.shell.ring_d, words, 0, pm1)?;
-            self.binomials
-                .check_positions(pm2_rank, stream.shell.ring_d - a, words, a, pm2)?;
+            crate::checked_hint::take(crate::checked_hint::HintTape::Positions, width, |words| {
+                if !weight.is_multiple_of(4)
+                    && words.last().is_some_and(|&w| w >> (16 * (weight % 4)) != 0)
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                self.binomials
+                    .check_positions(pm1_rank, stream.shell.ring_d, words, 0, pm1)?;
+                self.binomials
+                    .check_positions(pm2_rank, stream.shell.ring_d - a, words, a, pm2)
+            })?;
         } else {
             self.binomials
                 .unrank(pm1_rank, stream.shell.ring_d, a, pm1)?;

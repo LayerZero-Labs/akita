@@ -547,8 +547,17 @@ Ranked recommendation:
 
 ### Checked rank-advice frame
 
-`install_checked_hints` accepts untrusted advice on the current thread. Fold
-drawing selects the advice route explicitly; ordinary `SparseChallengeStream::decode`
+`install_checked_hints(bytes, max_bytes)` accepts untrusted advice on the current
+thread within a trusted byte budget. `max_bytes` MUST come from trusted schedule
+configuration or an application memory budget, not from the untrusted frame or
+its length. It covers the entire input, including the 16-byte versioned header.
+The installer rejects an occupied session, oversized input and malformed framing
+before copying any tape. Tape storage is allocated fallibly; allocation failure
+returns `AkitaError::InvalidProof` and leaves the session unchanged. Decoders
+borrow checked word slices from the session without allocating shared owners.
+Callers of the previous one-argument installer MUST supply this trusted bound.
+
+Fold drawing selects the advice route explicitly; ordinary `SparseChallengeStream::decode`
 never reads or consumes that session. Position advice is consumed serially, even
 in a parallel build. Every used position or quartet is authenticated against the
 squeezed message; advice does not replace transcript randomness or norm checks.
@@ -596,6 +605,11 @@ stops at the requested number of accepted challenges, or at pool exhaustion.
 The producer MUST NOT append advice for candidates after that stopping point.
 The verifier checks ordering, range, remaining room and exact transcript ranks;
 a missing record, invalid padding or mismatched rank rejects the proof.
+
+Allocation-failure tests reject oversized and duplicate installs without any
+allocation attempt, reject malformed position framing before copying quartet
+data, and inject first/second tape allocation failures for aligned and unaligned
+input. Every failed installation allows a later valid session.
 
 The mixed-frame round-trip tests exercise unfiltered and operator-norm draws,
 the quartet threshold, candidates rejected by both range and predicate checks,

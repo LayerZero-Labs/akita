@@ -172,6 +172,8 @@ them to quartet advice. A capture consumer must preserve draw and candidate
 order when producing the two advice tapes. The
 [advice-frame contract](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame)
 defines their binary layout and authentication requirements.
+Installing captured advice requires a trusted byte budget; see
+[checked challenge advice](../how/verification.md#checked-challenge-advice).
 
 Capture is disabled on `riscv64` and in builds without the feature. It changes
 host execution and diagnostic output; challenge values and transcript bytes

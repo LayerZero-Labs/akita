@@ -35,7 +35,7 @@ fn message() -> Message {
 fn checked_hints_match_frozen_field_values_with_unaligned_ingress() {
     let mut hints = vec![0];
     hints.extend_from_slice(HINTS);
-    crate::install_checked_hints(&hints[1..]).unwrap();
+    crate::install_checked_hints(&hints[1..], HINTS.len()).unwrap();
     let sampled = message()
         .draw_fold_challenges(&family(), 1024, 1)
         .unwrap()
@@ -68,7 +68,7 @@ fn checked_hints_reject_another_valid_challenge_at_the_wrong_transcript_slot() {
     let first = hints[..32].to_vec();
     hints.copy_within(32..64, 0);
     hints[32..64].copy_from_slice(&first);
-    crate::install_checked_hints(&hints).unwrap();
+    crate::install_checked_hints(&hints, HINTS.len()).unwrap();
     assert!(message().draw_fold_challenges(&family(), 1024, 1).is_err());
     crate::abort_checked_hints().unwrap();
 }
@@ -78,7 +78,7 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
     let family = family();
     let draw = || message().draw_fold_challenges(&family, 1024, 1);
     for _ in 0..2 {
-        crate::install_checked_hints(HINTS).unwrap();
+        crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
         assert!(draw().unwrap().is_some());
         crate::finish_checked_hints().unwrap();
         assert!(!crate::checked_hint::active());
@@ -87,12 +87,12 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
     // A malformed draw must stay rejected; abort only releases its session.
     let mut malformed = HINTS.to_vec();
     malformed[..8].fill(0xff);
-    crate::install_checked_hints(&malformed).unwrap();
+    crate::install_checked_hints(&malformed, HINTS.len()).unwrap();
     assert!(draw().is_err());
     crate::abort_checked_hints().unwrap();
     assert!(!crate::checked_hint::active());
 
-    crate::install_checked_hints(HINTS).unwrap();
+    crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
     assert!(draw().unwrap().is_some());
     crate::finish_checked_hints().unwrap();
     // Unhinted decoding must no longer select an exhausted hint tape.
@@ -101,10 +101,10 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
 
 #[test]
 fn finishing_an_incomplete_hint_session_rejects_and_clears_it() {
-    crate::install_checked_hints(HINTS).unwrap();
+    crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
     assert!(crate::finish_checked_hints().is_err());
     assert!(!crate::checked_hint::active());
-    crate::install_checked_hints(HINTS).unwrap();
+    crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
     assert!(message()
         .draw_fold_challenges(&family(), 1024, 1)
         .unwrap()
@@ -144,7 +144,7 @@ fn checked_hints_match_for_aligned_and_unaligned_messages_and_tapes() {
             bytes.as_ptr().align_offset(8),
             if offset == 0 { 0 } else { 7 }
         );
-        crate::install_checked_hints(&hints.0[offset..offset + HINTS.len()]).unwrap();
+        crate::install_checked_hints(&hints.0[offset..offset + HINTS.len()], HINTS.len()).unwrap();
         let packed = stream.decode_checked_hints(bytes).unwrap();
         let actual = crate::Challenges::from_checked_quartets(packed, 1024, 1).unwrap();
         assert_eq!(actual.as_slice(), expected);
