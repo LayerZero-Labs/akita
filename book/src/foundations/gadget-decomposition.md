@@ -228,7 +228,7 @@ lets the full field path keep the rounded up formula above.
 ### Sources with a smaller bound
 
 Some committed sources are known to be much smaller than a general field
-element. Akita records their allowed signed width as $B$. A width of $B$
+element. Akita records their allowed signed bit width as $B$. A width of $B$
 means the interval
 
 $$
@@ -244,7 +244,7 @@ so the base is 8. The declared signed interval is $[-32,31]$. Two balanced
 base 8 digits represent only $[-36,27]$. The negative side is wide enough,
 but the positive side stops at 27. Akita therefore uses three digits.
 
-A nonnegative value that may be as large as $2^m$ needs signed width
+A nonnegative value that may be as large as $2^m$ needs signed bit width
 $B=m+1$. This extra bit records the sign. A source that may contain any
 `u64` value therefore declares width 65, not 64.
 

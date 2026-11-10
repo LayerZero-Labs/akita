@@ -244,7 +244,7 @@ impl BinaryRootGroupPlan {
         }
         totals.segment_cap = (binary.len() as u128)
             .checked_mul(7)
-            .zip((ordinary.len() as u128).checked_mul(5))
+            .zip((ordinary.len() as u128).checked_mul(4))
             .and_then(|(b, o)| b.checked_add(o))
             .ok_or_else(admission_error)?;
         totals.validate()?;
@@ -514,9 +514,7 @@ fn validate_names(
             a.checked_sub(binary.len()).and_then(|i| ordinary.get(i)),
             b.checked_sub(binary.len()).and_then(|i| ordinary.get(i)),
         ) {
-            a.plan.profile() == b.plan.profile()
-                && a.plan.source_width() == b.plan.source_width()
-                && a.polynomials == b.polynomials
+            a.plan.profile() == b.plan.profile() && a.polynomials == b.polynomials
         } else {
             false
         }

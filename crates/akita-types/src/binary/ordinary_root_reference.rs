@@ -287,41 +287,6 @@ impl OrdinaryNativeRootPlan {
             }
             claim += batch * evaluation;
         }
-        if let Some(width) = self.source_width {
-            let bit_segment =
-                checked::sum([self.first_segment, 4]).ok_or(AkitaError::InvalidProof)?;
-            let elements =
-                checked::product([owners, elements_per_owner]).ok_or(AkitaError::InvalidProof)?;
-            for element in 0..elements {
-                let batch = *batches.get(row).ok_or(AkitaError::InvalidProof)?;
-                row = checked::sum([row, 1]).ok_or(AkitaError::InvalidProof)?;
-                let mut power = batch;
-                for coefficient in 0..a.ring_dimension() {
-                    // S + sum_j 2^j (-bit_j) = -2^(width-1).
-                    terms.extend(repacking.coefficient_weights(
-                        s_segment,
-                        element,
-                        coefficient,
-                        power,
-                    )?);
-                    let mut bit_power = power;
-                    for bit in 0..width.bits() as usize {
-                        terms.push((
-                            repacking.coefficient_address(
-                                bit_segment,
-                                element,
-                                bit,
-                                coefficient,
-                            )?,
-                            bit_power,
-                        ));
-                        bit_power += bit_power;
-                    }
-                    claim -= power * E::from_u128(width.offset());
-                    power *= alpha;
-                }
-            }
-        }
         if row != batches.len() {
             return Err(AkitaError::InvalidProof);
         }
@@ -420,11 +385,9 @@ fn scatter_negative_recomposition<E: Field>(
 mod tests {
     use super::*;
     use crate::root_repacking::RootRepackingSegment;
-    use akita_params::ordinary_source::OrdinarySourceWidth;
     use akita_params::sis::{
-        inner_coeff_linf_bounds, num_digits_inner, num_digits_open, sis_table_key_for_linf_bound,
-        InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableDigest,
-        SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+        sis_table_key_for_linf_bound, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        SisMatrixRole, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
     };
     use akita_params::{
         BlockGeometry, CommitmentSliceCount, CommitmentSliceGeometry, GadgetDigits,
@@ -470,62 +433,11 @@ mod tests {
         profile
     }
 
-    /// A signed `bits`-wide group with `slots` polynomials and multi-digit
-    /// sources where `bits` needs them.
-    fn signed_profile(
-        bits: u32,
-        slots: usize,
-        slices: CommitmentSliceCount,
-    ) -> GroupCommitPhaseParams {
-        let width = OrdinarySourceWidth::new(bits).unwrap();
-        let inner_digits = num_digits_inner(width.decomposition(), true);
-        let outer_digits = num_digits_open(width.decomposition());
-        let key = SisTableKey {
-            policy: DEFAULT_SIS_SECURITY_POLICY,
-            table_digest: SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q128Offset275,
-            role: SisMatrixRole::Inner,
-            ring_dimension: 64,
-            coeff_linf_bound: inner_coeff_linf_bounds(SisModulusProfileId::Q128Offset275, 64)[0],
-        };
-        let inner = InnerCommitMatrixParams::try_new_with_min_rank(key, inner_digits).unwrap();
-        let geometry = CommitmentSliceGeometry::try_new(
-            slices,
-            2,
-            slots,
-            inner.output_rank(),
-            outer_digits,
-            64,
-            64,
-        )
-        .unwrap();
-        let outer = OuterCommitMatrixParams::try_new_with_min_rank(
-            SisTableKey {
-                role: SisMatrixRole::Outer,
-                coeff_linf_bound: 7,
-                ..key
-            },
-            geometry.physical_input_width(),
-        )
-        .unwrap();
-        let profile = GroupCommitPhaseParams {
-            version: GroupCommitPhaseParams::VERSION,
-            group: PolynomialGroupLayout::new(7, slots),
-            blocks: BlockGeometry::new(2, 1, 2),
-            outer_slice_count: slices,
-            inner: RoleParams::new(GadgetDigits::new(3, inner_digits), inner),
-            outer: RoleParams::new(GadgetDigits::new(3, outer_digits), outer),
-        };
-        width.validate_profile(&profile).unwrap();
-        profile
-    }
-
     fn field(rng: &mut StdRng) -> F {
         F::from_u128(rng.gen::<u128>() >> 1)
     }
 
-    /// The single-polynomial mixed root with one and two B slices, and signed
-    /// plans with several polynomials and multi-digit sources. Each sits
+    /// The single-polynomial mixed root with one and two B slices. Each sits
     /// first in the table and behind a 192-address prefix that misaligns
     /// every segment start against the 1024-address equality blocks.
     #[test]
@@ -537,29 +449,12 @@ mod tests {
             setup_seed: [41u8; 32].into(),
         };
         let mut rng = StdRng::seed_from_u64(5);
-        let mut cases = Vec::new();
         for slices in [CommitmentSliceCount::ONE, CommitmentSliceCount::TWO] {
-            cases.push((profile(slices), None));
-            for (bits, slots) in [(2, 3), (9, 3), (33, 1)] {
-                cases.push((
-                    signed_profile(bits, slots, slices),
-                    Some(OrdinarySourceWidth::new(bits).unwrap()),
-                ));
-            }
-        }
-        for (profile, width) in cases {
+            let profile = profile(slices);
             for prefix in [0, 3] {
                 let first = usize::from(prefix > 0);
-                let plan = match width {
-                    None => OrdinaryNativeRootPlan::new(profile, first),
-                    Some(width) => OrdinaryNativeRootPlan::new_signed(profile, first, width),
-                }
-                .unwrap();
-                let label = format!(
-                    "{:?} {width:?} {} {prefix}",
-                    profile.outer_slice_count,
-                    profile.group.num_polynomials()
-                );
+                let plan = OrdinaryNativeRootPlan::new(profile, first).unwrap();
+                let label = format!("{:?} {prefix}", profile.outer_slice_count);
                 let mut segments = Vec::new();
                 if prefix > 0 {
                     segments.push(RootRepackingSegment {
@@ -610,11 +505,7 @@ mod tests {
                     )
                     .unwrap();
                 assert_eq!(structured.claim(), flat.claim(), "{label}");
-                assert_eq!(
-                    structured.terms().is_empty(),
-                    profile.inner.digits.num_digits == 1,
-                    "{label}"
-                );
+                assert!(structured.terms().is_empty(), "{label}");
                 let mut dense = vec![F::zero(); repacking.domain_len()];
                 for &(address, weight) in flat.terms() {
                     dense[address] += weight;

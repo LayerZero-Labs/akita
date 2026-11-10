@@ -24,7 +24,7 @@ fn exact_two_complement_encoding_has_no_block_headers() {
 }
 
 #[test]
-fn round_trips_every_signed_width_and_tail_shape() {
+fn round_trips_every_signed_bit_width_and_tail_shape() {
     let mut rng = StdRng::seed_from_u64(0x5e3d_1a17);
     let lengths = [0, 1, 7, 8, 15, 16, 63, 64, 65, 127, 128, 129];
     for bit_width in 1..=8 {
@@ -157,7 +157,7 @@ fn streaming_writer_rejects_overlaps_overflow_and_narrow_widths() {
 }
 
 #[test]
-fn automatic_width_is_the_smallest_exact_signed_width() {
+fn automatic_width_is_the_smallest_exact_signed_bit_width() {
     for (digits, expected_width) in [
         (vec![0], 1),
         (vec![-1, 0], 1),

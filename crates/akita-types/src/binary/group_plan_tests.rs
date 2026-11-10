@@ -792,52 +792,6 @@ fn ordinary_exponent_and_mixed_group_boundaries_are_admitted_before_allocation()
 }
 
 #[test]
-fn signed_ordinary_owners_keep_their_order_and_reject_duplicate_ids() {
-    use akita_params::ordinary_source::OrdinarySourceWidth;
-    let field = BinaryFieldProfile::P128;
-    let binary = occurrence(0, 1, 2, 1, field, true, 0);
-    let profile = ordinary_profile(field, 10, 3);
-    let source = OrdinaryRootGroupOccurrence {
-        plan: OrdinaryNativeRootPlan::new_signed(profile, 0, OrdinarySourceWidth::new(2).unwrap())
-            .unwrap(),
-        polynomials: vec![owner_id(1, 2), owner_id(1, 0), owner_id(1, 1)],
-        registered_commitment: None,
-    };
-    let group = BinaryRootGroupPlan::new(
-        std::slice::from_ref(&binary),
-        std::slice::from_ref(&source),
-        256,
-    )
-    .unwrap();
-    assert_eq!(group.ordinary()[0].polynomials, source.polynomials);
-    assert_eq!(group.ordinary()[0].segments.len(), 5);
-    assert_eq!(group.totals().owners, 4);
-    let p = group.ordinary()[0].plan.profile();
-    let compression = p.outer_compression_plan().unwrap();
-    let maps = compression.maps();
-    let length = 3
-        * p.blocks.live_blocks
-        * p.blocks.positions_per_block
-        * p.inner.digits.num_digits
-        * p.inner.matrix.ring_dimension()
-        + 3 * p.blocks.live_blocks
-            * p.inner.matrix.output_rank()
-            * (p.inner.matrix.ring_dimension() / p.outer.matrix.ring_dimension())
-            * p.outer.digits.num_digits
-            * p.outer.matrix.ring_dimension()
-        + maps[0].input_width() * maps[0].ring_dimension()
-        + maps[1].input_width() * maps[1].ring_dimension()
-        + 3 * p.blocks.live_blocks
-            * p.blocks.positions_per_block
-            * 2
-            * p.inner.matrix.ring_dimension();
-    assert_eq!(group.ordinary()[0].physical_len, length);
-    let mut duplicate = source;
-    duplicate.polynomials[2] = duplicate.polynomials[0];
-    assert!(BinaryRootGroupPlan::new(&[binary], &[duplicate], 256).is_err());
-}
-
-#[test]
 fn input_word_capacity_and_width_are_validated_before_roster_construction() {
     let field = BinaryFieldProfile::P64;
     let carrier = binary_ordinary_profile_fixture(field);

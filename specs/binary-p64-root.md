@@ -590,7 +590,7 @@ Paths without a crate prefix in this table are under
 | `typed_prefix.rs`, `typed_prefix_weights.rs`, `a_product.rs` | Generic F/E interfaces are orchestrated only by the admitted degree-one root. | Test base setup coefficients with E64 factors, claims and successor consumption. Bind changed layouts and ranks in the prefix identity. |
 | `crates/akita-types/src/proof/commitment/binary.rs` | `new_binary` requires the P128 proof modulus and the constant payload length `BINARY_COMMITTED_PAYLOAD_COEFFICIENTS`. | Require the selected p64 profile. Size the payload from the manifest's admitted B rank. |
 | `crates/akita-types/src/proof/commitment/wire.rs`, `crates/akita-verifier/src/fold/admission.rs` | Validation and deserialization compare binary payloads with the same constant rank-two length. | Derive the expected payload length from the manifest's admitted B rank. |
-| `crates/akita-cpu-backend/src/opaque/binary_ordinary.rs` | Signed source decoding, reached from `opaque/binary.rs`, subtracts canonical coefficients from `BINARY_SETUP_P`. Over p64, a valid coefficient -1 is encoded as p-1 and would fail the signed-width check. | Decode signed values against the selected field modulus. |
+| `crates/akita-cpu-backend/src/opaque/binary_ordinary.rs` | Balanced digit decoding, reached from `opaque/binary.rs`, subtracts canonical coefficients from `BINARY_SETUP_P`. Over p64, a valid coefficient -1 is encoded as p-1 and would fail the digit check. | Decode balanced digits against the selected field modulus. |
 
 The canonical relation compiler remains the source of truth.
 Do not add a parallel p64 compiler with duplicated bounds.
@@ -850,7 +850,7 @@ The stages below describe future changes; this spec commit changes no Rust.
    Use 22 digits per base coordinate and the new unit proof.
    Use E64 points and values with explicit two-plane resource accounting.
    Select the actual p64 ordinary compression/norm contract.
-   Decode signed ordinary sources against the selected field modulus.
+   Decode balanced ordinary digits against the selected field modulus.
 6. **Admit and measure the complete schedule.** Touch
    `crates/akita-types/src/binary/grinding.rs`,
    `crates/akita-pcs/examples/binary_full_size.rs` and its

@@ -81,7 +81,7 @@ configuration is consulted by Akita verification.
 ### Bounded committed sources
 
 The `fp128::DenseBounded` preset is for dense polynomials whose centered
-coefficients fit within a declared signed width of 65 bits. This range is
+coefficients fit within a declared signed bit width of 65 bits. This range is
 `[-2^64, 2^64 - 1]`, so it contains every `u64`. The narrower declaration lets
 the artifact schedule use the actual source range instead of charging every
 coefficient for the full 128-bit field width. Commitment rejects a source that

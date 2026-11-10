@@ -98,8 +98,8 @@ weight test. Test the one-point API with word-only, prime-only and both claim
 kinds. Test each group's early and late response retries and sampler exhaustion.
 Test all `G_b in {1,2,4}` and `G_o in {0,1,3,4}` combinations end to end. Check
 transcript continuation, complete grinding-plan consumption and exact EOF. Test
-full-field ordinary recomposition separately from signed-width linkage. Check
-count overflow, aggregate caps, truncated payloads and work-nonce canonicality.
+full-field ordinary recomposition. Check count overflow, aggregate caps,
+truncated payloads and work-nonce canonicality.
 Keep the existing single-group and ordinary compatibility suites passing.
 
 For this documentation change, run:
@@ -127,9 +127,7 @@ p64 multigroup benchmark.
 ### Architecture
 
 The current binary root drivers in `akita-prover` and `akita-verifier` select
-the first binary group and at most one ordinary group. `OrdinaryNativeRootBatch`
-is an arithmetic compiler seam for ordered ordinary rows; the drivers do not
-select it. This extension replaces that fixed dispatch with one validated group
+the first binary group and at most one ordinary group. This extension replaces that fixed dispatch with one validated group
 plan. Each binary group produces local frontend/D/response data. All groups feed
 the shared relation and prefix compilers described below.
 
@@ -235,8 +233,8 @@ Absorb this record, in order:
    elements are eight.
 5. For each ordinary occurrence: prescribed point dimension and E64 coordinates,
    prescribed evaluation count and values, in owner order. E64 encoding is two
-   canonical F_p residues `(a,b)` for `a+b*u`, 16 bytes. Full-field coefficient
-   semantics or a selected signed-width contract is explicit.
+   canonical F_p residues `(a,b)` for `a+b*u`, 16 bytes. Ordinary groups carry
+   balanced digits only; the statement declares no integer range for them.
 6. The derived outgoing layout, all row-range boundaries, local prefix layouts
    and placement map, quotient/carry depths, source-reading maps, and complete
    grinding/address plan, each as a canonical length-prefixed plan blob in the
@@ -283,8 +281,8 @@ maxima. Metadata identity records and their aggregate count are capped at `2^20`
 entries and the metadata-byte limit, whichever is tighter. Ring vectors,
 segments, typed pieces, row arrays and prefix slots are sized from those
 validated records. A binary group has at most seven segments including its K; an
-ordinary group has four basic segments and at most one signed-width bit segment,
-hence at most `7G_b+5G_o <= 448` segments. Table allocations have exact length W
+ordinary group has four segments, hence at most `7G_b+4G_o <= 448` segments.
+Table allocations have exact length W
 or Pfx; E64 storage is at most `16*2^32` bytes per such buffer, base storage at
 most `8*2^32`. A verifier should stream large row families and use a trusted
 memory budget before allocating even an admitted table. Its scratch capacity for
@@ -364,12 +362,10 @@ word present, degree 2). Both require rank 5 in the copied width table; D
 exceeds rank 4's cap 106,021,444. B ranks are already
 fixed at commitment time; D ranks are selected before order 0.
 
-Ordinary full-field sources may use 22 base-eight digits and field
-recomposition; there is no implicit signed-integer range claim. An explicit
-signed width w requires a separate integer link admission. A sufficient p64
-condition is `Neg(d_source) + (2^w-1) + 2^(w-1) < p`, with `Pos(d_source) >=
-2^(w-1)-1` and `Neg(d_source) >= 2^(w-1)`. Do not port the current P128
-comment's `2^67` bound to p64. Compression bit counts and all map moduli are
+Ordinary groups carry balanced digits only. Full-field sources may use 22
+base-eight digits and field recomposition. Akita makes no integer range claim
+about ordinary values and declares no width for them; an exact integer range is
+the caller's contract. Compression bit counts and all map moduli are
 those of the selected p64 commitment profile; 128-bit P128 compression tables
 cannot be silently reused.
 
@@ -624,8 +620,8 @@ Therefore typed B/D compilation must use explicit translated global addresses,
 retaining local aligned geometry for its period copies, rather than imposing the
 old global-start alignment assertion.
 
-Each ordinary block contains S digits, T image digits, first-map and second-map
-negative-bit segments, and an optional signed-width bit segment. Their element
+Each ordinary block contains S digits, T image digits, and first-map and
+second-map negative-bit segments. Their element
 counts, degrees and depths come from the immutable p64 profile; reuse
 `OrdinaryNativeRootPlan`'s canonical order and its per-owner source map. For
 owners s, live blocks h, positions v, A rank r_A, A degree n_A, B degree n_B
@@ -634,13 +630,11 @@ dividing n_A, and digit depths d_S,d_T, its physical length is
 ```
 L_o = s*h*v*d_S*n_A
     + s*h*r_A*(n_A/n_B)*d_T*n_B
-    + width_map1*degree_map1 + width_map2*degree_map2
-    + [signed_width] * s*h*v*w*n_A.
+    + width_map1*degree_map1 + width_map2*degree_map2.
 ```
 
 The map widths include their prescribed bit expansion. Do not multiply them by
-64 or 128 a second time. `w` is the signed bit width. Full-field sources need no
-optional signed-bit segment. The binary physical length is
+64 or 128 a second time. The binary physical length is
 
 ```
 L_b = 4096*s_b*m_b + 24576*s_b*C_b
@@ -738,9 +732,8 @@ is:
    B authentication rows, D authentication rows, then the prime response and
    reading rows (two ring rows per claim).
 3. For each ordinary group: A image rows, B rows, first/second compression rows,
-   per-owner point evaluations and any signed-width linkage rows, in its
-   canonical plan order; then one negative-bit predicate per physical natural
-   bit address, including optional signed bits.
+   per-owner point evaluations, in its canonical plan order; then one
+   negative-bit predicate per physical natural bit address.
 
 One ring-switch alpha evaluates all ring-valued equations using their correct
 native remainder kernels. A polynomial relation's degree, not the sum of all
@@ -754,9 +747,7 @@ complete-preimage grammar, generalized to p64, has
 
 ```
 O_o = s_o*h_o*r_A,o + slices_o*r_B,o + 2 + s_o
-      + [signed_width]*s_o*h_o*v_o
 H_o = width_map1*degree_map1 + width_map2*degree_map2
-      + [signed_width]*s_o*h_o*v_o*w_o*n_A,o
 Batches = sum_b (1944*s_b + 2*w_b + r_B,b + r_D,b + 2*t_b)
           + sum_o (O_o + H_o).
 ```
@@ -977,7 +968,7 @@ choices without changing the protocol.
 | Shared executions | 1 Stage 1, 1 Stage 2, 1 Stage 3, 1 ordinary successor, 1 terminal | same |
 
 The W lower bound rounds `(binary cells + ordinary coefficients)` to a power of
-two. Ordinary T/compression/optional signed-bit segments and the catalog's
+two. Ordinary T/compression segments and the catalog's
 padding can increase it; neither 2^29 nor 2^27 is asserted to be the selected W.
 The large binary table alone uses 2,578,733,056 bytes in eight-byte base storage
 or 5,157,466,112 bytes in 16-byte E64 storage, before padding and scratch. One
@@ -1269,15 +1260,13 @@ changed lines, including tests; split mechanical test fixtures if needed. Split 
    migration into this PR.
 
 6. **p64 ordinary preimage grammar and setup offload (1,000–1,800 lines).**
-   Touch `binary/ordinary_root.rs`, `ordinary_batch.rs`,
-   `ordinary_root_reference.rs`,
+   Touch `binary/ordinary_root.rs`, `ordinary_root_reference.rs`,
    `crates/akita-cpu-backend/src/opaque/binary_ordinary.rs` and its tests, plus
    the composite-prefix module. Generalize canonical ordinary setup coefficients
    away from `Prime128Offset275`; include its compression roles in the single
-   prefix product. Full-field digits use field reconstruction; explicitly signed
-   widths must pass the new integer bound. Test one/multiple owners,
-   heterogeneous ordinary profiles, independent points, negative-bit and
-   signed-width tampering, and no online ordinary setup reads. Arithmetic
+   prefix product. Full-field digits use field reconstruction. Test
+   one/multiple owners, heterogeneous ordinary profiles, independent points,
+   negative-bit tampering, and no online ordinary setup reads. Arithmetic
    cleanup can precede p64; **p64 activation must follow it**. Depends on PRs 1
    and 4, not the binary one-point functional itself.
 
@@ -1294,7 +1283,7 @@ changed lines, including tests; split mechanical test fixtures if needed. Split 
 
 8. **One relation and setup-weight compiler (900–1,600 lines).**
    Touch `binary/root_public.rs`, `root_projection_weights.rs`,
-   `evaluation_weights.rs`, `prime_weights.rs`, `ordinary_batch.rs`,
+   `evaluation_weights.rs`, `prime_weights.rs`,
    `reference_weights.rs`, and CPU `binary_root/stage2_oracle_tests.rs`. Compile
    the canonical independent row vector, one Stage 2 and one composite Stage 3.
    Dense-reference tests use two/four binary and zero/one/several ordinary

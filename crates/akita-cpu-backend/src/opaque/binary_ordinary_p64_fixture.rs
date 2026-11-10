@@ -23,7 +23,7 @@ pub(crate) fn ordinary_preimage(
         akita_types::derive_public_matrix_prefix::<F>(setup.num_field_elements, &setup.setup_seed);
     let expanded = akita_types::AkitaExpandedSetup::from_verified_parts(setup, matrix).unwrap();
     let backend = CpuBackend::<F, E>::new(Arc::new(expanded)).unwrap();
-    // In particular, -1 is stored as p-1; the signed decoder must use p.
+    // In particular, -1 is stored as p-1; the digit decoder must use p.
     let values = (0..1024)
         .map(|i| F::from_i64((i % 8) as i64 - 4))
         .collect::<Vec<_>>();
@@ -62,10 +62,15 @@ pub(crate) fn ordinary_preimage(
             metadata: source.metadata,
             commitment_id: backend.owner().next_operation_id().unwrap(),
             parameters: profile,
-            producer_contract: akita_params::ordinary_source::OrdinarySourceWidth::new(3)
-                .unwrap()
-                .producer_contract()
-                .unwrap(),
+            producer_contract: akita_params::sis::CommittedSourceContract::try_new(
+                akita_params::sis::CommittedSourceClass::BalancedSignedDigit,
+                akita_params::DecompositionParams {
+                    log_basis: 3,
+                    log_commit_bound: 3,
+                    log_open_bound: Some(128),
+                },
+            )
+            .unwrap(),
             public: public.commitment().clone(),
             retained: Some(retained),
         }),
