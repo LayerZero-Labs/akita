@@ -57,9 +57,9 @@ product does not meet the requested bound.
 Akita has two different AVX-512 paths. They must not be described as one
 backend.
 
-The ordinary i32 NTT path uses the scalar reference implementation or the
-runtime selected x86 implementation. `AKITA_SCALAR_NTT=1` forces the scalar
-path. The x86 transforms are written once over a vector-width trait and
+The ordinary i32 NTT path uses the scalar reference implementation, the
+runtime selected x86 implementation, or the NEON implementation on AArch64.
+`AKITA_SCALAR_NTT=1` forces the scalar path. The x86 transforms are written once over a vector-width trait and
 instantiated at 256 and 512 bits. Both use radix-4 passes whose butterfly
 half length is at least 16, followed (forward) or preceded (inverse) by a
 256-bit kernel that runs the last four or five stages in registers. Degrees

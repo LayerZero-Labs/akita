@@ -51,6 +51,24 @@ Artifact admission, serialized slot registries, and prover setup all
 reject a prefix profile that covers only the natural support or leaves a
 partial final block.
 
+The same check fixes the inner digit count of the prefix commitment. A
+commitment first splits each coefficient into `num_digits` digits of
+`log_basis` bits. A recursive witness holds small values, so its schedule can
+use few digits. Setup coefficients are different: they are uniform field
+elements and use every bit of the field. A prefix profile must therefore use
+
+```text
+num_digits = ceil(field_bits / log_basis)
+```
+
+inner digits. For a 128-bit field and `log_basis = 8`, that is 16 digits. A
+smaller count would drop the high bits, and the commitment would bind a
+truncated value in place of the setup coefficient. A profile with any other
+count is rejected with `InvalidSetup`. The check is
+`GroupCommitPhaseParams::validate_setup_prefix_geometry` in
+`crates/akita-params/src/schedule/profiles.rs`, and the test
+`setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer` covers it.
+
 A `SetupPrefixSlotId` binds the active length and the commitment profile. That
 profile fixes the commitment domain, inner and outer matrices, ring dimensions,
 and decomposition parameters. The scheduled incoming prefix also fixes how its
@@ -118,6 +136,11 @@ This is a setup only proof. It does not include the next witness claim. The
 detailed polynomial identity is in [Sumcheck stages](./proving/sumcheck-stages.md#stage-3-recursive-setup-contribution).
 The exact mixed dimension evaluation rules are in
 [Setup contribution and Stage 3](./verifying/setup_contribution.md).
+
+A recursive application can attach setup claims from inner proofs to one
+offloaded fold. Stage 3 then proves those claims together with the fold's own
+claim. See
+[Stage 3 with an inherited batch](./verifying/setup_contribution.md#stage-3-with-an-inherited-batch).
 
 ## How the planner chooses offloading
 
@@ -235,6 +258,7 @@ rejects the proof when any of the following occurs:
 - the proof contains Stage 3 data for a direct edge;
 - an offloaded edge omits its Stage 3 proof;
 - the committed prefix is shorter than the active setup support;
+- the prefix profile's inner digit count does not cover the full field width;
 - the successor has the wrong group order or opening point;
 - the setup contribution plan does not match the scheduled A, B, and D
   geometry; or

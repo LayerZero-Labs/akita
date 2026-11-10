@@ -7,6 +7,23 @@ what the security targets cover. See
 [Reviewing and auditing Akita](../introduction/reviewing-akita.md) for what has
 been audited.
 
+## Trust boundaries
+
+The security claims in this chapter rest on four boundaries.
+
+| Boundary | How Akita treats it |
+| --- | --- |
+| Proof bytes, commitments, claims, and opening points | Attacker controlled; every verifier check exists for these |
+| Verifier preprocessing: the public setup, the setup-prefix registry, the schedule catalog, and an optional terminal NTT cache | Recomputed by the verifier or authenticated by the deployment; soundness assumes it was derived as claimed |
+| Prover witnesses and intermediate polynomials | May contain private application data |
+| Build inputs, Git dependencies, and CI | Determine the binary that users run |
+
+[What the verifier trusts](./verification.md#what-the-verifier-trusts) gives
+the full model for the second row. The rest of this chapter is the soundness
+argument under the first row. For the third row, note that Akita does not
+currently provide zero knowledge; see
+[Zero knowledge](../roadmap/zero-knowledge.md).
+
 ## SIS / MSIS and Ajtai sizing
 
 Production Ajtai key sizing uses generated Module-SIS width tables. The

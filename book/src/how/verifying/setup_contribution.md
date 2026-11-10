@@ -126,6 +126,30 @@ opening claim is bound to the full-prefix commitment.
 Stage 3 returns the full challenge point for the recursive suffix. It does not
 replace or modify the next witness claim produced by Stage 2.
 
+### Stage 3 with an inherited batch
+
+An outer proof can attach an inherited `SetupBatchStatement` to one
+nonterminal fold. The statement is an ordered list of setup claims. Each claim
+is a query weight $Q_i$ and a claimed value $a_i=\sum_x S(x)Q_i(x)$ over the
+same public setup $S$. A statement holds at most $2^{16}$ claims
+(`MAX_SETUP_BATCH_CLAIMS`), and all of them must name the same setup
+polynomial and the same split between coefficient variables and setup-index
+variables.
+
+When the targeted fold defers its setup contribution, Stage 3 proves one
+combined product. After the Stage 2 rounds, the verifier draws one batching
+coefficient for each claim: the fold's own claim and every inherited claim.
+The Stage 3 input claim is the weighted sum of the claimed values. At the
+final point, the weight factor is the same weighted sum of the query weights,
+so the final check keeps its form: the output claim equals the setup
+evaluation times the weight. The setup factor and the successor's
+setup-prefix opening do not change. An empty batch is the ordinary
+single-claim Stage 3 with the same proof encoding.
+
+[External setup accumulation](../recursion.md#external-setup-accumulation)
+gives the combined equation and explains what a direct fold does with an
+inherited batch.
+
 ## Setup prefix offloading
 
 A schedule may select an authenticated setup prefix slot. The verifier checks

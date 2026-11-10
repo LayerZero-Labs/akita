@@ -1044,3 +1044,8 @@ commitments. Under direct setup contribution, Stage 3 is absent and the
 verifier computes $\sigma_S$ by scanning the required public setup prefix.
 See [Setup contribution and Stage 3](../verifying/setup_contribution.md) for
 the mixed-dimension plan and setup-prefix checks.
+
+An outer proof can also attach inherited setup claims to one fold that runs
+Stage 3. Stage 3 then proves a random linear combination of $\sigma_S$ and the
+inherited claims with the same degree-two sumcheck. See
+[Stage 3 with an inherited batch](../verifying/setup_contribution.md#stage-3-with-an-inherited-batch).

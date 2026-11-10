@@ -27,7 +27,8 @@ current implementation.
   single evaluation.
 - [Some Improvements for the PIOP for ZeroCheck](https://eprint.iacr.org/2024/1210)
   explains equality-polynomial factoring techniques related to Akita's
-  equality-factored sum-check.
+  equality-factored sum-check. The `GruenSplitEq` type in `akita-algebra` is
+  named after this split.
 
 ## Extension fields and packed openings
 

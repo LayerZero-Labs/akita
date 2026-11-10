@@ -32,7 +32,7 @@ Book. Individual chapters introduce each idea in more detail.
 | **Gadget decomposition** | Writing a field or ring value as a short vector of bounded signed digits in a power-of-two base. |
 | **Module-SIS** | The lattice assumption used to bind Akita commitments. Informally, it says that finding a short nonzero relation among the public commitment columns is hard. |
 | **Sum-check** | An interactive reduction that turns a sum over a Boolean cube into one polynomial evaluation at a random point. |
-| **Extension-opening reduction** | The bridge from a base-field polynomial opened at an extension-field point to a packed extension-field polynomial with fewer variables. |
+| **Extension-opening reduction (EOR)** | The bridge from a base-field polynomial opened at an extension-field point to a packed extension-field polynomial with fewer variables. |
 | **Ring switching** | Akita's lattice step that lifts a relation from a quotient ring to an integer polynomial relation with an explicit quotient. It is distinct from extension-opening reduction. |
 | **Setup offloading** | Carrying a committed setup prefix into a later fold so that recursive verification does less setup work directly. |
 
