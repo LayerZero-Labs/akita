@@ -98,14 +98,14 @@ mod tests {
     use super::*;
     use crate::AkitaProverSetup;
     use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
-    use jolt_field::{Prime128OffsetA7F7, Ring};
+    use jolt_field::{Prime128Offset6A23801F, Ring};
 
     #[test]
     fn portable_relation_compression_matches_executor() {
-        type F = Prime128OffsetA7F7;
+        type F = Prime128Offset6A23801F;
         for source_len in [64, 512] {
             let plan = CompressionChainPlan::for_complete_source(
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 source_len,
             )
             .unwrap();

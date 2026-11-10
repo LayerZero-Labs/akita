@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao                           |
 | Created       | 2026-09-04                          |
 | Status        | active                              |
-| PR            | #472                                |
+| PR            | #472; #373 (root opening ranking)    |
 | Supersedes    |                                     |
 | Superseded-by |                                     |
 | Book-chapter  | book/src/how/configuration.md       |
@@ -16,14 +16,16 @@ and only when, they appear in all capitals.
 
 ## Summary
 
-Akita's exhaustive schedule planner is an offline optimization tool. A
-downstream application may nevertheless need to add a small set of exact
-precommitted groups after it has selected a schedule for a much larger final
-group. Guided schedule adaptation makes this operation fast in the common case:
+Akita's schedule planner is an offline optimization tool. A downstream
+application may need to add a small set of exact precommitted groups after it
+has selected a schedule for a much larger final group. Guided schedule
+adaptation makes this operation fast in the common case:
 it retains the trusted scalar row's structural choices and rebuilds every
 group-dependent value. When that structure cannot support the grouped request,
-adaptation falls back to the full planner for the same key, so it fails only
-when no schedule exists in the audited domain.
+adaptation falls back to the full planner for the same key. For a valid request,
+adaptation fails only when both searches fail to return a schedule. Both use
+the retained-assignment rule below, which can exclude a feasible or globally
+optimal complete schedule.
 
 The result is still an ordinary expanded schedule row. It becomes usable only
 after the application admits its final row set through
@@ -55,8 +57,9 @@ can serve MUST NOT fail because the scalar row's structure does not fit it.
 ### Invariants
 
 The frozen-structure invariants constrain the guided search. A row returned by
-the full-search fallback is the full planner's optimum and need not retain
-them.
+the full-search fallback is selected by the full planner and need not retain
+them. Selection is subject to the retained-assignment rule; it does not imply
+global optimality over discarded assignments.
 
 - **Approved input.** Adaptation MUST accept only a scalar
   `ResolvedScheduleRow` that passes the canonical audit under the supplied
@@ -93,20 +96,36 @@ them.
 - **No planner-local group limit.** Neither search limits the number of
   precommitted groups. The opening-layout and wire bounds that apply to every
   schedule bound the group count.
-- **Bounded class products.** Both searches MUST bound the per-dimension
-  product of class opening domains at 256 before allocating it. A larger
-  product MUST remove coefficient-packing root openings for that dimension
-  rather than fail the search. The root only folds by coefficient packing, so
-  that dimension then offers no root candidate, exactly as an unsupported
-  dimension does; other dimensions are unaffected.
+- **Bounded retained assignments.** Both searches MUST preserve the original
+  enumeration for class-opening products of at most 256 assignments. For a
+  larger product, including one whose count overflows `usize`, selection MUST
+  wait until the root dimension tuple, final-group opening, and inner and
+  opening decomposition bases are fixed. Each search MUST stream the full
+  Cartesian product of admitted class openings for that context. It MUST size
+  each assignment through the canonical combined D-rank, compression, and
+  witness-layout calculations. The score MUST be the smallest live outgoing
+  root witness length across the allowed final-group splits and slices, before
+  setup-based slice pruning. It MUST count all groups, decomposition digits,
+  chunks, compression and relation-quotient spans, and required alignment.
+  Assignments with no valid root candidate MUST NOT be retained. Each search
+  MUST retain all eligible assignments if there are at most 256. Otherwise it
+  MUST retain the 256 assignments with the smallest scores.
+  Equal scores MUST use the original class-opening order. Shared subrings MUST
+  NOT receive reserved slots. Both searches MUST NOT discard an opening
+  dimension merely because its product exceeds 256. Oversized products MUST NOT
+  be allocated eagerly. The limit bounds retained assignments, not enumeration
+  work.
 - **Final admission.** An adapted row MUST NOT bypass
   `ValidatedScheduleCatalog::try_new`, challenge-hook validation, duplicate-key
   rejection, row identity, catalog identity, or final `TrustedScheduleCatalog<Cfg>`
   configuration binding.
-- **Oracle preservation.** `find_schedule` MUST remain the full-DP
-  correctness and proof-size oracle when no guide is supplied. Its only
-  restrictions on the precommit opening domain are one opening per class and
-  the class-product bound.
+- **Full-search domain.** With no guide, `find_schedule` MUST search the full
+  policy domain subject to one opening per class and the retained-assignment
+  rule. Complete schedules in that retained domain MUST use the canonical
+  schedule objective. Next-witness ranking does not guarantee feasibility
+  completeness or global proof/setup optimality over discarded assignments.
+  The full-search fallback MUST apply the same rule. It does not restore a
+  guarantee over discarded assignments.
 - **Offline only.** Setup restoration, commitment, proving, proof decoding,
   verification, and guest execution MUST NOT call either planner entry point.
 
@@ -114,9 +133,8 @@ them.
 
 - Runtime schedule search or a process-global schedule registry.
 - Opening assignments that differ within an interchangeable class.
-- Coefficient-packing root openings for requests whose distinct classes
-  exceed the 256-combination product bound. Coordinate-wise search over classes
-  is a follow-up.
+- Global feasibility completeness or proof/setup optimality over opening
+  assignments discarded by the retained-assignment rule.
 - A proof, transcript, statement, or `.aks` schema change.
 - Authentication of a catalog subset or a new recursion membership proof.
 - Selection of Jolt's reachable profile set or preprocessing representation.
@@ -139,6 +157,9 @@ them.
   `find_schedule`.
 - [x] Root precommit openings are enumerated once per interchangeable class; a
   regression test plans 259 precommitted producers of two classes.
+- [x] Oversized opening products are streamed and ranked by exact combined next
+  witness size. An exhaustive sorting test checks the retained 256 assignments,
+  repeated groups, tie order, and the absence of shared-subring reservations.
 - [x] The manual benchmark compares guided rows with full-DP rows, including
   28- through 50-variable final groups.
 - [x] The implementation adds no verifier, transcript, proof-wire, or artifact
@@ -149,24 +170,33 @@ them.
 `crates/akita-planner/src/test/adapted_schedule.rs` owns end-to-end adapter
 tests and the ignored quality benchmark. Candidate-level tests protect the
 per-class opening domain and its independence from class multiplicity.
-Existing unpruned-search and relation-order tests continue to exercise the full
-planner with no guide.
+`crates/akita-planner/src/test/root_witness_ranking.rs` compares exact witness
+ranking with an exhaustive 512-assignment sort. Existing unpruned-search and
+relation-order tests continue to exercise the full planner with no guide.
 
 The GitHub merge gates MUST run the two workspace nextest shards, all three
 Clippy feature graphs, transcript modes, and external schedule-artifact drift.
-Artifact drift MUST remain empty: no checked-in grouped row assigns different
-openings within an interchangeable class, so the per-class opening rule selects
-the same rows.
+For the current checked-in rows, catalog and planner-cost baseline checks MUST
+pass and artifact drift MUST remain empty.
 
 ### Performance
 
 Adaptation has no platform-specific latency guarantee. The guided search is the
-fast path; a fallback costs one full search. Per candidate edge, both searches
-materialize one group per interchangeable class and validate the root batch
-once per group loop, so the cost of additional groups in an existing class is
-linear and small. The release benchmark records guided-search time and
-compares the expanded proof-payload estimate against the full-DP oracle;
-proof-size equality is measured evidence, not a correctness requirement. Each
+fast path; a fallback costs one full search. For oversized products, both
+searches scan every admitted opening assignment in each fixed root context.
+Work grows with the full Cartesian product and can grow exponentially with
+the number of distinct classes. The 256 retained assignments are not a latency
+or total-work bound. Caching class admissions and final-group layouts avoids
+repeated response sizing and A/B derivation, but does not remove that product.
+Ranking uses parameters; it does not generate a witness or proof.
+
+Additional groups in an existing class do not add opening choices. Their
+materialization and witness-sizing work still grows with class multiplicity.
+The retained-assignment rule can discard a feasible or better complete
+schedule, and the fallback uses the same rule. The release benchmark records
+guided-search time and compares the expanded proof-payload estimate against
+the selected full-DP row. Proof-size equality is measured evidence, not a
+correctness requirement. Each
 benchmark case declares whether the guided search should succeed. Unexpected
 successes and failures fail the test; successful rows must pass final catalog
 validation, configuration binding, and exact-key resolution. A second manual
@@ -185,15 +215,16 @@ reports `UnsupportedSchedule`, it calls `find_schedule` for the same key.
 The guide narrows existing candidate domains rather than introducing a second
 materializer. Root, recursive, setup-prefix, and terminal candidates continue
 to flow through the same length, security, response, relation, and proof-cost
-derivations as exhaustive planning. The output then flows through the existing
+derivations as full planning. The output then flows through the existing
 `ResolvedScheduleRow` audit, `ValidatedScheduleCatalog` semantic admission, and
 `TrustedScheduleCatalog<Cfg>` configuration binding.
 
 ### Alternatives considered
 
-- **Run full DP for every late grouped key.** This preserves global optimality
-  but takes seconds for production-sized rows, which the guided fast path
-  avoids whenever the scalar structure fits.
+- **Run full DP for every late grouped key.** This removes the scalar guide
+  constraints, but still applies the retained-assignment rule. It can cost more
+  than the guided fast path and does not guarantee global optimality over
+  discarded assignments.
 - **Fail closed when the guide is infeasible.** The original contract. It
   bounded latency but made liveness depend on the scalar row's structure: large
   producers on setup-offloaded rows had no adapted schedule even though the full
@@ -224,9 +255,11 @@ adds no workspace dependency edge.
 ## References
 
 - [PR #472](https://github.com/LayerZero-Labs/akita/pull/472)
+- [PR #373: root opening ranking](https://github.com/LayerZero-Labs/akita/pull/373)
 - [External schedule catalog ownership](external-schedule-catalog-ownership.md)
 - [Quotient-free tail implementation](quotient-free-tail-ring-relations-implementation.md)
 - [Setup offloading planner](setup-offloading-planner.md)
 - `crates/akita-planner/src/planner.rs`
+- `crates/akita-planner/src/planner/root_openings.rs`
 - `crates/akita-planner/src/schedule_params/suffix_dp/`
 - `crates/akita-planner/src/test/adapted_schedule.rs`

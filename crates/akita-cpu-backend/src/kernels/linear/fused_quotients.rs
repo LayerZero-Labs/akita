@@ -519,9 +519,22 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
         }};
     }
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => run!(params),
-        ProtocolCrtNttParams::Q64(params) => run!(params),
-        ProtocolCrtNttParams::Q128(params) => run!(params),
+        ProtocolCrtNttParams::Q32(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
+        {
+            run!(params)
+        }
+        ProtocolCrtNttParams::Q64(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } =>
+        {
+            run!(params)
+        }
+        ProtocolCrtNttParams::Q128(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } =>
+        {
+            run!(params)
+        }
+        _ => Err(unselectable_crt_profile_error::<F>()),
     }
 }
 
@@ -800,9 +813,21 @@ fn fused_split_eq_quotients_with_digit_bound<F: Field + CanonicalEncoding, const
         negacyclic_slot.q128_base(),
         cyclic_slot.q128_base(),
     ) {
-        (Some(neg), Some(cyc), _, _, _, _) => run!(neg, cyc),
-        (_, _, Some(neg), Some(cyc), _, _) => run!(neg, cyc),
-        (_, _, _, _, Some(neg), Some(cyc)) => run!(neg, cyc),
+        (Some(neg), Some(cyc), _, _, _, _)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
+        {
+            run!(neg, cyc)
+        }
+        (_, _, Some(neg), Some(cyc), _, _)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } =>
+        {
+            run!(neg, cyc)
+        }
+        (_, _, _, _, Some(neg), Some(cyc))
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } =>
+        {
+            run!(neg, cyc)
+        }
         _ => Err(AkitaError::InvalidSetup(
             "cyclic and negacyclic NTT profiles do not match".into(),
         )),

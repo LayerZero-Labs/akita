@@ -1,5 +1,11 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
+mod grouping;
+mod stream;
+mod unit_intervals;
+
+use stream::{collect_tensor_family_seeds, eval_tensor_seed_batch, EqPairSeed};
+
 use super::{
     charge_work, checked_axis_offset, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
 };
@@ -7,6 +13,9 @@ use crate::offset_eq::eq_eval_at_index;
 use crate::Field;
 use akita_error::{checked, AkitaError};
 use std::collections::BTreeMap;
+
+#[cfg(test)]
+mod grouping_tests;
 
 /// Evaluate tensor-native paired Boolean-basis families.
 ///
@@ -44,8 +53,7 @@ pub(super) fn eval_unfactored_tensor_families<
         .flat_map(|family| &family.axes)
         .try_for_each(EqPairTensorAxis::validate_weights)?;
     let mut batches = BTreeMap::<(usize, usize, usize), Vec<EqPairSeed<F>>>::new();
-    let mut multi_axis_batches =
-        BTreeMap::<Vec<(usize, usize, usize, usize)>, Vec<&EqPairTensorFamily<F>>>::new();
+    let mut multi_axis_batches = grouping::RecurrenceBatches::new();
     let mut scalar_seeds = Vec::new();
     let mut acc = F::zero();
     for family in families {
@@ -61,6 +69,8 @@ pub(super) fn eval_unfactored_tensor_families<
             acc += value;
             continue;
         }
+        charge_work(work, family.axes.len())?;
+        charge_work(work, 1)?;
         let recurrence_axes = family
             .axes
             .iter()
@@ -77,28 +87,15 @@ pub(super) fn eval_unfactored_tensor_families<
                 .is_some_and(|axis| matches!(axis.weights, EqPairTensorWeights::BitProduct(_)))
         });
         if recurrence_axes.len() >= 2 || has_factored_weights {
-            let recurrence_geometry = recurrence_axes
-                .iter()
-                .map(|&axis_index| {
-                    let axis = family.axes.get(axis_index).ok_or_else(|| {
-                        AkitaError::Internal("selected tensor recurrence axis is absent".into())
-                    })?;
-                    Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            if has_factored_weights {
-                acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                    left_challenges,
-                    right_challenges,
-                    &[family],
-                    &recurrence_geometry,
-                    work,
-                )?;
-            } else {
-                multi_axis_batches
-                    .entry(recurrence_geometry)
-                    .or_default()
-                    .push(family);
+            if let Some(singleton) = grouping::queue_or_singleton::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                left_challenges,
+                right_challenges,
+                family,
+                &recurrence_axes,
+                &mut multi_axis_batches,
+                work,
+            )? {
+                acc += singleton;
             }
             continue;
         }
@@ -125,14 +122,16 @@ pub(super) fn eval_unfactored_tensor_families<
             work,
         )?;
     }
-    for (recurrence_geometry, families) in multi_axis_batches {
-        acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-            left_challenges,
-            right_challenges,
-            &families,
-            &recurrence_geometry,
-            work,
-        )?;
+    for (recurrence_geometry, groups) in multi_axis_batches {
+        for families in groups {
+            acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                left_challenges,
+                right_challenges,
+                &families,
+                &recurrence_geometry,
+                work,
+            )?;
+        }
     }
     acc += scalar_seeds.into_iter().fold(F::zero(), |sum, seed| {
         sum + seed.weight
@@ -447,21 +446,37 @@ fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MON
             left_challenges.get(bit).copied(),
             right_challenges.get(bit).copied(),
         );
+        // A choice's weight and bit factor do not depend on the incoming
+        // carry beyond its two parity bits. Combine them once per choice.
+        charge_work(
+            work,
+            choices.len().checked_mul(4).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor factor work overflow".into())
+            })?,
+        )?;
+        let weighted_choices = choices
+            .into_iter()
+            .map(|(l, r, weight)| {
+                let factors = if weight == F::one() {
+                    bit_factors
+                } else {
+                    bit_factors.map(|factor| factor.map(|factor| weight * factor))
+                };
+                (l, r, factors)
+            })
+            .collect::<Vec<_>>();
         for ((left_carry, right_carry), state_weight) in states {
-            for &(left_add, right_add, multiplicity) in &choices {
+            for &(left_add, right_add, ref factors) in &weighted_choices {
                 let left = left_carry.checked_add(left_add).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor left carry overflow".into())
                 })?;
                 let right = right_carry.checked_add(right_add).ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor right carry overflow".into())
                 })?;
-                let Some(factor) = bit_factors[(left & 1) * 2 + (right & 1)] else {
+                let Some(factor) = factors[(left & 1) * 2 + (right & 1)] else {
                     continue;
                 };
-                next.push((
-                    (left >> 1, right >> 1),
-                    state_weight * multiplicity * factor,
-                ));
+                next.push(((left >> 1, right >> 1), state_weight * factor));
             }
         }
         states = merge_pair_states(next)?;
@@ -617,11 +632,41 @@ fn basis_pair_factors<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL:
     left: Option<F>,
     right: Option<F>,
 ) -> [Option<F>; 4] {
-    let left: [Option<F>; 2] =
-        std::array::from_fn(|bit| basis_bit_factor::<F, LEFT_MONOMIAL>(left, bit));
-    let right: [Option<F>; 2] =
-        std::array::from_fn(|bit| basis_bit_factor::<F, RIGHT_MONOMIAL>(right, bit));
-    std::array::from_fn(|pair| Some(left[pair / 2]? * right[pair % 2]?))
+    match (left, right) {
+        (Some(l), Some(r)) => {
+            let lr = l * r;
+            let l0r1 = if LEFT_MONOMIAL { r } else { r - lr };
+            let l1r0 = if RIGHT_MONOMIAL { l } else { l - lr };
+            let l0r0 = match (LEFT_MONOMIAL, RIGHT_MONOMIAL) {
+                (false, false) => F::one() - l - r + lr,
+                (true, false) => F::one() - r,
+                (false, true) => F::one() - l,
+                (true, true) => F::one(),
+            };
+            [Some(l0r0), Some(l0r1), Some(l1r0), Some(lr)]
+        }
+        (Some(l), None) => [
+            Some(if LEFT_MONOMIAL {
+                F::one()
+            } else {
+                F::one() - l
+            }),
+            None,
+            Some(l),
+            None,
+        ],
+        (None, Some(r)) => [
+            Some(if RIGHT_MONOMIAL {
+                F::one()
+            } else {
+                F::one() - r
+            }),
+            Some(r),
+            None,
+            None,
+        ],
+        (None, None) => [Some(F::one()), None, None, None],
+    }
 }
 
 fn basis_bit_factor<F: Field, const MONOMIAL: bool>(challenge: Option<F>, bit: usize) -> Option<F> {
@@ -632,307 +677,6 @@ fn basis_bit_factor<F: Field, const MONOMIAL: bool>(challenge: Option<F>, bit: u
         (Some(_), _) => None,
         (None, 0) => Some(F::one()),
         (None, _) => None,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_tensor_family_seeds<F: Field>(
-    family: &EqPairTensorFamily<F>,
-    stream_axis: Option<usize>,
-    axis_index: usize,
-    left_offset: usize,
-    right_offset: usize,
-    weight: F,
-    batches: &mut BTreeMap<(usize, usize, usize), Vec<EqPairSeed<F>>>,
-    scalar_seeds: &mut Vec<EqPairSeed<F>>,
-    work: &mut usize,
-) -> Result<(), AkitaError> {
-    if weight.is_zero() {
-        return Ok(());
-    }
-    if axis_index == family.axes.len() {
-        charge_work(work, 1)?;
-        let seed = EqPairSeed {
-            left_offset,
-            right_offset,
-            weight,
-        };
-        if let Some(stream_axis) = stream_axis {
-            let axis = family.axes.get(stream_axis).ok_or_else(|| {
-                AkitaError::Internal("selected tensor seed stream axis is absent".into())
-            })?;
-            batches
-                .entry((axis.left_stride, axis.right_stride, axis.len))
-                .or_default()
-                .push(seed);
-        } else {
-            scalar_seeds.push(seed);
-        }
-        return Ok(());
-    }
-    if Some(axis_index) == stream_axis {
-        return collect_tensor_family_seeds(
-            family,
-            stream_axis,
-            axis_index + 1,
-            left_offset,
-            right_offset,
-            weight,
-            batches,
-            scalar_seeds,
-            work,
-        );
-    }
-
-    let axis = family
-        .axes
-        .get(axis_index)
-        .ok_or_else(|| AkitaError::Internal("tensor seed recursion axis is absent".into()))?;
-    // Charge every visited coordinate, including zero-weight ones that never
-    // reach a seed, before the loop so a long axis cannot bypass the bound.
-    charge_work(work, axis.len)?;
-    for coordinate in 0..axis.len {
-        let axis_weight = axis.coordinate_weight(coordinate).ok_or_else(|| {
-            AkitaError::InvalidInput("tensor seed axis coordinate weight is absent".into())
-        })?;
-        if axis_weight.is_zero() {
-            continue;
-        }
-        let left = checked_axis_offset(left_offset, axis.left_stride, coordinate, "left")?;
-        let right = checked_axis_offset(right_offset, axis.right_stride, coordinate, "right")?;
-        let next_weight = if axis_weight == F::one() {
-            weight
-        } else if weight == F::one() {
-            axis_weight
-        } else {
-            weight * axis_weight
-        };
-        collect_tensor_family_seeds(
-            family,
-            stream_axis,
-            axis_index + 1,
-            left,
-            right,
-            next_weight,
-            batches,
-            scalar_seeds,
-            work,
-        )?;
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct EqPairSeed<F> {
-    left_offset: usize,
-    right_offset: usize,
-    weight: F,
-}
-
-fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
-    left_challenges: &[F],
-    right_challenges: &[F],
-    left_stride: usize,
-    right_stride: usize,
-    len: usize,
-    seeds: &[EqPairSeed<F>],
-    work: &mut usize,
-) -> Result<F, AkitaError> {
-    if left_stride == 0 || right_stride == 0 {
-        return Err(AkitaError::InvalidInput(
-            "paired tensor stream strides must be non-zero".into(),
-        ));
-    }
-    if len == 0 {
-        return Ok(F::zero());
-    }
-
-    let left_domain = 1usize << left_challenges.len();
-    let right_domain = 1usize << right_challenges.len();
-    let block_bucket_count = usize::BITS as usize - len.leading_zeros() as usize;
-    let mut blocks = vec![Vec::<((usize, usize), F)>::new(); block_bucket_count];
-    for seed in seeds {
-        checked_axis_offset(seed.left_offset, left_stride, len - 1, "left")?;
-        checked_axis_offset(seed.right_offset, right_stride, len - 1, "right")?;
-        if seed.left_offset >= left_domain || seed.right_offset >= right_domain {
-            continue;
-        }
-        let live_len = len
-            .min((left_domain - 1 - seed.left_offset) / left_stride + 1)
-            .min((right_domain - 1 - seed.right_offset) / right_stride + 1);
-        if live_len == 0 {
-            continue;
-        }
-        let highest_bit = usize::BITS as usize - 1 - live_len.leading_zeros() as usize;
-        let mut block_base = 0usize;
-        for block_index_bits in (0..=highest_bit).rev() {
-            let block_size = 1usize << block_index_bits;
-            if live_len & block_size == 0 {
-                continue;
-            }
-            let left_carry =
-                checked_axis_offset(seed.left_offset, left_stride, block_base, "left")?;
-            let right_carry =
-                checked_axis_offset(seed.right_offset, right_stride, block_base, "right")?;
-            blocks
-                .get_mut(block_index_bits)
-                .ok_or_else(|| AkitaError::Internal("tensor seed block bucket is absent".into()))?
-                .push(((left_carry, right_carry), seed.weight));
-            block_base = block_base.checked_add(block_size).ok_or_else(|| {
-                AkitaError::InvalidInput("paired tensor block coverage overflow".into())
-            })?;
-        }
-    }
-
-    let mut acc = F::zero();
-    for (block_index_bits, seed_states) in blocks.into_iter().enumerate() {
-        let mut states = merge_pair_states(seed_states)?;
-        if states.is_empty() {
-            continue;
-        }
-        if block_index_bits > left_challenges.len() || block_index_bits > right_challenges.len() {
-            return Err(AkitaError::InvalidInput(
-                "paired tensor block exceeds equality arity".into(),
-            ));
-        }
-        for bit in 0..block_index_bits {
-            charge_work(
-                work,
-                states.len().checked_mul(2).ok_or_else(|| {
-                    AkitaError::InvalidInput("paired tensor work overflow".into())
-                })?,
-            )?;
-            let left_challenge = *left_challenges.get(bit).ok_or_else(|| {
-                AkitaError::Internal(
-                    "tensor seed left challenge bit exceeds validated arity".into(),
-                )
-            })?;
-            let right_challenge = *right_challenges.get(bit).ok_or_else(|| {
-                AkitaError::Internal(
-                    "tensor seed right challenge bit exceeds validated arity".into(),
-                )
-            })?;
-            let bit_factors = basis_pair_factors::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-                Some(left_challenge),
-                Some(right_challenge),
-            );
-            let next_capacity = states.len().checked_mul(2).ok_or_else(|| {
-                AkitaError::InvalidInput("paired tensor state count overflow".into())
-            })?;
-            let mut next = Vec::new();
-            next.try_reserve_exact(next_capacity).map_err(|_| {
-                AkitaError::InvalidInput("paired tensor state allocation failed".into())
-            })?;
-            for ((left_carry, right_carry), state_weight) in states {
-                for index_bit in 0..=1usize {
-                    let left_sum = if index_bit == 0 {
-                        left_carry
-                    } else {
-                        left_carry.checked_add(left_stride).ok_or_else(|| {
-                            AkitaError::InvalidInput("paired tensor left carry overflow".into())
-                        })?
-                    };
-                    let right_sum = if index_bit == 0 {
-                        right_carry
-                    } else {
-                        right_carry.checked_add(right_stride).ok_or_else(|| {
-                            AkitaError::InvalidInput("paired tensor right carry overflow".into())
-                        })?
-                    };
-                    let factor =
-                        bit_factors[(left_sum & 1) * 2 + (right_sum & 1)].ok_or_else(|| {
-                            AkitaError::Internal("tensor seed binary factor is absent".into())
-                        })?;
-                    next.push(((left_sum >> 1, right_sum >> 1), state_weight * factor));
-                }
-            }
-            states = merge_pair_states(next)?;
-        }
-        acc += finish_seed_states::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-            left_challenges,
-            right_challenges,
-            block_index_bits,
-            states,
-            work,
-        )?;
-    }
-    Ok(acc)
-}
-
-fn finish_seed_states<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
-    left_challenges: &[F],
-    right_challenges: &[F],
-    mut bit: usize,
-    mut states: Vec<((usize, usize), F)>,
-    work: &mut usize,
-) -> Result<F, AkitaError> {
-    let max_bits = left_challenges.len().max(right_challenges.len());
-    while states.len() > 1 && bit < max_bits {
-        charge_work(work, states.len())?;
-        let mut next = Vec::new();
-        next.try_reserve_exact(states.len()).map_err(|_| {
-            AkitaError::InvalidInput("paired tensor carry allocation failed".into())
-        })?;
-        for ((left_carry, right_carry), state_weight) in states {
-            let Some((left_high, left_factor)) =
-                basis_carry_step::<F, LEFT_MONOMIAL>(left_challenges.get(bit).copied(), left_carry)
-            else {
-                continue;
-            };
-            let Some((right_high, right_factor)) = basis_carry_step::<F, RIGHT_MONOMIAL>(
-                right_challenges.get(bit).copied(),
-                right_carry,
-            ) else {
-                continue;
-            };
-            next.push((
-                (left_high, right_high),
-                state_weight * left_factor * right_factor,
-            ));
-        }
-        states = merge_pair_states(next)?;
-        bit += 1;
-    }
-
-    Ok(states
-        .into_iter()
-        .map(|((left_high, right_high), state_weight)| {
-            let left_equality = left_challenges.get(bit..).map_or_else(
-                || {
-                    if left_high == 0 {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
-                },
-                |challenges| basis_eval_at_index::<F, LEFT_MONOMIAL>(challenges, left_high),
-            );
-            let right_equality = right_challenges.get(bit..).map_or_else(
-                || {
-                    if right_high == 0 {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
-                },
-                |challenges| basis_eval_at_index::<F, RIGHT_MONOMIAL>(challenges, right_high),
-            );
-            state_weight * left_equality * right_equality
-        })
-        .sum())
-}
-
-fn basis_carry_step<F: Field, const MONOMIAL: bool>(
-    challenge: Option<F>,
-    carry: usize,
-) -> Option<(usize, F)> {
-    if let Some(challenge) = challenge {
-        basis_bit_factor::<F, MONOMIAL>(Some(challenge), carry & 1)
-            .map(|factor| (carry >> 1, factor))
-    } else if carry == 0 {
-        Some((0, F::one()))
-    } else {
-        None
     }
 }
 
@@ -950,3 +694,6 @@ fn basis_eval_at_index<F: Field, const MONOMIAL: bool>(challenges: &[F], index: 
         eq_eval_at_index(challenges, index)
     }
 }
+
+#[cfg(test)]
+mod unit_intervals_tests;

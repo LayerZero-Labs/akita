@@ -53,6 +53,28 @@ fn invalid() -> AkitaError {
 }
 
 impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
+    /// Conservative preparation work, before any row visits.
+    ///
+    /// Counts the full residue/digit contraction and the materialized high
+    /// equality window, even when geometric digits make preparation cheaper.
+    /// Returns `None` for an unrepresentable shape or insufficient point arity.
+    /// This estimate does not replace the eligibility checks in [`Self::new`].
+    #[must_use]
+    pub fn preparation_work(
+        challenge_count: usize,
+        digit_count: usize,
+        low_count: usize,
+    ) -> Option<usize> {
+        let stride = checked::product([digit_count, low_count.max(1)])?;
+        let bits = checked::ceil_log2(stride)?;
+        let width = checked::pow2(bits)?;
+        let high_bits = challenge_count.checked_sub(bits)?;
+        checked::sum([
+            checked::product([width, stride])?,
+            OffsetEqWindow::<F>::materialized_len(high_bits).ok()?,
+        ])
+    }
+
     /// Prepare rows of `digits` and `low` lanes on `challenges`.
     ///
     /// Returns `None` when a row is wider than the prepared bound, the point is
@@ -219,6 +241,37 @@ impl<F: Field, A: AffineWeight<F>> PreparedDigits<F, A> {
         if maximum >= (1usize << self.point_bits) {
             return Err(invalid());
         }
+        // Contract repeated low residues after the row walk. Linearity moves
+        // each low-window multiplication outside the long row loop.
+        let width = self.low_mask + 1;
+        if rows >= 4 * width {
+            let template = weights
+                .with_weight(first, AffineWeight::zero_like)
+                .ok_or_else(invalid)?;
+            let mut left_buckets = vec![template.zero_like(); width];
+            let mut right_buckets = vec![template.zero_like(); width];
+            self.walk(base, first, end, |row, residue, left, right| {
+                weights.with_weight(row, |weight| {
+                    left_buckets[residue].add_scaled(weight, left);
+                    right_buckets[residue].add_scaled(weight, right);
+                })
+            })?;
+            match &self.tables {
+                Tables::Unit { no_carry, carry } => {
+                    for i in 0..width {
+                        out.add_scaled(&left_buckets[i], no_carry[i]);
+                        out.add_scaled(&right_buckets[i], carry[i]);
+                    }
+                }
+                Tables::Folded { no_carry, carry } => {
+                    for i in 0..width {
+                        out.add(&left_buckets[i].multiply(&no_carry[i]));
+                        out.add(&right_buckets[i].multiply(&carry[i]));
+                    }
+                }
+            }
+            return Ok(());
+        }
         match &self.tables {
             Tables::Unit { no_carry, carry } => {
                 self.walk(base, first, end, |row, residue, left, right| {
@@ -307,17 +360,11 @@ where
         return Ok(None);
     }
     let rows = live_len / lanes;
-    let prepared_work = outer_stride.checked_mul(lanes).and_then(|stride| {
-        let width = stride.checked_next_power_of_two()?;
-        let high_point = challenges
-            .len()
-            .checked_sub(width.trailing_zeros() as usize)?;
-        checked::sum([
-            width.checked_mul(stride)?,
-            OffsetEqWindow::<F>::materialized_len(high_point).ok()?,
-            rows.checked_mul(base_offsets.len())?,
-        ])
-    });
+    let prepared_work =
+        PreparedDigits::<F, A>::preparation_work(challenges.len(), outer_stride, low_weights.len())
+            .and_then(|preparation| {
+                checked::sum([preparation, checked::product([rows, base_offsets.len()])?])
+            });
     if prepared_work.is_none_or(|work| work >= general_work) {
         return Ok(None);
     }
@@ -341,7 +388,7 @@ where
 mod tests {
     use super::*;
     use crate::offset_eq::{eq_eval_at_index, eval_affine_digit_intervals};
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
 
     fn prepare(point: &[F], digits: &[F], low: &[F]) -> PreparedDigits<F, F> {
         PreparedDigits::new(point, digits, low).unwrap().unwrap()
@@ -502,6 +549,51 @@ mod tests {
                         }
                         assert_eq!(rows(&prepared, base, 3, 7, &weights), expected);
                     }
+                }
+            }
+        }
+    }
+    #[test]
+    fn bucketed_prepared_rows_match_dense_for_unit_and_folded_windows() {
+        for boolean in [false, true] {
+            let point = (0..16)
+                .map(|i| {
+                    if boolean {
+                        F::from_u64((37 >> i) & 1)
+                    } else {
+                        F::from_u64(i + 7)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let digits = (0..5)
+                .scan(F::one(), |v, _| {
+                    let out = *v;
+                    *v *= F::from_u64(3);
+                    Some(out)
+                })
+                .collect::<Vec<_>>();
+            let weights = (0..128).map(|i| F::from_u64(i + 13)).collect::<Vec<_>>();
+            for low in [Vec::new(), vec![F::from_u64(11), F::from_u64(19)]] {
+                let prepared = prepare(&point, &digits, &low);
+                for base in [0, 7, 31] {
+                    let first = 7;
+                    let count = 79;
+                    let mut expected = F::zero();
+                    for row in 0..count {
+                        for lane in 0..low.len().max(1) {
+                            for (d, &digit) in digits.iter().enumerate() {
+                                let address = base
+                                    + row * low.len().max(1) * digits.len()
+                                    + lane * digits.len()
+                                    + d;
+                                expected += weights[first + row]
+                                    * low.get(lane).copied().unwrap_or_else(F::one)
+                                    * digit
+                                    * eq_eval_at_index(&point, address);
+                            }
+                        }
+                    }
+                    assert_eq!(rows(&prepared, base, first, count, &weights), expected);
                 }
             }
         }

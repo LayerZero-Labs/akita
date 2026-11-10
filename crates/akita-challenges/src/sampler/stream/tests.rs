@@ -437,6 +437,7 @@ fn replacing_one_candidate_changes_only_its_challenge() {
     let width = stream.candidate_bits();
     let accepts_first_twelve = |message: &[u8]| {
         let decoder = CandidateDecoder {
+            position_hints: false,
             stream: &stream,
             message,
             binomials: &BinomialTable::new(64, 31).unwrap(),
@@ -474,7 +475,9 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
     {
         let stream = layout(d, &config, Some(rejection), count).unwrap();
         #[cfg(feature = "parallel")]
-        assert_eq!(stream.parallel(), count == 600);
+        {
+            assert_eq!(stream.parallel(), count == 600 && !capture_enabled());
+        }
         let ChallengePolicy::OperatorNorm { threshold, table } =
             ChallengePolicy::new(d, &config, Some(rejection)).unwrap()
         else {
@@ -486,6 +489,7 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
             assert_eq!(challenges.len(), count);
             let binomials = BinomialTable::new(d, config.count_pm1.max(config.count_pm2)).unwrap();
             let decoder = CandidateDecoder {
+                position_hints: false,
                 stream: &stream,
                 message: &message,
                 binomials: &binomials,
@@ -513,11 +517,12 @@ fn large_unfiltered_decode_matches_per_candidate_decode() {
     let config = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
     let stream = layout(128, &config, None, 2048).unwrap();
     #[cfg(feature = "parallel")]
-    assert!(stream.parallel());
+    assert_eq!(stream.parallel(), !capture_enabled());
     let message = SplitMix(4).message(stream.message_len());
     let challenges = stream.decode(&message).unwrap().unwrap();
     let binomials = BinomialTable::new(128, 31).unwrap();
     let decoder = CandidateDecoder {
+        position_hints: false,
         stream: &stream,
         message: &message,
         binomials: &binomials,
@@ -660,3 +665,47 @@ fn closed_form_pool_matches_the_scan_exhaustively() {
         }
     }
 }
+
+#[test]
+fn checked_subset_positions_have_the_exact_transcript_rank() {
+    for (n, k) in [(64, 31), (128, 31), (512, 19), (128, 127)] {
+        let table = BinomialTable::new(n, k).unwrap();
+        for shift in [0, 1, n - k] {
+            let positions = (shift..shift + k).collect::<Vec<_>>();
+            let rank = positions
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| binomial(p, i + 1).unwrap())
+                .sum::<u128>();
+            let mut words = vec![0u64; k.div_ceil(4)];
+            for (i, &position) in positions.iter().enumerate() {
+                words[i / 4] |= (position as u64) << (16 * (i % 4));
+            }
+            let mut actual = vec![0u32; k];
+            table
+                .check_positions(rank, n, &words, 0, &mut actual)
+                .unwrap();
+            assert_eq!(
+                actual.iter().map(|&x| x as usize).collect::<Vec<_>>(),
+                positions
+            );
+            assert!(table
+                .check_positions(rank ^ 1, n, &words, 0, &mut actual)
+                .is_err());
+            assert!(table.check_positions(rank, n, &[], 0, &mut actual).is_err());
+            let mut duplicate = words.clone();
+            duplicate[0] = (duplicate[0] & !(65535u64 << 16)) | ((duplicate[0] & 65535) << 16);
+            assert!(table
+                .check_positions(rank, n, &duplicate, 0, &mut actual)
+                .is_err());
+            let mut outside = words.clone();
+            outside[0] = (outside[0] & !65535) | n as u64;
+            assert!(table
+                .check_positions(rank, n, &outside, 0, &mut actual)
+                .is_err());
+        }
+    }
+}
+
+#[path = "hint_tests.rs"]
+mod hint_tests;

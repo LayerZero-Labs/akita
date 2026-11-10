@@ -586,7 +586,7 @@ where
 
 #[test]
 fn opaque_messages_retain_external_handles_without_storage_requirements() {
-    type F = jolt_field::Prime128OffsetA7F7;
+    type F = jolt_field::Prime128Offset6A23801F;
     let opening = PreparedGroupOpening::new(vec![F::default()], Box::new(73u32));
     let (messages, handle) = opening.into_parts();
     assert_eq!(messages.len(), 1);

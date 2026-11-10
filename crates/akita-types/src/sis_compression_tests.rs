@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::ntt_cache_requires_exactness_tail;
-    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn reachable_negative_binary_widths_need_no_exactness_tail() {
@@ -10,13 +10,15 @@ mod tests {
         use akita_params::FlatMatrix;
 
         // First maps at their complete 8 KiB source width.
-        assert!(!ntt_cache_requires_exactness_tail::<Prime128OffsetA7F7, 32>(2_048, 1).unwrap());
+        assert!(
+            !ntt_cache_requires_exactness_tail::<Prime128Offset6A23801F, 32>(2_048, 1).unwrap()
+        );
         assert!(!ntt_cache_requires_exactness_tail::<Prime64Offset59, 64>(1_024, 1).unwrap());
         assert!(!ntt_cache_requires_exactness_tail::<Prime32Offset99, 128>(512, 1).unwrap());
 
         // Terminal maps at the width of the first map's complete output.
         let q128_d16 = FlatMatrix::from_ring_slice(&vec![
-            CyclotomicRing::<Prime128OffsetA7F7, 16>::zero();
+            CyclotomicRing::<Prime128Offset6A23801F, 16>::zero();
             256
         ]);
         let q128_cache =
