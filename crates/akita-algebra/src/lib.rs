@@ -12,8 +12,11 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
+#[cfg(test)]
+mod constant_time_tests;
 pub mod eq_poly;
 pub mod fft;
+mod lift;
 pub mod ntt;
 pub mod offset_eq;
 pub mod poly;
@@ -28,15 +31,17 @@ pub use jolt_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
 pub use jolt_field::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
+pub use lift::{lift_biased, lift_ct, LIFT_BIAS};
 pub use ntt::tables;
 pub use ntt::{
     CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth, RADIX_BITS,
 };
 pub use ring::{
-    balanced_decompose_coefficients_pow2_i8_into, cyclic_ntt_with_i16_tail_to_ring,
-    mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, residue_kernel, terminal_residue_kernel,
-    CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
-    DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
+    balanced_decompose_coefficients_pow2_i8_into, balanced_decompose_coefficients_pow2_i8_into_ct,
+    cyclic_ntt_with_i16_tail_to_ring, mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring,
+    residue_kernel, terminal_residue_kernel, CenteredMontLut, CrtNttConvertibleField,
+    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, Ifma52NttMatrix,
+    Ifma52Params, ResidueKernelPoint, RADIX_SUM_BITS, RADIX_SUM_PLANES,
 };
 pub use split_eq::GruenSplitEq;
 
