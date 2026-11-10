@@ -28,6 +28,7 @@ pub struct AkitaVerifier<Cfg: CommitmentConfig> {
     /// Admitted row digests in increasing order.
     admitted: Vec<ScheduleRowDigest>,
     pub(crate) terminal_ntt: TerminalNttCache,
+    pub(crate) setup_mode: crate::SetupMode,
 }
 
 impl<Cfg> AkitaVerifier<Cfg>
@@ -45,7 +46,8 @@ where
         setup: AkitaVerifierSetup<Cfg::Field>,
         schedules: TrustedScheduleCatalog<Cfg>,
     ) -> Result<Self, AkitaError> {
-        let rows = schedules.verifier_admitted_rows(setup.expanded())?;
+        let rows =
+            schedules.verifier_admitted_rows(setup.expanded(), akita_params::SetupMode::Check)?;
         let admitted = rows.iter().map(|row| row.selection().row_digest).collect();
         let requirements = rows
             .iter()
@@ -57,6 +59,7 @@ where
             schedules,
             admitted,
             terminal_ntt,
+            setup_mode: crate::SetupMode::Check,
         })
     }
 
@@ -66,6 +69,11 @@ where
     /// selected row's terminal matrix. `trusted_terminal_cache` optionally
     /// supplies that matrix as a [`TrustedTerminalCache`] instead of
     /// transforming it.
+    ///
+    /// `Defer` provisioning admits only compression-map coefficients and
+    /// requires an authenticated terminal cache. Such a verifier rejects
+    /// Check-mode replay even if its small matrix happens to fit a direct query.
+    /// Check provisioning also supports Defer replay with an answer tape.
     ///
     /// When the catalog has no such row or `setup` does not support it, the
     /// verifier admits nothing and rejects every proof.
@@ -80,13 +88,34 @@ where
         schedules: TrustedScheduleCatalog<Cfg>,
         selection: OpeningScheduleSelection,
         trusted_terminal_cache: Option<TrustedTerminalCache<'_>>,
+        mode: crate::SetupMode,
     ) -> Result<Self, AkitaError> {
+        if mode == crate::SetupMode::Defer && trusted_terminal_cache.is_none() {
+            return Err(AkitaError::InvalidSetup(
+                "deferred provisioning requires an authenticated terminal NTT cache".into(),
+            ));
+        }
         let row = match schedules.resolve_selection(selection) {
-            Ok(row) if TrustedScheduleCatalog::<Cfg>::verifier_admits(setup.expanded(), row)? => {
+            Ok(row)
+                if TrustedScheduleCatalog::<Cfg>::verifier_admits(setup.expanded(), row, mode)? =>
+            {
                 Some(row)
             }
             _ => None,
         };
+        if let Some(row) = row.filter(|_| mode == crate::SetupMode::Defer) {
+            let required = akita_params::verifier_setup_matrix_capacity_for_schedule(
+                row.schedule(),
+                &row.profiles().opening_layout()?,
+                mode,
+            )?
+            .num_field_elements;
+            if setup.expanded().shared_matrix().num_field_elements() != required {
+                return Err(AkitaError::InvalidSetup(
+                    "deferred provisioning must omit raw setup prefixes".into(),
+                ));
+            }
+        }
         let (admitted, terminal_ntt) = match (row, trusted_terminal_cache) {
             (Some(row), None) => (
                 vec![selection.row_digest],
@@ -117,6 +146,7 @@ where
             schedules,
             admitted,
             terminal_ntt,
+            setup_mode: mode,
         })
     }
 }
@@ -210,9 +240,13 @@ mod tests {
             )))
             .expect("workspace fp128 schedule");
         let layout = row.profiles().opening_layout().expect("opening layout");
-        let capacity = verifier_setup_matrix_capacity_for_schedule(row.schedule(), &layout)
-            .expect("matrix capacity")
-            .num_field_elements;
+        let capacity = verifier_setup_matrix_capacity_for_schedule(
+            row.schedule(),
+            &layout,
+            akita_params::SetupMode::Check,
+        )
+        .expect("matrix capacity")
+        .num_field_elements;
         let (selection, schedule) = (row.selection(), row.schedule().clone());
         (catalog, selection, schedule, capacity)
     }
@@ -248,11 +282,94 @@ mod tests {
                     catalog.clone(),
                     selection,
                     artifact,
+                    crate::SetupMode::Check,
                 )
                 .expect("single-row verifier");
                 assert_eq!(one.admitted_rows(), &[selection.row_digest]);
                 assert!(one.terminal_ntt_cache_bytes() > 0);
             }
+        });
+    }
+
+    #[test]
+    fn deferred_provisioning_needs_only_compression_maps_and_a_bound_terminal_cache() {
+        on_large_stack(|| {
+            let (catalog, selection, schedule, check_fields) = catalog_row();
+            let row = catalog.resolve_selection(selection).expect("selected row");
+            let fields = verifier_setup_matrix_capacity_for_schedule(
+                &schedule,
+                &row.profiles().opening_layout().expect("layout"),
+                crate::SetupMode::Defer,
+            )
+            .expect("compression capacity")
+            .num_field_elements;
+            assert!(fields < check_fields);
+            let source = setup(15, check_fields);
+            let artifact =
+                build_riscv64_terminal_ntt_cache(&source, &schedule, selection.row_digest)
+                    .expect("compact terminal cache");
+            assert!(
+                AkitaVerifier::for_selection(
+                    source,
+                    catalog.clone(),
+                    selection,
+                    Some(TrustedTerminalCache::Decode(&artifact)),
+                    crate::SetupMode::Defer,
+                )
+                .is_err(),
+                "Defer must reject extra raw setup coefficients"
+            );
+            let compact = setup(15, fields);
+            assert!(!TrustedScheduleCatalog::<OneHot>::verifier_admits(
+                compact.expanded(),
+                row,
+                crate::SetupMode::Check,
+            )
+            .expect("Check admission"));
+            assert!(AkitaVerifier::for_selection(
+                compact.clone(),
+                catalog.clone(),
+                selection,
+                None,
+                crate::SetupMode::Defer,
+            )
+            .is_err());
+            let deferred = AkitaVerifier::for_selection(
+                compact,
+                catalog.clone(),
+                selection,
+                Some(TrustedTerminalCache::Decode(&artifact)),
+                crate::SetupMode::Defer,
+            )
+            .expect("compact verifier");
+            assert!(deferred.admits(selection.row_digest));
+            assert_eq!(deferred.setup_mode, crate::SetupMode::Defer);
+            assert_eq!(
+                deferred
+                    .setup()
+                    .expanded()
+                    .shared_matrix()
+                    .num_field_elements(),
+                fields
+            );
+            assert!(AkitaVerifier::for_selection(
+                setup(15, fields - 1),
+                catalog.clone(),
+                selection,
+                Some(TrustedTerminalCache::Decode(&artifact)),
+                crate::SetupMode::Defer,
+            )
+            .is_err());
+            let mut wrong_binding = artifact.clone();
+            wrong_binding[48..56].copy_from_slice(&((check_fields + 1) as u64).to_le_bytes());
+            assert!(AkitaVerifier::for_selection(
+                setup(15, fields),
+                catalog,
+                selection,
+                Some(TrustedTerminalCache::Decode(&wrong_binding)),
+                crate::SetupMode::Defer,
+            )
+            .is_err());
         });
     }
 
@@ -267,6 +384,7 @@ mod tests {
                     catalog.clone(),
                     selection,
                     None,
+                    crate::SetupMode::Check,
                 )
                 .expect("empty verifier");
                 assert!(empty.admitted_rows().is_empty());
@@ -285,7 +403,8 @@ mod tests {
                     few_vars,
                     catalog,
                     selection,
-                    Some(TrustedTerminalCache::Decode(&artifact))
+                    Some(TrustedTerminalCache::Decode(&artifact)),
+                    crate::SetupMode::Check
                 ),
                 Err(AkitaError::InvalidSetup(_))
             ));
