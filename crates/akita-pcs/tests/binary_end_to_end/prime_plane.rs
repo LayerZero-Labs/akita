@@ -7,7 +7,7 @@ use akita_types::binary::{
 };
 use jolt_field::CanonicalEncoding;
 
-const WORDS: [u128; 8] = [
+pub(super) const WORDS: [u128; 8] = [
     0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
     0x8000_0000_0000_0000_0000_0000_0000_0001,
     0xaaaa_5555_aaaa_5555_aaaa_5555_aaaa_5555,

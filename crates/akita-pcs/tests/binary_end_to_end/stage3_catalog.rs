@@ -28,7 +28,7 @@ pub(super) fn catalog() -> TrustedScheduleCatalog<BinaryTestSuffix> {
 fn load() -> TrustedScheduleCatalog<BinaryTestSuffix> {
     let path = artifact_path();
     if std::env::var("AKITA_REGENERATE_STAGE3_CATALOG").as_deref() == Ok("1") {
-        let catalog = build();
+        let catalog = plan::<BinaryTestSuffix>();
         std::fs::create_dir_all(path.parent().expect("artifact directory"))
             .expect("create fixture artifact directory");
         std::fs::write(
@@ -48,15 +48,17 @@ fn load() -> TrustedScheduleCatalog<BinaryTestSuffix> {
     .expect("root-offloaded fixture catalog")
 }
 
-fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
+/// Plan the binary fixture rows for one ordinary suffix configuration: an
+/// 18-variable root, a 23-variable carrier, and the mixed root over both.
+pub(super) fn plan<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog<Cfg> {
     let chunking = ChunkedWitnessCfg::default_non_chunked();
-    let policy = policy_of::<BinaryTestSuffix>(chunking);
+    let policy = policy_of::<Cfg>(chunking);
     assert!(policy.recursive_setup_planning);
     let mut direct_policy = policy;
     direct_policy.recursive_setup_planning = false;
     direct_policy.selection_policy = SelectionPolicyId::for_policy(false);
     direct_policy.recursive_setup_search_policy = RecursiveSetupSearchPolicy::Exhaustive;
-    let contract = BinaryTestSuffix::committed_source_contract().expect("fixture contract");
+    let contract = Cfg::committed_source_contract().expect("fixture contract");
     let singleton = |vars| ScheduleLookupKey::single(PolynomialGroupLayout::singleton(vars));
     let direct_rows: Vec<_> = [23, 18]
         .into_iter()
@@ -66,7 +68,7 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
                 contract,
                 &[],
                 &direct_policy,
-                BinaryTestSuffix::ring_challenge_config,
+                Cfg::ring_challenge_config,
             )
             .expect("direct fixture schedule");
             (
@@ -79,10 +81,10 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
         })
         .collect();
     let direct = ValidatedScheduleCatalog::try_new(
-        BinaryTestSuffix::schedule_family_name(),
+        Cfg::schedule_family_name(),
         direct_rows,
         &direct_policy,
-        BinaryTestSuffix::ring_challenge_config,
+        Cfg::ring_challenge_config,
     )
     .expect("direct fixture catalog");
     let carrier = direct.resolve_key(&singleton(23)).expect("carrier row");
@@ -113,7 +115,7 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
                 &akita_planner::emit::GroupedGenerationRequest::new(key.final_group, producers),
                 contract,
                 &direct_policy,
-                BinaryTestSuffix::ring_challenge_config,
+                Cfg::ring_challenge_config,
             )
             .expect("direct grouped fixture schedule")
             .schedule
@@ -123,7 +125,7 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
             contract,
             &vec![contract; key.precommitteds.len()],
             &policy,
-            BinaryTestSuffix::ring_challenge_config,
+            Cfg::ring_challenge_config,
             SetupContributionMode::Recursive,
             (!key.precommitteds.is_empty()).then_some(&baseline.root.params),
         )
@@ -154,10 +156,10 @@ fn build() -> TrustedScheduleCatalog<BinaryTestSuffix> {
         rows.push((profiles, planned.schedule));
     }
     let catalog = ValidatedScheduleCatalog::try_new(
-        BinaryTestSuffix::schedule_family_name(),
+        Cfg::schedule_family_name(),
         rows,
         &policy,
-        BinaryTestSuffix::ring_challenge_config,
+        Cfg::ring_challenge_config,
     )
     .expect("root-offloaded fixture catalog");
     TrustedScheduleCatalog::new(catalog, chunking).expect("root-offloaded fixture binding")
