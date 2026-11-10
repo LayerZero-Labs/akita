@@ -100,6 +100,12 @@ where
             "coefficient-packing field extension degree mismatch".into(),
         ));
     }
+    if source_positions > point.num_live_positions() {
+        return Err(AkitaError::InvalidSize {
+            expected: point.num_live_positions(),
+            actual: source_positions,
+        });
+    }
     let num_blocks = point.num_live_blocks();
     let partial_width = geometry.partial_base_field_width();
     let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
@@ -301,52 +307,58 @@ mod tests {
         T: Field + CanonicalEncoding + Ring,
         U: ExtField<T> + FpExtEncoding<T> + Ring + jolt_algebra::MulBaseUnreduced<T>,
     {
+        const POSITIONS: usize = 32;
         let geometry = SubringCoefficientPackingGeometry::try_new(U::DEGREE, RING_D, s).unwrap();
-        let point_len = (2 * RING_D).next_power_of_two().trailing_zeros() as usize;
+        let point_len = (POSITIONS * RING_D).next_power_of_two().trailing_zeros() as usize;
         let public_point = (0..point_len)
             .map(|index| U::from_u64((index + 3) as u64))
             .collect::<Vec<_>>();
         let point = PreparedSubringCoefficientPackingPoint::new(
             geometry,
             BasisMode::Lagrange,
-            2,
+            POSITIONS,
             4,
             point_len,
             &public_point,
         )
         .unwrap();
         let tables = SubringCoefficientPackingTables::new(point.clone()).unwrap();
-        let rings = (0..2)
-            .map(|position| {
-                CyclotomicRing::<T, RING_D>::from_coefficients(std::array::from_fn(|coefficient| {
-                    T::from_i64(((position * RING_D + coefficient) % 13) as i64 - 6)
-                }))
-            })
-            .collect::<Vec<_>>();
-        let source = rings
-            .iter()
-            .flat_map(|ring| ring.coefficients().iter().copied())
-            .collect::<Vec<_>>();
-        let expected = coefficient_packing_partials::<T, U>(
-            geometry,
-            2,
-            4,
-            &source,
-            tables.position_weights(),
-            tables.packing_weights(),
-        )
-        .unwrap();
-        let poly = DensePoly::from_ring_coeffs(rings).unwrap();
-        let polys = [&poly];
-        let batch = <DensePoly<T> as RootOpeningSource<T, RING_D>>::opening_batch(&polys).unwrap();
-        let got = CpuBackend::<T, U>::for_arithmetic_tests()
-            .coefficient_packing_partials_batch(
-                None,
-                batch,
-                SubringCoefficientPackingPlan { tables: &tables },
+        for prefix in [0, 1, RING_D + 1, POSITIONS * RING_D - 1, POSITIONS * RING_D] {
+            let source = (0..POSITIONS * RING_D)
+                .map(|index| {
+                    if index < prefix {
+                        T::from_i64((index % 13) as i64 - 6)
+                    } else {
+                        T::zero()
+                    }
+                })
+                .collect::<Vec<_>>();
+            let expected = coefficient_packing_partials::<T, U>(
+                geometry,
+                POSITIONS,
+                4,
+                &source,
+                tables.position_weights(),
+                tables.packing_weights(),
             )
             .unwrap();
-        assert_eq!(got[0].coordinates(), expected);
+            for poly in [
+                DensePoly::from_field_prefix(point_len, source[..prefix].to_vec()).unwrap(),
+                DensePoly::from_field_evals(point_len, source).unwrap(),
+            ] {
+                let polys = [&poly];
+                let batch =
+                    <DensePoly<T> as RootOpeningSource<T, RING_D>>::opening_batch(&polys).unwrap();
+                let got = CpuBackend::<T, U>::for_arithmetic_tests()
+                    .coefficient_packing_partials_batch(
+                        None,
+                        batch,
+                        SubringCoefficientPackingPlan { tables: &tables },
+                    )
+                    .unwrap();
+                assert_eq!(got[0].coordinates(), expected);
+            }
+        }
     }
 
     #[test]

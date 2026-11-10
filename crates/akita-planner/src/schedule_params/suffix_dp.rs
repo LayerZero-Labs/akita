@@ -26,18 +26,19 @@ use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
 mod candidates;
 mod frontier;
+mod precommit_openings;
 mod prune;
 mod search;
 mod source;
 mod state;
 mod terminal;
 
-#[cfg(all(test, feature = "catalog-gen"))]
-pub(super) use candidates::packing_precommit_opening_products;
 #[cfg(test)]
 pub(super) use candidates::state_allows_terminal_seed;
-pub(crate) use candidates::MAX_PRECOMMIT_OPENING_PRODUCTS;
 use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Projection};
+#[cfg(all(test, feature = "catalog-gen"))]
+pub(super) use precommit_openings::packing_precommit_opening_products;
+pub(crate) use precommit_openings::MAX_PRECOMMIT_OPENING_PRODUCTS;
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;
 #[cfg(feature = "zk")]

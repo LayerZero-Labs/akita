@@ -7,17 +7,18 @@ use akita_params::{
 
 use crate::{
     planner::{
-        precommitted_group_equivalence_classes, root_level_candidates_for_prepared_producers,
-        PreparedRootProducers,
+        precommitted_group_equivalence_classes, smallest_witness_root_candidates,
+        PreparedRootFinalGroup, PreparedRootProducers,
     },
     PlannerPolicy,
 };
 
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
-    dimension_candidates, suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide,
-    FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveFoldWork, RelationSearchDomain,
-    SetupPrefixLayoutGuide, SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
+    dimension_candidates, precommit_openings::packing_precommit_opening_products,
+    suffix_opening_layout, CandidateInnerRoute, CandidateLayoutGuide, FoldCandidatePolicy,
+    RecursiveCandidateRequest, RecursiveFoldWork, RelationSearchDomain, SetupPrefixLayoutGuide,
+    SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,8 +54,8 @@ const fn trace_opening_purpose(
 struct OpeningWork {
     dimensions: CommitmentRingDims,
     opening: crate::schedule_params::PlannerOpeningCandidate,
-    /// One opening per interchangeable precommitted class, in class order.
-    precommitted_class_openings: Vec<crate::schedule_params::PlannerOpeningCandidate>,
+    /// One opening per class; `None` defers a large product to witness ranking.
+    precommitted_class_openings: Option<Vec<crate::schedule_params::PlannerOpeningCandidate>>,
     purpose: OpeningPurpose,
 }
 
@@ -88,78 +89,6 @@ pub(crate) const fn state_allows_terminal_seed(
     has_incoming_setup_prefix: bool,
 ) -> bool {
     !is_root_level && !has_incoming_setup_prefix
-}
-
-/// Maximum number of root precommit opening assignments per opening dimension.
-///
-/// The bound applies to the Cartesian product over distinct interchangeable
-/// classes. Class multiplicity does not count toward it, so any number of
-/// identical producers fits; three to eight distinct classes do, depending on
-/// the per-class domain sizes. A larger product removes coefficient-packing
-/// root openings for that dimension, as an unsupported dimension does. A multi-chunk root
-/// only folds by coefficient packing, so that dimension then offers no root
-/// candidate; other dimensions are unaffected.
-pub(crate) const MAX_PRECOMMIT_OPENING_PRODUCTS: usize = 256;
-
-/// Enumerate the root precommit openings for one shared opening dimension.
-///
-/// Each returned assignment holds one opening per interchangeable precommitted
-/// class, in [`precommitted_group_equivalence_classes`] order; every group of a
-/// class opens with its class's opening. The domain is the Cartesian product of
-/// the per-class coefficient-packing domains, so its size depends on the
-/// number of distinct classes and not on how many groups each class holds.
-/// A product beyond [`MAX_PRECOMMIT_OPENING_PRODUCTS`] yields an empty domain
-/// before any assignment is allocated.
-pub(crate) fn packing_precommit_opening_products(
-    policy: &PlannerPolicy,
-    dimensions: CommitmentRingDims,
-    key: &ScheduleLookupKey,
-    precommitted_source_contracts: &[akita_params::sis::CommittedSourceContract],
-) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
-    if !crate::schedule_params::precommitted_groups_support_opening_dimension(
-        key.precommitteds.iter(),
-        dimensions.d_d(),
-    ) {
-        return Ok(Vec::new());
-    }
-    let class_domains =
-        precommitted_group_equivalence_classes(&key.precommitteds, precommitted_source_contracts)?
-            .into_iter()
-            .map(|indices| {
-                let profile = &key.precommitteds[indices[0]];
-                crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-                    policy.claim_ext_degree,
-                    CommitmentRingDims {
-                        inner: profile.inner.matrix.ring_dimension(),
-                        outer: profile.outer.matrix.ring_dimension(),
-                        opening: dimensions.d_d(),
-                    },
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-    let Some(product_count) = class_domains.iter().try_fold(1usize, |count, domain| {
-        count
-            .checked_mul(domain.len())
-            .filter(|&count| count <= MAX_PRECOMMIT_OPENING_PRODUCTS)
-    }) else {
-        return Ok(Vec::new());
-    };
-
-    let mut products = vec![Vec::with_capacity(class_domains.len())];
-    for domain in &class_domains {
-        products = products
-            .iter()
-            .flat_map(|product| {
-                domain.iter().map(move |&opening| {
-                    let mut extended = product.clone();
-                    extended.push(opening);
-                    extended
-                })
-            })
-            .collect();
-    }
-    debug_assert_eq!(products.len(), product_count);
-    Ok(products)
 }
 
 /// Enumerate the method/dimension work for one suffix state.
@@ -296,7 +225,7 @@ fn opening_work_domain(
                         trace_work.push(OpeningWork {
                             dimensions,
                             opening: trace_opening,
-                            precommitted_class_openings,
+                            precommitted_class_openings: Some(precommitted_class_openings),
                             purpose,
                         });
                     }
@@ -304,24 +233,31 @@ fn opening_work_domain(
             }
         }
 
-        if let Some(precommit_products) = root_precommit_products.as_ref() {
-            for opening in packing_domain {
-                for precommitted_class_openings in precommit_products {
-                    packing_work.push(OpeningWork {
-                        dimensions,
-                        opening,
-                        precommitted_class_openings: precommitted_class_openings.clone(),
-                        purpose: OpeningPurpose::FoldOnly,
-                    });
+        for opening in packing_domain {
+            match root_precommit_products.as_ref() {
+                Some(Some(products)) => {
+                    for assignment in products {
+                        packing_work.push(OpeningWork {
+                            dimensions,
+                            opening,
+                            precommitted_class_openings: Some(assignment.clone()),
+                            purpose: OpeningPurpose::FoldOnly,
+                        });
+                    }
                 }
+                Some(None) => packing_work.push(OpeningWork {
+                    dimensions,
+                    opening,
+                    precommitted_class_openings: None,
+                    purpose: OpeningPurpose::FoldOnly,
+                }),
+                None => packing_work.push(OpeningWork {
+                    dimensions,
+                    opening,
+                    precommitted_class_openings: Some(Vec::new()),
+                    purpose: OpeningPurpose::FoldOnly,
+                }),
             }
-        } else {
-            packing_work.extend(packing_domain.into_iter().map(|opening| OpeningWork {
-                dimensions,
-                opening,
-                precommitted_class_openings: Vec::new(),
-                purpose: OpeningPurpose::FoldOnly,
-            }));
         }
     }
 
@@ -820,32 +756,49 @@ impl<'a> CandidateDomain<'a> {
             |work| -> Result<GeneratedCandidates, AkitaError> {
                 let mut terminal = Vec::new();
                 let mut folds = Vec::new();
-                let Some(preparation) = PreparedRootProducers::prepare(
-                    root_key,
-                    ctx.precommitted_source_contracts,
-                    ctx.policy,
-                    work.dimensions,
-                    work.opening,
-                    &work.precommitted_class_openings,
-                    open_lb,
-                    masking,
-                )?
-                else {
-                    return Ok(GeneratedCandidates { terminal, folds });
+                let preparation = if let Some(openings) = &work.precommitted_class_openings {
+                    let Some(preparation) = PreparedRootProducers::prepare(
+                        root_key,
+                        ctx.precommitted_source_contracts,
+                        ctx.policy,
+                        work.dimensions,
+                        work.opening,
+                        openings,
+                        open_lb,
+                        masking,
+                    )?
+                    else {
+                        return Ok(GeneratedCandidates { terminal, folds });
+                    };
+                    Some(preparation)
+                } else {
+                    None
                 };
                 for inner_lb in self.inner_basis_range.clone() {
-                    let mut dimension_candidates = root_level_candidates_for_prepared_producers(
+                    let main = PreparedRootFinalGroup::prepare(
                         root_key,
                         final_source_contract,
                         ctx.policy,
                         work.dimensions,
                         work.opening,
-                        &preparation,
                         inner_lb,
                         open_lb,
                         self.root_main_constraint.map(candidate_layout_guide),
                         masking,
                     )?;
+                    let mut dimension_candidates = if let Some(preparation) = &preparation {
+                        main.candidates(ctx.policy, preparation, true)?
+                    } else {
+                        smallest_witness_root_candidates(
+                            root_key,
+                            ctx.precommitted_source_contracts,
+                            ctx.policy,
+                            work.dimensions,
+                            open_lb,
+                            &main,
+                            masking,
+                        )?
+                    };
                     if let Some(constraint) = self.root_main_constraint {
                         dimension_candidates.retain(|(params, _)| {
                             root_candidate_matches_constraint(params, constraint)

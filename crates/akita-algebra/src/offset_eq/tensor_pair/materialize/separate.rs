@@ -1,6 +1,6 @@
 use super::{DenseLeftTensorView, ResidualTerms};
 use crate::offset_eq::{eq_eval_at_index, OffsetEqWindow};
-use crate::Field;
+use jolt_algebra::Field;
 use akita_error::AkitaError;
 use jolt_algebra::checked;
 

@@ -1,6 +1,6 @@
 use super::{DenseLeftTensorView, ResidualTerms};
 use crate::offset_eq::OffsetEqWindow;
-use crate::Field;
+use jolt_algebra::Field;
 use akita_error::AkitaError;
 
 /// Reorder the residual-by-coordinate sum into runs within one low table.

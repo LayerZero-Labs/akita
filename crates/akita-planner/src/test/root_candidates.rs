@@ -28,18 +28,18 @@ pub(crate) fn root_level_candidates_with_fresh_preparation(
     else {
         return Ok(Vec::new());
     };
-    root_level_candidates_for_prepared_producers(
+    PreparedRootFinalGroup::prepare(
         key,
         final_source_contract,
         policy,
         dimensions,
         opening,
-        &prepared_producers,
         candidate_log_basis_inner,
         candidate_log_basis_open,
         guide,
         crate::schedule_params::LevelMasking::Clear,
-    )
+    )?
+    .candidates(policy, &prepared_producers, true)
 }
 
 /// Enumerate every root split and slice for the single-group oracle fixture.
@@ -104,8 +104,6 @@ pub(crate) fn exhaustive_root_candidates_for_reference(
                     position_index_bits,
                     block_index_bits,
                     outer_slice_count,
-                    precommitted_groups: &[],
-                    precommitted_d_width: 0,
                 },
             )?
             else {

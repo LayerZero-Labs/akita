@@ -15,15 +15,20 @@ use std::sync::{Arc, OnceLock};
 
 const MAX_DENSE_DIGIT_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
-/// Minimum physical flat coefficient length.
+/// Length of the stored prefix that dense kernels read.
 ///
-/// Physical storage is zero-padded to `max(1 << num_vars, 1024)` so that for
-/// every supported commitment ring dimension through `D=1024` the live view slice
-/// `num_ring_elems(D) * D = div_ceil(2^num_vars, D) * D` is in bounds: when
-/// `2^num_vars >= D` the slice is exactly `2^num_vars` coefficients, and when
-/// `2^num_vars < D` it is `D <= 1024` coefficients. The old per-`D` storage
-/// zero-padded the tail of the last ring element; the physical zero padding
-/// reproduces those coefficients exactly.
+/// On `whiteout/preview` this is the caller-supplied length, never a scan of
+/// the values: a hiding commitment's witness is secret, so its trailing zeros
+/// must not change the work done or the memory kept (P8). `from_field_prefix`
+/// callers still skip their public zero suffix. Main's value scan (#292)
+/// returns once hiding commitments can declare a public length.
+fn nonzero_prefix_len<F: Field>(values: &[F]) -> usize {
+    values.len()
+}
+
+/// Alignment needed for a view at every supported commitment ring dimension.
+/// Full sources allocate at least this many coefficients; compact sources
+/// round their nonzero prefix up to this alignment.
 const MIN_FLAT_COEFF_LEN: usize =
     SUPPORTED_COMMITMENT_RING_DIMS[SUPPORTED_COMMITMENT_RING_DIMS.len() - 1];
 
@@ -38,7 +43,7 @@ pub(super) struct DenseDigitCache {
     planes: Vec<i8>,
 }
 
-/// Dense polynomial: all ring coefficients materialized in memory.
+/// Dense polynomial with an optional implicit zero suffix.
 ///
 /// Storage is D-free: coefficients are a flat field-element buffer, and the
 /// ring dimension is a view selected at kernel entry (each ring-shaped method
@@ -50,6 +55,7 @@ pub struct DensePoly<F: Field> {
     /// Flat field coefficients in sequential block order (untagged compact
     /// [`RingVec`]; see [`MIN_FLAT_COEFF_LEN`] for the physical padding).
     coeffs: DenseCoefficients<F>,
+    nonzero_coeff_len: usize,
     digit_cache: OnceLock<DenseDigitCache>,
 }
 
@@ -69,6 +75,7 @@ impl<F: Field + Clone> Clone for DensePoly<F> {
         Self {
             num_vars: self.num_vars,
             coeffs: self.coeffs.clone(),
+            nonzero_coeff_len: self.nonzero_coeff_len,
             digit_cache: OnceLock::new(),
         }
     }
@@ -76,7 +83,15 @@ impl<F: Field + Clone> Clone for DensePoly<F> {
 
 impl<F: Field + PartialEq> PartialEq for DensePoly<F> {
     fn eq(&self, other: &Self) -> bool {
-        self.num_vars == other.num_vars && self.field_coeffs() == other.field_coeffs()
+        let left = self.field_coeffs();
+        let right = other.field_coeffs();
+        let common = left.len().min(right.len());
+        self.num_vars == other.num_vars
+            && left[..common] == right[..common]
+            && left[common..]
+                .iter()
+                .chain(&right[common..])
+                .all(|x| *x == F::zero())
     }
 }
 
@@ -99,7 +114,10 @@ fn as_ring_view<F: Field, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>]
 }
 
 impl<F: Field> DensePoly<F> {
-    /// Full physical (zero-padded) flat coefficient buffer.
+    /// Stored flat coefficients, including ring-alignment padding.
+    ///
+    /// Sources built with [`Self::from_field_prefix`] may store fewer than
+    /// `2^num_vars` coefficients; the remaining evaluations are zero.
     pub fn field_coeffs(&self) -> &[F] {
         match &self.coeffs {
             DenseCoefficients::Owned(coeffs) => coeffs.coeffs(),
@@ -108,6 +126,16 @@ impl<F: Field> DensePoly<F> {
                 &setup.shared_matrix().as_field_slice()[..*len]
             }
         }
+    }
+
+    pub(crate) const fn nonzero_coeff_len(&self) -> usize {
+        self.nonzero_coeff_len
+    }
+
+    pub(crate) fn nonzero_ring_coeffs<const D: usize>(
+        &self,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ring_prefix::<D>(self.nonzero_coeff_len)
     }
 
     /// Ring-element count viewed at dimension `ring_d`.
@@ -126,16 +154,22 @@ impl<F: Field> DensePoly<F> {
     /// # Errors
     ///
     /// Returns an error if `D` is not a power of two or the view exceeds the
-    /// physical buffer (unsupported ring dimension for this arity).
+    /// physical buffer. A compact source may omit this view's zero suffix;
+    /// opening kernels consume its stored prefix instead.
     pub fn ring_coeffs<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ring_prefix::<D>(1usize << self.num_vars)
+    }
+
+    fn ring_prefix<const D: usize>(
+        &self,
+        coefficient_len: usize,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         if D == 0 || !D.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
                 "ring degree D={D} is not a power of two"
             )));
         }
-        let needed = self
-            .num_ring_elems_at(D)
-            .checked_mul(D)
+        let needed = checked::align_up(coefficient_len, D)
             .ok_or_else(|| AkitaError::InvalidInput("dense ring view overflow".to_string()))?;
         let flat = self.field_coeffs();
         let live = flat.get(..needed).ok_or_else(|| {
@@ -169,6 +203,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         Ok(Self {
             num_vars,
             coeffs: DenseCoefficients::SetupPrefix { setup, len },
+            nonzero_coeff_len: len,
             digit_cache: OnceLock::new(),
         })
     }
@@ -200,6 +235,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             });
         }
 
+        let nonzero_coeff_len = nonzero_prefix_len(&evals);
         let physical_len = expected_len.max(MIN_FLAT_COEFF_LEN);
 
         // Reuse an owned evaluation vector. Borrowed inputs pay the same
@@ -211,6 +247,39 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         Ok(Self {
             num_vars,
             coeffs: DenseCoefficients::Owned(RingVec::from_coeffs(coeffs)),
+            nonzero_coeff_len,
+            digit_cache: OnceLock::new(),
+        })
+    }
+
+    /// Store a prefix of a `2^num_vars` evaluation table, with an implicit zero suffix.
+    ///
+    /// The logical polynomial and commitment geometry retain the full domain.
+    /// Storage is rounded only to the largest supported ring dimension.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the domain overflows `usize` or the prefix exceeds it.
+    pub fn from_field_prefix(num_vars: usize, mut values: Vec<F>) -> Result<Self, AkitaError> {
+        let domain_len = checked::pow2(num_vars)
+            .ok_or_else(|| AkitaError::InvalidInput(format!("2^{num_vars} does not fit usize")))?;
+        if values.len() > domain_len {
+            return Err(AkitaError::InvalidSize {
+                expected: domain_len,
+                actual: values.len(),
+            });
+        }
+        let nonzero_coeff_len = nonzero_prefix_len(&values);
+        let physical_len = checked::align_up(nonzero_coeff_len, MIN_FLAT_COEFF_LEN)
+            .ok_or_else(|| AkitaError::InvalidInput("dense prefix alignment overflow".into()))?;
+        values.truncate(nonzero_coeff_len);
+        values.reserve_exact(physical_len - values.len());
+        values.resize(physical_len, F::zero());
+        values.shrink_to_fit();
+        Ok(Self {
+            num_vars,
+            coeffs: DenseCoefficients::Owned(RingVec::from_coeffs(values)),
+            nonzero_coeff_len,
             digit_cache: OnceLock::new(),
         })
     }
@@ -241,11 +310,13 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         for ring in &coeffs {
             flat.extend_from_slice(ring.coefficients());
         }
+        let nonzero_coeff_len = nonzero_prefix_len(&flat);
         flat.resize(physical_len, F::zero());
 
         Ok(Self {
             num_vars: total.trailing_zeros() as usize,
             coeffs: DenseCoefficients::Owned(RingVec::from_coeffs(flat)),
+            nonzero_coeff_len,
             digit_cache: OnceLock::new(),
         })
     }
@@ -273,13 +344,19 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
         if basis.kernel() != akita_params::SignedDigitKernel::I8 {
             return None;
         }
-        let num_rings = self.num_ring_elems_at(D);
+        // Preserve the cache admission limit on the logical domain: skipping
+        // zeros must not introduce a cache where the full source used none.
+        let logical_cache_bytes = self
+            .num_ring_elems_at(D)
+            .checked_mul(num_digits)?
+            .checked_mul(size_of::<[i8; D]>())?;
+        if logical_cache_bytes > MAX_DENSE_DIGIT_CACHE_BYTES {
+            return None;
+        }
+        let num_rings = self.nonzero_coeff_len.div_ceil(D);
         let cache_bytes = num_rings
             .checked_mul(num_digits)?
             .checked_mul(size_of::<[i8; D]>())?;
-        if cache_bytes > MAX_DENSE_DIGIT_CACHE_BYTES {
-            return None;
-        }
 
         let _span = tracing::info_span!(
             "dense_digit_cache_build",
@@ -289,7 +366,7 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             ring_dimension = D,
         )
         .entered();
-        let rings = self.ring_coeffs::<D>().ok()?;
+        let rings = self.nonzero_ring_coeffs::<D>().ok()?;
         let params = BalancedDecomposePow2Params::new(num_digits, log_basis);
         let mut planes = vec![0i8; num_rings * num_digits * D];
         cfg_chunks_mut!(planes, num_digits * D)
