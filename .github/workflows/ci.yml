@@ -232,7 +232,8 @@ jobs:
     # every akita-pcs test target below rebuilds and monomorphizes the prover
     # and verifier. The large runner compiles those targets in parallel.
     runs-on: GitHubRunner-Large-Public
-    timeout-minutes: 60
+    # About 12 minutes on the large runner, 10 of them compiling.
+    timeout-minutes: 30
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
