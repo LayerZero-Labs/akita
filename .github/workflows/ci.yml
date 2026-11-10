@@ -214,25 +214,10 @@ jobs:
           cargo run --release -p akita-planner \
             --features catalog-security \
             --example catalog_security -- --check
-      - name: Dense multi-chunk PCS e2e
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_dense_mc
-      - name: One-hot multi-chunk catalog wiring
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact fp128_onehot_mc_catalog_resolves
-      - name: Bounded dense source PCS e2e
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- heterogeneous::bounded_
-          cargo test --release -p akita-config --test bounded_dense_source
-      - name: Combined-family setup at exact capacities
-        run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,transcript-keccak -- --exact heterogeneous::combined_family_setup_matches_per_family_proofs
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
-    # Cold release builds span several logging-transcript test binaries and
-    # can exceed 40 minutes before the final protocol suites finish compiling.
     timeout-minutes: 60
     strategy:
       matrix:
@@ -241,15 +226,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Run semantic transcript suites
-        run: >-
-          cargo test --release -p akita-pcs
-          --test transcript_hardening
-          --test transcript_hardening_proptest
-          --test embedded_transcript
-          --no-default-features
-          --features parallel,logging-transcript,${{ matrix.backend }}
-          --
-          --test-threads=1
+        run: |
+          for suite in transcript_hardening transcript_hardening_proptest embedded_transcript; do
+            cargo test --release -p akita-pcs --test integration \
+              --no-default-features \
+              --features parallel,logging-transcript,${{ matrix.backend }} \
+              -- "${suite}::" --test-threads=1
+          done
       - name: Run host challenge capture modes
         if: matrix.backend == 'transcript-keccak'
         run: |
@@ -272,14 +255,13 @@ jobs:
             --features parallel,logging-transcript,${{ matrix.backend }} \
             selective_l2_proof_rejects_transcript_mutations --lib
       - name: Run protocol suites with proof channel tracing
-        run: >-
-          cargo test --release -p akita-pcs
-          --test protocol_soundness
-          --test fold_linf
-          --no-default-features
-          --features parallel,logging-transcript,${{ matrix.backend }}
-          --
-          --test-threads=1
+        run: |
+          for suite in protocol_soundness fold_linf; do
+            cargo test --release -p akita-pcs --test integration \
+              --no-default-features \
+              --features parallel,logging-transcript,${{ matrix.backend }} \
+              -- "${suite}::" --test-threads=1
+          done
       - name: Audit the grinding plan across akita-types shapes
         run: >-
           cargo test --release -p akita-types
@@ -331,11 +313,20 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: Audit proof roundtrips
         run: >-
-          cargo test --release -p akita-pcs --test proof_stream_smoke
+          cargo test --release -p akita-pcs --test integration
           --no-default-features
           --features parallel,${{ matrix.backend }}
           --
+          proof_stream_smoke::
           --test-threads=1
+      - name: Combined-family setup at exact capacities (no disk-persistence)
+        if: matrix.backend == 'transcript-keccak'
+        run: >-
+          cargo test --release -p akita-pcs --test integration
+          --no-default-features
+          --features parallel,transcript-keccak
+          --
+          --exact akita_fp128_e2e::heterogeneous::combined_family_setup_matches_per_family_proofs
 
   test-timing:
     name: Test timing

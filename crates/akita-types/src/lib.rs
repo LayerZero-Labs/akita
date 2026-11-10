@@ -35,12 +35,13 @@ pub use instance_descriptor::{
 pub use l2_sites::{l2_prefix, l2_virtual_evaluations};
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
-    centered_quotient_requires_i16_tail_for_field, decode_riscv64_scalar_q128_cache,
-    dense_i8_commit_prefers_exact_ifma52, ntt_cache_requires_exactness_tail,
-    prepare_compression_ntt_cache, prepare_joined_exact_ntt_cache, prepare_ntt_cache,
-    prepare_reduced_compression_ntt_cache, prepared_verifier_ntt_cache_metadata,
-    select_compression_crt_ntt_params, select_crt_ntt_params, view_riscv64_scalar_q128_cache,
-    NttCacheKey, NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache,
+    centered_quotient_requires_i16_tail_for_field, crt_profile_selectable,
+    decode_riscv64_scalar_q128_cache, dense_i8_commit_prefers_exact_ifma52,
+    ntt_cache_requires_exactness_tail, prepare_compression_ntt_cache,
+    prepare_joined_exact_ntt_cache, prepare_ntt_cache, prepare_reduced_compression_ntt_cache,
+    prepared_verifier_ntt_cache_metadata, select_compression_crt_ntt_params, select_crt_ntt_params,
+    unselectable_crt_profile_error, view_riscv64_scalar_q128_cache, CrtNttProfile, NttCacheKey,
+    NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache,
     PreparedNttTailPairView, PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
     ProtocolCrtNttParams, PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
 };

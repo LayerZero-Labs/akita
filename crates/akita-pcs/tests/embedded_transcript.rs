@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 //! Akita running inside a caller's Spongefish transcript.
 
-mod common;
+use crate::common;
 
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend};
 use akita_error::AkitaError;
