@@ -2,7 +2,7 @@
 name = "akita-config"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version.workspace = true
 autobins = false
 license = "Apache-2.0 OR MIT"
 description = "Runtime configuration presets and schedule policy for the Akita polynomial commitment scheme"

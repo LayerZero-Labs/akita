@@ -25,6 +25,12 @@ members = [
 exclude = ["profile/akita-recursion", "fuzz"]
 resolver = "2"
 
+[workspace.package]
+# The minimum supported Rust version for every member crate. Keep it equal to
+# the channel in `rust-toolchain.toml`: CI builds only with that toolchain, and
+# the pinned Jolt revision uses APIs stabilized in Rust 1.97.
+rust-version = "1.99.1"
+
 [workspace.metadata.cargo-machete]
 ignored = []
 

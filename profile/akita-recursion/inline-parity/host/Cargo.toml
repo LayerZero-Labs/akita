@@ -2,7 +2,7 @@
 name = "akita-inline-parity-host"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version.workspace = true
 description = "Trace the Akita inline-parity guest under Jolt and compare it with a portable native run."
 license = "Apache-2.0 OR MIT"
 publish = false

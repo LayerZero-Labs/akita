@@ -766,7 +766,7 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
 /// Verifies primitivity against every distinct prime factor of `n`, so
 /// it remains correct when a base lands in a strict subgroup (e.g.
 /// `g = 2` is a quadratic residue modulo `Prime128Offset6A23801F`, so
-/// `2^{(p−1)/n}` has order `n/2`).
+/// `2^{(p−1)/n}` can have order strictly smaller than `n`).
 ///
 /// Used by per-prime tests as a drift guard on
 /// [`SmoothFftField::SMOOTH_OMEGA`]; production code should call
@@ -968,35 +968,23 @@ mod prime_6a23801f_tests {
 
     #[test]
     fn primitive_nth_root_has_correct_order_for_every_divisor() {
-        for &n in &[
-            2,
-            3,
-            4,
-            5,
-            8,
-            9,
-            16,
-            25,
-            27,
-            32,
-            125,
-            625,
-            864,
-            3125,
-            15_625,
-            390_625,
-            337_500_000,
-        ] {
-            if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
-                continue;
+        assert_eq!(F::SMOOTH_SUBGROUP_ORDER, (1 << 5) * 27 * 390_625);
+        let mut divisors = 0;
+        for a in 0..=5 {
+            for b in 0..=3 {
+                for c in 0..=8 {
+                    let n = (1usize << a) * 3usize.pow(b) * 5usize.pow(c);
+                    let omega = primitive_nth_root::<F>(n);
+                    let factors = distinct_prime_factors(n);
+                    assert!(
+                        is_primitive_nth_root(omega, n, &factors),
+                        "primitive_nth_root failed primitivity check for n={n}"
+                    );
+                    divisors += 1;
+                }
             }
-            let omega = primitive_nth_root::<F>(n);
-            let factors = distinct_prime_factors(n);
-            assert!(
-                is_primitive_nth_root(omega, n, &factors),
-                "primitive_nth_root failed primitivity check for n={n}"
-            );
         }
+        assert_eq!(divisors, 216);
     }
 
     #[test]
