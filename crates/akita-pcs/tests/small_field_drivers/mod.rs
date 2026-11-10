@@ -129,6 +129,7 @@ where
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
@@ -214,6 +215,7 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
                 label,
                 GroupBatchStatement::new(selection, verify_claims).expect("statement"),
                 BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
             )
         })
         .unwrap_or_else(|e| panic!("{what}: {e:?}"));

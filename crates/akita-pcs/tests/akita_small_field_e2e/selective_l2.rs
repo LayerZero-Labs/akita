@@ -126,6 +126,7 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
         };
@@ -227,6 +228,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
                         LABEL,
                         selected_statement::<Cfg>(claims, scheme.schedules()),
                         BasisMode::Lagrange,
+                        akita_verifier::SetupPolicy::Check(None),
                     )
                 })
         };

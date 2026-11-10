@@ -2,10 +2,11 @@
 
 An author with current repository write, maintain, or admin permission can post
 exactly `/ai-review` on their open, same-repository PR, with no spaces, newlines
-or additional text. The workflow posts its
+or additional text. A repository admin can post it on any open, same-repository
+PR. The workflow posts its
 findings inline on the corresponding source lines in the PR diff. It
 uses the command to select PRs; the obsolete `ai-review` label is retired.
-Other users, external contributors, forks,
+Other users, non-admin collaborators commenting on someone else's PR, external contributors, forks,
 bots, edited comments and comments containing additional instructions cannot
 trigger it. The workflow must first land on the default branch (`main`), because
 [GitHub runs issue-comment workflows from that branch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#issue_comment).
@@ -16,14 +17,22 @@ fixed issues that may have regressed. Unresolved findings retain their IDs rathe
 than being posted as new issues. Rerunning the same Actions event does not publish
 twice. Review requests serialize per PR; GitHub concurrency may replace an older
 pending request when several commands arrive while a review runs.
+Other comments use a queue of their own. An exact `/ai-review` from a user who
+may not request a review also enters the queue: it can replace a pending request,
+which its requester then has to post again, and is refused when it runs without
+reserving an attempt. Authorization requires a live permission check in the
+reservation job.
 
 Each PR has a lifetime limit of **three attempts**, across all commits. Before
 collection, a separate job reserves a slot in a bot comment showing `1/3`, `2/3`
-or `3/3`. Failed, cancelled and incomplete attempts consume their reserved slot;
-commands rejected before reservation do not. After three reservations, further
-commands stop before collection or OpenAI access. Actions reruns cannot reserve
-or invoke the model again; recovery requires a new author command and an available
-slot. The limit counts review attempts, each of which may use several model turns.
+or `3/3`. Repository admins are not limited, on their own PRs or anyone else's:
+their attempts still count, so the comment can show `4/3`, `5/3` and so on, and a
+non-admin author stays refused once the count reaches three. Failed, cancelled
+and incomplete attempts consume their reserved slot; commands rejected before
+reservation do not. After three reservations, further non-admin commands stop
+before collection or OpenAI access. Actions reruns cannot reserve or invoke the
+model again; recovery requires a new command and an available slot, or an admin's
+command. The limit counts review attempts, each of which may use several model turns.
 Force pushes and rebases do not reset the quota because it belongs to the PR
 number, not a commit. A changed head during review prevents publication and still
 consumes the reserved attempt. A new command reviews the rewritten diff against
@@ -140,8 +149,8 @@ checkout, so a PR cannot overwrite the trusted scripts or skill.
 
 | Job | Credentials | Allowed work |
 | --- | --- | --- |
-| Reserve | PR write token; no OpenAI key | Revalidate author and write access, count bot reservation markers, reserve one of three attempts |
-| Collect | Read-only GitHub token | Revalidate author and current write access, read trusted comments, collect pinned public git objects |
+| Reserve | PR write token; no OpenAI key | Revalidate the requester (the PR author with write access, or an admin), count bot reservation markers, reserve an attempt (admins are not limited) |
+| Collect | Read-only GitHub token | Revalidate the requester and current access, read trusted comments, collect pinned public git objects |
 | Review | Environment OpenAI key, read-only job permission | Send source evidence to the fixed OpenAI Responses endpoint; offer bounded in-memory source reads/searches |
 | Publish | PR write token; no OpenAI key | Validate the structured result, recheck authorization and snapshot, submit one COMMENT review with new inline findings on the original PR |
 | Cleanup | Actions write token; no OpenAI key | After successful publication and label updates, delete only this run's snapshot and result artifacts |
@@ -207,11 +216,11 @@ An environment secret alone does not restrict which workflow can use it;
 [environment branch rules control eligible workflow refs](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 Keep the key out of repository-level secrets. Use an OpenAI project with an
 appropriate spend limit. `AI_REVIEW_MODEL` is an optional repository/environment
-variable, defaulting to `gpt-6-astra`. Requests explicitly set
+variable, defaulting to `gpt-6.1-sol`. Requests explicitly set
 `reasoning.effort` to `high`; this is a request parameter, not a model-name suffix.
 The selected model must support Responses, function tools, high reasoning effort
 and structured output, as documented for
-[GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra).
+[GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 
 No remote dependency installation is needed: the runner uses Python's standard
 library and the [Responses API](https://developers.openai.com/api/docs/guides/function-calling)
@@ -247,8 +256,12 @@ reviewed head, so base-branch changes merged in since count only where they touc
 those same files), 300,000 characters of eligible discussion, 250,000 bytes per source blob,
 32 MiB per artifact, 48 model turns, 24 reads/searches per turn, 2,000,000 characters
 of accumulated context (the diff is part of the first model message, so a diff near
-the diff budget leaves little room for reads and stops early), 20 new findings and 100 retained findings (in practice at
-most 60: three attempts of 20). The published review must also fit GitHub's
+the diff budget leaves little room for reads and stops early), 20 new findings and
+100 retained findings (at most 60 in three attempts of 20). An admin's further
+attempts are refused before collection reaches the model once more than 40
+findings are retained, so the history stays within the 60 the state is sized for.
+This finding-history budget also counts fixed findings, which remain available
+for regression checks. The published review must also fit GitHub's
 60,000-character comment limit; if it would not, the model is asked to shorten its
 evidence and other text. Exceeding a
 budget stops the run; it never silently turns into a clean review. These are
@@ -277,7 +290,7 @@ other artifacts. Failed reviews/publications retain artifacts for the configured
 one day to support investigation and publication retries. Cleanup failures or
 cancellation may leave artifacts until expiry; deletion is not an instantaneous
 erasure guarantee. Once deleted, the exact snapshot/result can no longer be used
-for debugging or publication retries. Repeat author commands still work from the
+for debugging or publication retries. Repeat eligible commands still work from the
 review state on the PR. This cleanup does not delete data already sent to OpenAI.
 
 The publisher rejects changes to head, base, branch targets, PR text or eligible

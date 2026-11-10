@@ -4,6 +4,7 @@ use super::{api::validate_commitment_geometry, CommitmentExecutionPlan, Portable
 use crate::opaque::CpuBackend;
 use akita_error::AkitaError;
 use akita_params::{field_modulus, GroupCommitPhaseParams};
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{Commitment, CommittedGroup, RingVec};
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -29,7 +30,7 @@ impl<F: Field, E> CpuBackend<F, E> {
         outer_image: RingVec<F>,
     ) -> Result<(CommittedGroup<F>, PortableCompressionState<F>), AkitaError>
     where
-        F: Field + CanonicalEncoding + 'static,
+        F: Field + CanonicalEncoding + Valid + AkitaSerialize + 'static,
     {
         let prepared = self.prepared()?;
         let expanded = prepared.expanded();
@@ -76,9 +77,8 @@ impl<F: Field, E> CpuBackend<F, E> {
             .compress_relation_image(&compression_plan, relation_mode, outer_image)?
             .into_parts();
 
-        Ok((
-            CommittedGroup::new(profile, Commitment::new(terminal_payload)),
-            compression_state,
-        ))
+        let group = CommittedGroup::new(profile, Commitment::new(terminal_payload))
+            .map_err(|error| AkitaError::Internal(format!("committed group: {error}")))?;
+        Ok((group, compression_state))
     }
 }

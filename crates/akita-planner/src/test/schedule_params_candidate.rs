@@ -224,7 +224,7 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
+fn response_model_keeps_one_split_per_fold_work_size() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
@@ -252,37 +252,33 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         FoldCandidatePolicy::Best,
     )
     .expect("modeled late-fold candidates");
-    let linf = candidates
-        .iter()
-        .filter(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::Linf(_)
-            )
-        })
-        .count();
-    let l2 = candidates
-        .iter()
-        .filter(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-        })
-        .count();
-    assert_eq!(linf, 1);
-    assert!(l2 > 0);
-    let l2_block_index_bits = candidates
-        .iter()
-        .filter_map(|(candidate, _)| {
-            matches!(
-                candidate.inner().matrix.security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-            .then_some(candidate.block_index_bits())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(l2_block_index_bits.len(), 1);
+    // Per route, the best split is kept, then each worse split only when its
+    // fold proof of work is strictly smaller.
+    for l2 in [false, true] {
+        let nonce_bits = candidates
+            .iter()
+            .filter(|(candidate, _)| {
+                matches!(
+                    candidate.inner().matrix.security_route(),
+                    InnerCommitSecurityRoute::L2 { .. }
+                ) == l2
+            })
+            .map(|(candidate, _)| {
+                let layout = candidate
+                    .opening_layout_for_final_group(candidate.group())
+                    .unwrap();
+                akita_params::fold_challenge_runs(0, candidate, &layout)
+                    .unwrap()
+                    .0
+                    .nonce_bits()
+            })
+            .collect::<Vec<_>>();
+        assert!(!nonce_bits.is_empty(), "l2 = {l2}");
+        assert!(
+            nonce_bits.windows(2).all(|pair| pair[0] > pair[1]),
+            "l2 = {l2}: {nonce_bits:?}"
+        );
+    }
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -617,6 +613,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     }
     let frozen_group = synthetic_profile(key.final_group, &candidates[0].0);
     let grouped_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: key.final_group,
         precommitteds: vec![frozen_group],
     };
@@ -638,17 +635,17 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     .expect("root preparation")
     .expect("supported root preparation");
     let candidates_from_prepared = |inner_basis| {
-        crate::planner::root_level_candidates_for_prepared_producers(
+        crate::planner::PreparedRootFinalGroup::prepare(
             &grouped_key,
             source_contract,
             &policy,
             dimensions,
             opening,
-            &prepared,
             inner_basis,
             Dense::opening_basis_range().0,
             None,
-        )
+        )?
+        .candidates(&policy, &prepared, true)
     };
     let grouped = candidates_from_prepared(Dense::inner_basis_range().0)
         .expect("group-local packing candidates");
@@ -732,6 +729,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
 
     let product_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, frozen_group],
     };
@@ -741,7 +739,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &product_key,
         &[Dense::committed_source_contract().unwrap(); 2],
     )
-    .expect("root precommit opening products");
+    .expect("root precommit opening products")
+    .expect("small opening product");
     assert_eq!(
         opening_products,
         precommit_domain
@@ -772,6 +771,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     }
 
     let repeated_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group; 256],
     };
@@ -781,7 +781,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &repeated_key,
         &vec![Dense::committed_source_contract().unwrap(); 256],
     )
-    .expect("symmetric root precommit opening products");
+    .expect("symmetric root precommit opening products")
+    .expect("small opening product");
     assert_eq!(
         repeated_products, opening_products,
         "the opening domain does not grow with the class multiplicity",
@@ -793,6 +794,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group: grouped_key.final_group,
             precommitteds: vec![frozen_group; 3],
         },
@@ -802,7 +804,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             Dense::committed_source_contract().unwrap(),
         ],
     )
-    .expect("two-class root precommit opening products");
+    .expect("two-class root precommit opening products")
+    .expect("small opening product");
     assert_eq!(
         mixed_products.len(),
         precommit_domain.len() * precommit_domain.len(),
@@ -826,6 +829,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         .find(|profile| *profile != frozen_group)
         .expect("a second root profile");
     let split_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group, other_class, frozen_group],
     };
@@ -835,7 +839,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &split_key,
         &[Dense::committed_source_contract().unwrap(); 3],
     )
-    .expect("split root precommit opening products");
+    .expect("split root precommit opening products")
+    .expect("small opening product");
     let split_product = split_products
         .iter()
         .find(|product| product[0] != product[1])
@@ -871,6 +876,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     // These profiles only feed enumeration, which reads ring dimensions; they
     // are not valid commit-phase profiles and must not be materialized.
     let distinct_classes = |count: usize| ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: grouped_key.final_group,
         precommitteds: (0..count)
             .map(|index| GroupCommitPhaseParams {
@@ -895,12 +901,12 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         .expect("bounded root precommit opening products")
     };
     assert_eq!(
-        bounded_products(fitting_classes as usize).len(),
+        bounded_products(fitting_classes as usize).unwrap().len(),
         precommit_domain.len().pow(fitting_classes),
     );
     assert!(
-        bounded_products(fitting_classes as usize + 1).is_empty(),
-        "an oversized product removes coefficient-packing root openings",
+        bounded_products(fitting_classes as usize + 1).is_none(),
+        "large products are deferred to exact witness sizing"
     );
 
     let incompatible_products =
@@ -914,7 +920,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             &product_key,
             &[Dense::committed_source_contract().unwrap(); 2],
         )
-        .expect("incompatible shared opening dimension is an empty candidate domain");
+        .expect("incompatible shared opening dimension is an empty candidate domain")
+        .expect("incompatible dimension is explicit");
     assert!(incompatible_products.is_empty());
 }
 
@@ -956,6 +963,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
         &scalar.first().expect("scalar root candidate").0,
     );
     let grouped_key = ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: scalar_key.final_group,
         precommitteds: vec![frozen],
     };

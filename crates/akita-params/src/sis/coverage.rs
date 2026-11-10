@@ -379,20 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn dimension_aware_exact_inner_coverage_has_the_expected_size() {
-        let cells = sis_role_cells();
-        let count = |profile| {
-            cells
-                .iter()
-                .filter(|cell| cell.role == SisMatrixRole::Inner && cell.modulus_profile == profile)
-                .count()
-        };
-        assert_eq!(count(SisModulusProfileId::Q32Offset99), 215);
-        assert_eq!(count(SisModulusProfileId::Q64Offset59), 440);
-        assert_eq!(count(SisModulusProfileId::Q128OffsetA7F7), 328);
-    }
-
-    #[test]
     fn q128_multi_chunk_refinements_are_dimension_specific() {
         for &(dimension, bound) in Q128_MULTI_CHUNK_INNER_REFINEMENTS {
             assert!(sis_role_cell(

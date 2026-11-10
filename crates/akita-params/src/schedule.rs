@@ -119,6 +119,26 @@ pub struct TerminalFoldParams {
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM: u128 = 1;
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN: u128 = 2;
 
+/// Split `segment` into `sent` field elements and an omitted last block of
+/// exactly `block` field elements.
+fn split_last_block<'a, T>(
+    name: &str,
+    segment: &'a [T],
+    sent: usize,
+    block: usize,
+) -> Result<(&'a [T], &'a [T]), AkitaError> {
+    segment
+        .split_at_checked(sent)
+        .filter(|(_, last)| last.len() == block)
+        .ok_or_else(|| {
+            AkitaError::Internal(format!(
+                "terminal {name} segment has {} field elements, expected a {sent}-element \
+                 prefix and a {block}-element last block",
+                segment.len()
+            ))
+        })
+}
+
 impl TerminalFoldParams {
     /// Project a fold's params into terminal parameters.
     ///
@@ -194,9 +214,63 @@ impl TerminalFoldParams {
         self.inner.matrix.ring_dimension()
     }
 
+    /// Fold-challenge family of the terminal response.
+    ///
+    /// A calibrated L2 route draws under its operator-norm rejection; an
+    /// L-infinity route draws the unfiltered family.
+    pub fn fold_challenge_family(
+        &self,
+    ) -> Result<akita_challenges::FoldChallengeFamily, AkitaError> {
+        let rejection = match self.response_l2_sq_cap() {
+            Some(_) => Some(
+                akita_challenges::selective_l2_operator_norm_rejection(
+                    self.d_a(),
+                    &self.fold_challenge_config,
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
+                })?,
+            ),
+            None => None,
+        };
+        akita_challenges::FoldChallengeFamily::new(
+            akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
+            self.d_a(),
+            self.fold_challenge_config,
+            rejection,
+        )
+    }
+
     #[inline]
     pub fn inner_width(&self) -> usize {
         self.inner.matrix.input_width()
+    }
+
+    /// Split a complete terminal `e` segment into its scheduled wire prefix and
+    /// the omitted last block, which must be exactly one ring.
+    pub fn split_last_e_block<'a, T>(&self, e: &'a [T]) -> Result<(&'a [T], &'a [T]), AkitaError> {
+        let sent = self.terminal_group()?.e_field_elems;
+        split_last_block("e", e, sent, self.d_a())
+    }
+
+    /// Split a complete terminal `t` state into its scheduled wire prefix and
+    /// the omitted last block, which must be exactly `n_A` rings.
+    pub fn split_last_t_block<'a, T>(&self, t: &'a [T]) -> Result<(&'a [T], &'a [T]), AkitaError> {
+        let sent = self.terminal_group()?.t_field_elems;
+        let block = self
+            .d_a()
+            .checked_mul(self.inner.matrix.output_rank())
+            .ok_or_else(|| AkitaError::Internal("terminal t block length overflows".into()))?;
+        split_last_block("t", t, sent, block)
+    }
+
+    fn terminal_group(&self) -> Result<&crate::TailSegmentGroupLayout, AkitaError> {
+        match self.response_shape.layout.groups.as_slice() {
+            [group] => Ok(group),
+            _ => Err(AkitaError::Internal(
+                "terminal response shape does not have exactly one group".into(),
+            )),
+        }
     }
 
     /// Logical opening-point width for the witness entering the terminal fold.
@@ -331,6 +405,9 @@ impl FoldSuccessor<'_> {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldSchedule {
+    /// Largest inherited setup-prefix domain aggregated by the offloaded root; zero is empty.
+    #[serde(default)]
+    pub root_accumulated_setup_prefix_len: usize,
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,
     pub terminal: TerminalFoldParams,
@@ -356,6 +433,12 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        if self.root_accumulated_setup_prefix_len != 0 {
+            crate::validate_setup_prefix_domain(
+                self.root_accumulated_setup_prefix_len,
+                self.root_accumulated_setup_prefix_len,
+            )?;
+        }
         let root_commitment = &self.root.params;
         root_commitment.validate_group_topology()?;
         if root_commitment.setup_prefix().is_some() {

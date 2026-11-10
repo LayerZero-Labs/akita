@@ -2,8 +2,10 @@
 
 One canonical security narrative: the hardness assumption, how Ajtai ranks
 connect to security bits, the weak-binding fold price, and the current SIS table
-model. Keep the marketing claim separate from audited reality. See
-[Reviewing and auditing Akita](../introduction/reviewing-akita.md).
+model. [Introduction → Security status](../intro.md#security-status) states
+what the security targets cover. See
+[Reviewing and auditing Akita](../introduction/reviewing-akita.md) for what has
+been audited.
 
 ## SIS / MSIS and Ajtai sizing
 
@@ -115,10 +117,11 @@ PR may retain a head-pinned TSV under `specs/evidence/`, but that snapshot is
 review evidence rather than runtime authority.
 
 The reported value is the minimum scalarized SIS attack cost under the
-policy's ADPS16 quantum/LGSA model. It is not an unqualified concrete-security
-claim: the scalar estimator does not price attacks that exploit ring or module
-structure, CRT splitting, subfield projection, or role-specific matrix
-structure.
+policy's ADPS16 quantum cost model. The coefficient-$L_\infty$ route uses an
+LGSA estimate; the Euclidean route prices the collision's $L_2$ length directly.
+This is not an unqualified concrete-security claim: the scalar estimator does
+not price attacks that exploit ring or module structure, CRT splitting,
+subfield projection, or role-specific matrix structure.
 
 The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
@@ -126,7 +129,7 @@ estimator at verification time.
 
 ### Quantum policy
 
-The production rule is the ADPS16 quantum LGSA model with a 169-bit target. It
+The production rule is the ADPS16 quantum cost model with a 169-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
 
@@ -150,9 +153,12 @@ A 169-bit gate therefore requires every Akita SIS instance to need block size
 at least 638, the largest of these figures. The retired 128-bit gate needed
 484, between ML-DSA-44 (423) and ML-DSA-65.
 
-This target covers lattice hardness only. The Fiat-Shamir grinding target,
-the challenge fields, and the sparse fold challenge entropy floor still provide
-128 bits; see [`sis-nist-level3-policy`](../../../specs/sis-nist-level3-policy.md#non-goals).
+The quantum cost applies to the SIS tables only. Field challenges and grinding are
+sized for a 128-bit per-query rate, and each fold's sparse challenge messages,
+behind one fold proof of work, for a 128-bit per-call rate, both in the
+classical random-oracle model. Akita has no
+quantum-random-oracle analysis. See
+[Introduction → Security status](../intro.md#security-status).
 
 The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
 previously evaluated the newer idealized BCSS23 `0.2563 * beta` sieve as an
@@ -163,10 +169,11 @@ review line. That diagnostic has not been rerun at the 169-bit target. The
 idealized model remains documented sensitivity evidence rather than a
 production constraint.
 
-LGSA is likewise an explicit attacker strategy: rerandomize the q-ary basis so
-BKZ forgets its canonical q-vectors. On representative widened q64 and q128
-rows, LGSA is no more expensive than ordinary GSA and is cheaper than the
-determinant-preserving Chen-Nguyen profile simulations. The optional symmetric
+For the coefficient-$L_\infty$ route, LGSA is an explicit attacker strategy:
+rerandomize the q-ary basis so BKZ forgets its canonical q-vectors. On
+representative widened q64 and q128 rows, LGSA is no more expensive than
+ordinary GSA and is cheaper than the determinant-preserving Chen-Nguyen
+profile simulations. The optional symmetric
 ZGSA compatibility path caps its paired smoothing steps at the smaller of the
 q-vector and identity-vector zones, preserving the lattice determinant even
 when q-vectors are the majority.
@@ -391,38 +398,47 @@ transcript also binds the method, challenge subring dimension, challenge
 family, group order, claim count, and block count. After challenge folding, the
 prover binds `Q_pack` and the next witness before sampling `alpha`.
 
-Both opening methods squeeze one dedicated 32-byte root per commitment group.
-They then derive coordinate `(claim, block)` from a fresh SHAKE256 stream whose
-input is exactly that root followed by the claim-major coordinate index as a
-little-endian `u64`. The fixed widths make this encoding unambiguous. The
-coordinate streams do not mutate the live transcript. Sequential and parallel
-samplers therefore return the same ordered vector, and one coordinate can be
-forked without changing any other coordinate.
+Both opening methods squeeze one challenge message per commitment group and
+decode it directly into the group's challenges, one fixed-width slot per
+`(claim, block)` pair in claim-major order. Every message of a fold follows
+one fold proof of work, priced so that a fresh fold message costs about
+$W \cdot 2^{128}/2^K$ hash calls for $W$ pairs and smallest challenge set
+$2^K$. [Transcript and instance binding](./transcript.md#sparse-fold-challenges)
+describes the decoder.
 
 The production primes satisfy the fixed LS18 congruence and shortness
 condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.
 
-For a coordinatewise fork, fix the transcript prefix, group root, shared
-fold-response nonce, and all coordinate-oracle answers except one. If both
-forks yield accepting transcripts, their challenge difference is zero outside
-that coordinate. The production LS18 condition makes every nonzero
-sparse-challenge difference a unit, so subtracting the accepted relations
-algebraically isolates that opening. A binary CWSS extractor would need a
-central accepting vector and one such accepting fork for every claim-major
-coordinate. Complete accepting descendant trees authenticate the later
-relations and response bounds. The indexed matching-input game bounds failure
-to obtain these forks by charging every queried or verifier-completed
-coordinate address; see the [fold argument](../../../specs/transcript-grinding.md#indexed-address-fold-bound).
+For a pair-wise fork, fix the transcript prefix, the shared fold-response
+nonce, and every challenge except one pair. If both forks yield accepting
+transcripts, their challenge difference is zero outside that pair. The
+production LS18 condition makes every nonzero sparse-challenge difference a
+unit, so subtracting the accepted relations algebraically isolates that
+opening. A binary CWSS extractor needs a central accepting vector and one such
+accepting fork for every claim-major pair. Complete accepting descendant trees
+authenticate the later relations and response bounds. The extractor can
+replace one slot of a message without disturbing the others, so the fork at
+one pair fails with probability at most one over the challenge-set size, and
+the fold proof of work prices the whole fold at the 128-bit per-call rate; see
+the [fold argument](../../../specs/transcript-grinding.md#fold-message-bound).
 
 The packed consistency equation still gives one polynomial identity in `E[Y]`.
 After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
 conditional polynomial-check error is `(2s-1)/|E|`. This term must be composed
-with the CWSS, random-oracle, sum-check, collision, and MSIS terms. The active
+with the CWSS, random-oracle, sum-check, collision, terminal-digest collision,
+and MSIS terms. The active
 [subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
 gives the algebraic relation and its separate field-check loss. The fold
-contribution is accounted by the indexed-address theorem above.
+contribution is accounted by the fold message bound above.
+
+The terminal omits the last live block of `e` and of `t` and sends a digest of
+each. In the extraction tree, forks that share a digest recover the same block
+unless the digest hash collides among the tree's queries. This adds the
+terminal-digest collision term above. The
+[terminal check](./verifying/terminal.md#why-omitting-the-block-is-sound)
+gives the argument.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

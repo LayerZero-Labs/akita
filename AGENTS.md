@@ -41,9 +41,9 @@ CI runs these exact Clippy configurations; all must pass because the feature
 graphs differ:
 
 ```bash
-cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
-cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
-cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-blake2b -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features transcript-keccak -- -D warnings
+cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
 ```
 
 Run path-specific workflows such as portability, Jolt compatibility, fuzzing,

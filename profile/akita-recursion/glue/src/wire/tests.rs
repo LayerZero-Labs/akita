@@ -101,6 +101,7 @@ fn catalog_frame_preserves_nondefault_runtime_geometry() {
     }
     let row = decoded.rows().next().expect("runtime row");
     let key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     };
@@ -149,8 +150,13 @@ fn catalog_frame_rejects_missing_truncated_and_tampered_artifacts() {
     while !tampered[digest_start].is_ascii_digit() {
         digest_start += 1;
     }
+    // Change the last digit of the first byte, downward, so the value stays a
+    // valid u8 and only the policy check can reject it.
+    while tampered[digest_start + 1].is_ascii_digit() {
+        digest_start += 1;
+    }
     let digit = tampered[digest_start];
-    tampered[digest_start] = if digit == b'9' { b'8' } else { digit + 1 };
+    tampered[digest_start] = if digit == b'0' { b'1' } else { digit - 1 };
     let tampered = split_schedule_catalog::<TestCfg>(
         &tampered,
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
@@ -169,8 +175,13 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
         32_767,
     )
     .expect("audited prefix A bound");
-    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(inner_key, 1)
-        .expect("audited prefix A matrix");
+    let inner_digits = akita_params::sis::compute_num_digits_field_width(
+        SisModulusProfileId::Q128OffsetA7F7.field_bits(),
+        1,
+    );
+    let inner_commit_matrix =
+        InnerCommitMatrixParams::try_new_with_min_rank(inner_key, inner_digits)
+            .expect("audited prefix A matrix");
     let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
             policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -191,7 +202,7 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
             blocks: akita_params::BlockGeometry::new(1, 1, 1),
             outer_slice_count: akita_params::CommitmentSliceCount::ONE,
             inner: akita_params::RoleParams::new(
-                akita_params::GadgetDigits::new(1, 1),
+                akita_params::GadgetDigits::new(1, inner_digits),
                 inner_commit_matrix,
             ),
             outer: akita_params::RoleParams::new(
@@ -395,6 +406,7 @@ fn proof_budget_is_derived_from_the_selected_schedule() {
             .expect("native proof bound");
     assert!(bound > 0);
     let key = akita_params::ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: row.profiles().final_group.group,
         precommitteds: row.profiles().precommitteds.clone(),
     };

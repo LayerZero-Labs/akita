@@ -1,5 +1,5 @@
 use super::terminal::verify_terminal_suffix;
-use super::{verify_fold, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
+use super::{verify_fold, NextWitness, NextWitnessPlan, PreparedFoldReplay, SetupPrefixOpening};
 use crate::prepared_cache::TerminalNttCache;
 use crate::stages::opening_claims::{
     finalize_claims, prepare_single_field_suffix_groups, verify_coefficient_packing_suffix_prefix,
@@ -11,6 +11,7 @@ use akita_params::{
     RelationWitnessGeometry, SetupContributionMode, TerminalFoldParams,
 };
 use akita_serialization::AkitaSerialize;
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 use akita_types::{
     AkitaVerifierSetup, FpExtEncoding, OpeningClaims, PolynomialGroupClaims, RingVec,
@@ -20,7 +21,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMer
 pub(super) struct SuffixVerifierState<F: Field, E: Field> {
     pub opening_point: Vec<E>,
     pub opening: E,
-    pub witness: RingVec<F>,
+    pub witness: NextWitness<F>,
     pub basis: BasisMode,
     pub witness_len: usize,
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
@@ -92,21 +93,23 @@ fn prepare_fold_replay<'a, F, E>(
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
+    let NextWitness::OuterPayload(witness) = &current_state.witness else {
+        return Err(AkitaError::Internal(
+            "recursive fold scheduled after a terminal t witness".into(),
+        ));
+    };
     let payload_geometry = lp.outer_payload_geometry()?;
-    if current_state.witness.coeff_len() != payload_geometry.transmitted_coefficients() {
+    if witness.coeff_len() != payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
-    akita_transcript::public_fields_verifier(
-        grinding.state_mut(),
-        akita_types::FoldSite::WitnessCommitment {
-            level,
-            ring_dimension: payload_geometry.transcript_ring_dimension(),
-        }
-        .id()?,
-        current_state.witness.coeffs(),
-    )?;
+    // The outer payload was absorbed when it was received as the next witness.
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
@@ -204,7 +207,7 @@ where
     .map(RingVec::from_coeffs)?;
     let prefix = finalize_claims::<F, E>(&opening_batch, material, grinding, level)?;
     let commitment_payloads =
-        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, &current_state.witness)?;
+        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, witness)?;
     let (next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
         if let Some(next) = next_params {
             let ring_dim = next.params.d_a();
@@ -283,10 +286,16 @@ pub(super) fn verify_suffix<F, E>(
     grinding: &mut akita_types::VerifierGrinding<'_, '_>,
     schedule: &FoldSchedule,
     mut current_state: SuffixVerifierState<F, E>,
+    setup_policy: &mut crate::SetupPolicy<'_, '_, E>,
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
-    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + Ring
+        + AkitaSerialize
+        + MulBaseUnreduced<F>
+        + ChallengeCodec,
 {
     for (offset, step) in schedule.recursive_folds.iter().enumerate() {
         let level = u32::try_from(offset + 1).map_err(|_| AkitaError::InvalidProof)?;
@@ -304,7 +313,7 @@ where
             next,
             &schedule.terminal,
         )?;
-        let output = verify_fold(setup, grinding, prepared)?;
+        let output = verify_fold(setup, grinding, prepared, setup_policy)?;
         current_state = SuffixVerifierState {
             opening_point: output.challenges,
             opening: output.opening,

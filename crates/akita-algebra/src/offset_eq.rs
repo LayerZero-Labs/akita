@@ -10,128 +10,18 @@ use akita_error::{checked, AkitaError};
 use crate::Field;
 use jolt_field::solinas::parallel::*;
 
+mod prepared_digits;
 mod tensor_pair;
+mod weights;
+pub use prepared_digits::{PreparedDigits, MAX_PREPARED_STRIDE};
 pub use tensor_pair::{
     eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
     EqPairTensorFamily, EqPairTensorWeights,
 };
+pub use weights::{AffineWeight, AffineWeightProduct, AffineWeightSource};
 
 /// Verifier work cap for one compact-stride equality contraction.
 pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
-
-/// Coefficient algebra used by [`eval_affine_digit_intervals`].
-///
-/// The equality and digit factors live in `F`; outer high/low factors may live
-/// either in `F` itself or in a small coordinate algebra that is linear over
-/// `F`. Keeping these operations abstract lets the trace evaluator preserve
-/// its factored extension coordinates without introducing another address
-/// kernel.
-pub trait AffineWeight<F: Field>: Clone + Send + Sync {
-    /// Additive identity carrying the same algebra metadata as `self`.
-    fn zero_like(&self) -> Self;
-
-    /// Add `factor * scale` to `self`.
-    fn add_scaled(&mut self, factor: &Self, scale: F);
-
-    /// Add `factor` to `self` without a unit scalar multiplication.
-    fn add(&mut self, factor: &Self);
-
-    /// Add the embedded scalar `scale` to `self`.
-    fn add_scalar(&mut self, scale: F) -> Result<(), AkitaError>;
-
-    /// Multiply two outer factors.
-    fn multiply(&self, rhs: &Self) -> Self;
-}
-
-/// Random-access outer weights consumed by [`eval_affine_digit_intervals`].
-///
-/// Implementations may expose an existing dense slice or compute a factored
-/// weight only when the contraction reaches its row. The callback keeps dense
-/// values borrowed while allowing computed values to remain stack-local.
-#[allow(clippy::len_without_is_empty)]
-pub trait AffineWeightSource<F: Field, A: AffineWeight<F>>: Sync {
-    /// Number of available outer weights.
-    fn len(&self) -> usize;
-
-    /// Borrow or compute weight `index` for the duration of `consume`.
-    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R>;
-}
-
-impl<F, A, H> AffineWeightSource<F, A> for H
-where
-    F: Field,
-    A: AffineWeight<F>,
-    H: AsRef<[A]> + Sync + ?Sized,
-{
-    fn len(&self) -> usize {
-        self.as_ref().len()
-    }
-
-    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
-        self.as_ref().get(index).map(consume)
-    }
-}
-
-/// Cartesian product of two affine weight slices in outer-major order.
-///
-/// Weight `i` is `outer[i / inner.len()] * inner[i % inner.len()]`. This is the
-/// native representation for block-by-row factors and avoids materializing the
-/// full product before a single contraction.
-pub struct AffineWeightProduct<'a, A> {
-    outer: &'a [A],
-    inner: &'a [A],
-    len: usize,
-}
-
-impl<'a, A> AffineWeightProduct<'a, A> {
-    /// Construct a checked outer-major Cartesian product.
-    pub fn new(outer: &'a [A], inner: &'a [A]) -> Result<Self, AkitaError> {
-        let len = outer
-            .len()
-            .checked_mul(inner.len())
-            .ok_or_else(|| AkitaError::InvalidInput("affine weight product overflow".into()))?;
-        Ok(Self { outer, inner, len })
-    }
-}
-
-impl<F: Field, A: AffineWeight<F>> AffineWeightSource<F, A> for AffineWeightProduct<'_, A> {
-    fn len(&self) -> usize {
-        self.len
-    }
-
-    fn with_weight<R>(&self, index: usize, consume: impl FnOnce(&A) -> R) -> Option<R> {
-        if self.inner.is_empty() {
-            return None;
-        }
-        let outer = self.outer.get(index / self.inner.len())?;
-        let inner = self.inner.get(index % self.inner.len())?;
-        let product = outer.multiply(inner);
-        Some(consume(&product))
-    }
-}
-
-impl<F: Field> AffineWeight<F> for F {
-    fn zero_like(&self) -> Self {
-        Self::zero()
-    }
-
-    fn add_scaled(&mut self, factor: &Self, scale: F) {
-        *self += *factor * scale;
-    }
-
-    fn add(&mut self, factor: &Self) {
-        *self += *factor;
-    }
-
-    fn add_scalar(&mut self, scale: F) -> Result<(), AkitaError> {
-        *self += scale;
-        Ok(())
-    }
-
-    fn multiply(&self, rhs: &Self) -> Self {
-        *self * *rhs
-    }
-}
 
 /// Evaluate compatible digit-innermost affine intervals with factored outer
 /// weights.
@@ -154,7 +44,9 @@ impl<F: Field> AffineWeight<F> for F {
 /// states, reuses summaries for base offsets with the same low residue, and
 /// seeds their high rows into shared carry buckets. Guarded geometric-prefix
 /// and carry-bucketed contractions accelerate eligible layouts and
-/// transparently fall back to the general row contraction.
+/// transparently fall back to the general row contraction. Row-aligned
+/// adjacent-digit intervals use a [`PreparedDigits`] window when preparing it
+/// costs less than that contraction.
 /// Unaligned first and last rows are handled as exact low-factor subwindows, so
 /// distributed chunks and a partial final tensor row do not enumerate the
 /// Cartesian high-by-low domain. Boolean challenges require no inversion.
@@ -314,6 +206,22 @@ where
             expected: MAX_COMPACT_STRIDE_TERMS,
             actual: work,
         });
+    }
+    if let Some(value) = prepared_digits::try_eval_prepared_digit_intervals(
+        challenges,
+        base_offsets,
+        outer_start,
+        live_len,
+        outer_stride,
+        digit_stride,
+        digit_weights,
+        high_weights,
+        low_weights,
+        base_scales,
+        &template,
+        work,
+    )? {
+        return Ok(value);
     }
 
     let low_challenges = &challenges[..low_bits];
@@ -1139,14 +1047,11 @@ where
     // Combine: out += Σ_carry (Σ_pos bucket[pos] * eq_low_hi[(pos+carry) mod window]) * summaries[carry].
     for (carry, summary) in summaries.iter().enumerate() {
         let mut phi = template.zero_like();
-        for pos in 0..window {
-            let shifted = pos + carry;
-            if shifted < window {
-                phi.add_scaled(&bucket0[pos], eq_low_hi[shifted]);
-            } else {
-                phi.add_scaled(&bucket1[pos], eq_low_hi[shifted - window]);
-            }
-        }
+        let split = window
+            .checked_sub(carry)
+            .ok_or_else(|| AkitaError::InvalidInput("affine carry exceeds window".into()))?;
+        phi.add_scaled_batch(&bucket0[..split], &eq_low_hi[carry..]);
+        phi.add_scaled_batch(&bucket1[split..], &eq_low_hi[..carry]);
         out.add(&phi.multiply(summary));
     }
     Ok(true)
@@ -1240,17 +1145,11 @@ impl<F: Field> OffsetEqWindow<F> {
         }
     }
 
-    /// Construct a window only when the requested evaluations match or exceed
-    /// the number of materialized table entries.
-    fn new_if_amortized(
-        challenges: &[F],
-        evaluation_count: usize,
-    ) -> Result<Option<Self>, AkitaError> {
-        if challenges.is_empty() {
-            return Ok(None);
-        }
-        let low_bits = Self::split_low_bits(challenges.len(), OFFSET_EQ_LOW_BITS_CAP);
-        let high_bits = challenges.len() - low_bits;
+    /// Number of equality table entries [`Self::new`] materializes for
+    /// `challenge_count` coordinates.
+    fn materialized_len(challenge_count: usize) -> Result<usize, AkitaError> {
+        let low_bits = Self::split_low_bits(challenge_count, OFFSET_EQ_LOW_BITS_CAP);
+        let high_bits = challenge_count - low_bits;
         let low_len = checked::pow2(low_bits)
             .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
         let high_len = if high_bits <= OFFSET_EQ_HIGH_BITS_CAP {
@@ -1259,9 +1158,17 @@ impl<F: Field> OffsetEqWindow<F> {
         } else {
             0
         };
-        let materialized_values = checked::sum([low_len, high_len])
-            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
-        if evaluation_count < materialized_values {
+        checked::sum([low_len, high_len])
+            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))
+    }
+
+    /// Construct a window only when the requested evaluations match or exceed
+    /// the number of materialized table entries.
+    fn new_if_amortized(
+        challenges: &[F],
+        evaluation_count: usize,
+    ) -> Result<Option<Self>, AkitaError> {
+        if challenges.is_empty() || evaluation_count < Self::materialized_len(challenges.len())? {
             return Ok(None);
         }
         Self::new(challenges).map(Some)
@@ -1320,14 +1227,26 @@ impl<F: Field> OffsetEqWindow<F> {
     ///
     /// Matches [`eq_eval_at_index`] exactly, including returning zero for
     /// out-of-domain indices.
-    #[inline]
+    #[inline(always)]
     pub fn eval(&self, index: usize) -> F {
+        let (eq_low, eq_high) = self.eval_factors(index);
+        if eq_low.is_zero() {
+            return F::zero();
+        }
+        eq_low * eq_high
+    }
+
+    /// The two factors whose product [`Self::eval`] returns, so a caller can
+    /// fold the product into a longer one. Both are zero whenever the low
+    /// factor is.
+    #[inline(always)]
+    pub fn eval_factors(&self, index: usize) -> (F, F) {
         let low = index & self.low_mask;
         // `low < 2^low_bits == eq_low.len()` by construction; the fallback keeps
         // the accessor panic-free without masking a real bug.
         let eq_low = self.eq_low.get(low).copied().unwrap_or_else(F::zero);
         if eq_low.is_zero() {
-            return F::zero();
+            return (F::zero(), F::zero());
         }
         let high = index >> self.low_bits;
         let eq_high = match &self.eq_high {
@@ -1336,7 +1255,7 @@ impl<F: Field> OffsetEqWindow<F> {
             Some(table) => table.get(high).copied().unwrap_or_else(F::zero),
             None => eq_eval_at_index(&self.high_challenges, high),
         };
-        eq_low * eq_high
+        (eq_low, eq_high)
     }
 
     /// Fill a contiguous physical-index interval.
@@ -1450,26 +1369,4 @@ pub fn eq_eval_at_index<F: Field>(x_challenges: &[F], index: usize) -> F {
 mod tests;
 
 #[cfg(test)]
-mod amortization_tests {
-    use super::*;
-    use jolt_field::{Fp64, Ring};
-
-    type F = Fp64<4294967197>;
-
-    #[test]
-    fn materialization_requires_table_reuse() {
-        let challenges = vec![F::from_u64(3); 8];
-        assert!(OffsetEqWindow::new_if_amortized(&challenges, 31)
-            .unwrap()
-            .is_none());
-
-        let window = OffsetEqWindow::new_if_amortized(&challenges, 32)
-            .unwrap()
-            .unwrap();
-        assert_eq!(window.eq_low.len(), 16);
-        assert_eq!(window.eq_high.as_ref().unwrap().len(), 16);
-        assert!(OffsetEqWindow::<F>::new_if_amortized(&[], usize::MAX)
-            .unwrap()
-            .is_none());
-    }
-}
+mod amortization_tests;

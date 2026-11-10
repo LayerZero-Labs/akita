@@ -2,6 +2,16 @@
 
 use std::time::Instant;
 
+mod root_layouts;
+mod root_openings;
+pub(crate) use root_layouts::PreparedRootFinalGroup;
+#[cfg(all(test, feature = "catalog-gen"))]
+use root_layouts::{
+    root_final_group_level_params_candidate, MultiGroupRootCandidateCtx,
+    RootFinalGroupCandidateInput,
+};
+pub(crate) use root_openings::smallest_witness_root_candidates;
+
 use akita_error::{checked, AkitaError};
 use akita_params::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
@@ -32,6 +42,9 @@ mod adapted_schedule_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/root_candidates.rs"]
 mod root_candidates;
+#[cfg(test)]
+#[path = "test/root_setup_accumulation.rs"]
+mod root_setup_accumulation_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use root_candidates::{
     exhaustive_root_candidates_for_reference, root_level_candidates_with_fresh_preparation,
@@ -193,73 +206,6 @@ fn materialize_precommitted_group_for_open_basis(
     .map(Some)
 }
 
-struct MultiGroupRootCandidateCtx<'a> {
-    policy: &'a PlannerPolicy,
-    dimensions: CommitmentRingDims,
-    opening: PlannerOpeningCandidate,
-    final_source_contract: CommittedSourceContract,
-    final_num_vars: usize,
-    main_num_polys: usize,
-    source: crate::InnerBasisSource,
-}
-
-struct RootFinalGroupCandidateInput<'a> {
-    log_basis_inner: u32,
-    log_basis_open: u32,
-    position_index_bits: usize,
-    block_index_bits: usize,
-    outer_slice_count: akita_params::CommitmentSliceCount,
-    precommitted_groups: &'a [GroupOpenPhaseParams],
-    precommitted_d_width: usize,
-}
-
-fn precommitted_groups_for_open_basis(
-    seeds: &[PrecommittedGroupSeed],
-    equivalence_classes: &[Vec<usize>],
-    class_openings: &[PlannerOpeningCandidate],
-    policy: &PlannerPolicy,
-    shared_opening_ring_dimension: usize,
-    log_basis_open: u32,
-) -> Result<Option<(Vec<GroupOpenPhaseParams>, usize)>, AkitaError> {
-    if class_openings.len() != equivalence_classes.len() {
-        return Err(AkitaError::InvalidSetup(
-            "root precommit opening candidate count mismatch".into(),
-        ));
-    }
-    let mut groups = vec![None; seeds.len()];
-    let mut d_width = 0usize;
-    for (indices, &opening) in equivalence_classes.iter().zip(class_openings) {
-        let Some(materialized) = materialize_precommitted_group_for_open_basis(
-            &seeds[indices[0]],
-            policy,
-            opening,
-            shared_opening_ring_dimension,
-            log_basis_open,
-        )?
-        else {
-            return Ok(None);
-        };
-        d_width = checked::mul_add(
-            materialized.d_segment_width(policy.claim_ext_degree, shared_opening_ring_dimension)?,
-            indices.len(),
-            d_width,
-        )
-        .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
-        for &index in indices {
-            groups[index] = Some(materialized);
-        }
-    }
-    let groups = groups
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "precommitted equivalence classes must cover every group".into(),
-            )
-        })?;
-    Ok(Some((groups, d_width)))
-}
-
 pub(crate) fn root_batch_next_w_len(
     field_bits: u32,
     extension_degree: usize,
@@ -313,319 +259,99 @@ impl PreparedRootProducers {
         ) {
             return Ok(None);
         }
-        let seeds = key
-            .precommitteds
-            .iter()
-            .copied()
-            .zip(precommitted_source_contracts.iter().copied())
-            .collect::<Vec<PrecommittedGroupSeed>>();
-        let Some((groups, d_width)) = precommitted_groups_for_open_basis(
-            &seeds,
+        if precommitted_class_openings.len() != equivalence_classes.len() {
+            return Err(AkitaError::InvalidSetup(
+                "root precommit opening candidate count mismatch".into(),
+            ));
+        }
+        let mut admitted = Vec::new();
+        for (indices, &opening) in equivalence_classes.iter().zip(precommitted_class_openings) {
+            let index = indices[0];
+            let Some(group) = materialize_precommitted_group_for_open_basis(
+                &(
+                    key.precommitteds[index],
+                    precommitted_source_contracts[index],
+                ),
+                policy,
+                opening,
+                shared_opening_ring_dimension,
+                candidate_log_basis_open,
+            )?
+            else {
+                return Ok(None);
+            };
+            admitted.push((
+                group,
+                group.d_segment_width(policy.claim_ext_degree, shared_opening_ring_dimension)?,
+            ));
+        }
+        Self::from_class_openings(
             &equivalence_classes,
-            precommitted_class_openings,
-            policy,
-            shared_opening_ring_dimension,
-            candidate_log_basis_open,
-        )?
+            admitted.into_iter(),
+            key.precommitteds.len(),
+        )
+        .map(Some)
+    }
+
+    fn from_class_openings(
+        classes: &[Vec<usize>],
+        openings: impl Iterator<Item = (GroupOpenPhaseParams, usize)>,
+        num_groups: usize,
+    ) -> Result<Self, AkitaError> {
+        let mut groups = vec![None; num_groups];
+        let mut d_width = 0usize;
+        for (indices, (group, width)) in classes.iter().zip(openings) {
+            d_width = checked::mul_add(width, indices.len(), d_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".into()))?;
+            for &index in indices {
+                groups[index] = Some(group);
+            }
+        }
+        let groups = groups
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "precommitted equivalence classes must cover every group".into(),
+                )
+            })?;
+        Ok(Self { groups, d_width })
+    }
+
+    fn combine_with(
+        &self,
+        main: &CommittedGroupParams,
+    ) -> Result<Option<CommittedGroupParams>, AkitaError> {
+        if self.groups.is_empty() {
+            return Ok(Some(main.clone()));
+        }
+        let width = main
+            .open_matrix
+            .input_width()
+            .checked_add(self.d_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".into()))?;
+        let Ok(matrix) =
+            OpenCommitMatrixParams::try_new_with_min_rank(main.open_matrix.sis_table_key(), width)
         else {
             return Ok(None);
         };
-        Ok(Some(Self { groups, d_width }))
+        let groups = self
+            .groups
+            .iter()
+            .copied()
+            .chain(std::iter::once(*main.own_group()))
+            .collect();
+        let mut params = CommittedGroupParams::try_new(
+            groups,
+            matrix,
+            main.payload_mode,
+            main.ring_relation_mode,
+            main.source_encoding,
+            akita_params::ChunkedWitnessCfg::default(),
+        )?;
+        params.witness_chunk = main.witness_chunk;
+        Ok(Some(params))
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn root_level_candidates_for_prepared_producers(
-    key: &ScheduleLookupKey,
-    final_source_contract: CommittedSourceContract,
-    policy: &PlannerPolicy,
-    dimensions: CommitmentRingDims,
-    opening: PlannerOpeningCandidate,
-    prepared_producers: &PreparedRootProducers,
-    candidate_log_basis_inner: u32,
-    candidate_log_basis_open: u32,
-    guide: Option<crate::schedule_params::CandidateLayoutGuide>,
-) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-    dimensions.validate_role_projection()?;
-    opening.validate_for(policy.claim_ext_degree, dimensions)?;
-    let field_bits = policy.decomposition.field_bits();
-    let alpha = dimensions.d_a().trailing_zeros() as usize;
-    let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
-    if reduced_vars == 0 {
-        return Ok(Vec::new());
-    }
-    let candidate_ctx = MultiGroupRootCandidateCtx {
-        policy,
-        dimensions,
-        opening,
-        final_source_contract,
-        final_num_vars: key.final_group.num_vars(),
-        main_num_polys: key.final_group.num_polynomials(),
-        source: crate::schedule_params::root_inner_basis_source(final_source_contract),
-    };
-    let opening_batch = key.opening_layout()?;
-    let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
-    let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
-    let num_ring_elems = checked::pow2(reduced_vars).ok_or_else(|| {
-        AkitaError::InvalidSetup("root reduced-variable domain is too large".into())
-    })?;
-    let delta_commit = candidate_ctx
-        .source
-        .num_digits_inner(policy.decomposition, candidate_log_basis_inner)?;
-    let delta_open = num_digits_open(DecompositionParams {
-        log_basis: candidate_log_basis_open,
-        ..policy.decomposition
-    });
-    let mut split_domain = if let Some(guide) = guide {
-        reduced_vars
-            .checked_sub(guide.position_index_bits)
-            .into_iter()
-            .collect()
-    } else {
-        recursive_split_search_domain(
-            policy.recursive_split_search_policy,
-            num_ring_elems,
-            reduced_vars,
-            delta_commit,
-            delta_open,
-            policy.chunks_at_level(0),
-        )
-    };
-    if guide.is_none() && min_block_index_bits == 0 {
-        split_domain.push(0);
-    }
-    split_domain.retain(|&split| min_block_index_bits <= split && split <= max_block_index_bits);
-    split_domain.sort_unstable_by(|left, right| right.cmp(left));
-    split_domain.dedup();
-
-    let mut candidates = Vec::new();
-
-    for &block_index_bits in &split_domain {
-        let position_index_bits = reduced_vars - block_index_bits;
-        let num_live_blocks = 1usize << block_index_bits;
-        let mut slice_candidates = Vec::new();
-        for outer_slice_count in akita_params::CommitmentSliceCount::ALL {
-            if guide.is_some_and(|guide| outer_slice_count != guide.outer_slice_count) {
-                continue;
-            }
-            if outer_slice_count
-                .validate_for_commitment(
-                    0,
-                    akita_params::CommitmentPayloadMode::Compressed,
-                    num_live_blocks,
-                )
-                .is_err()
-            {
-                continue;
-            }
-            let Some(mut candidate_params) = root_final_group_level_params_candidate(
-                &candidate_ctx,
-                RootFinalGroupCandidateInput {
-                    log_basis_inner: candidate_log_basis_inner,
-                    log_basis_open: candidate_log_basis_open,
-                    position_index_bits,
-                    block_index_bits,
-                    outer_slice_count,
-                    precommitted_groups: &prepared_producers.groups,
-                    precommitted_d_width: prepared_producers.d_width,
-                },
-            )?
-            else {
-                continue;
-            };
-            candidate_params.witness_chunk = policy.witness_chunk_at_level(0);
-            if !candidate_params.compression_sources_supported()? {
-                continue;
-            }
-            slice_candidates.push(candidate_params);
-        }
-        for candidate_params in crate::schedule_params::prune_root_slices_by_first_direct_setup(
-            policy,
-            &opening_batch,
-            slice_candidates,
-        )? {
-            let Some(output_witness_len) = root_batch_next_w_len(
-                field_bits,
-                policy.claim_ext_degree,
-                &candidate_params,
-                &opening_batch,
-            )?
-            else {
-                continue;
-            };
-            candidates.push((candidate_params, output_witness_len));
-        }
-    }
-
-    Ok(candidates)
-}
-
-fn root_final_group_level_params_candidate(
-    ctx: &MultiGroupRootCandidateCtx<'_>,
-    input: RootFinalGroupCandidateInput<'_>,
-) -> Result<Option<CommittedGroupParams>, AkitaError> {
-    let RootFinalGroupCandidateInput {
-        log_basis_inner,
-        log_basis_open,
-        position_index_bits,
-        block_index_bits,
-        outer_slice_count,
-        precommitted_groups,
-        precommitted_d_width,
-    } = input;
-    let policy = ctx.policy;
-    let dimensions = ctx.dimensions;
-    let d_a = dimensions.d_a();
-    let decomp = ctx.policy.decomposition;
-    let level_decomp = DecompositionParams {
-        log_basis: log_basis_open,
-        ..decomp
-    };
-    let num_digits_inner = ctx
-        .source
-        .num_digits_inner(ctx.policy.decomposition, log_basis_inner)?;
-    let num_digits_outer = num_digits_open(level_decomp);
-    let num_digits_open = num_digits_outer;
-    let Some(num_live_blocks) = checked::pow2(block_index_bits) else {
-        return Ok(None);
-    };
-    let Some(num_positions_per_block) = checked::pow2(position_index_bits) else {
-        return Ok(None);
-    };
-    let Some(num_live_ring_elements_per_claim) =
-        num_live_blocks.checked_mul(num_positions_per_block)
-    else {
-        return Ok(None);
-    };
-    let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
-    else {
-        return Ok(None);
-    };
-    let num_chunks = policy.chunks_at_level(0);
-    let witness_norms = ctx
-        .final_source_contract
-        .source_norms(
-            log_basis_inner,
-            num_digits_inner,
-            d_a,
-            akita_error::checked::pow2(ctx.final_num_vars)
-                .and_then(|len| len.checked_mul(ctx.main_num_polys))
-                .ok_or_else(|| AkitaError::InvalidSetup("source length overflow".into()))?,
-        )?
-        .fold_witness;
-    let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-        policy,
-        fold_policy: &ctx
-            .final_source_contract
-            .class()
-            .honest_fold_policy(decomp.field_bits()),
-        ring_challenge_cfg: &ctx.opening.challenge_config(),
-        challenge_dimension: ctx.opening.challenge_dimension(d_a),
-        dimensions,
-        payload_mode: akita_params::CommitmentPayloadMode::Compressed,
-        num_claims: ctx.main_num_polys,
-        num_live_ring_elements_per_claim,
-        num_live_blocks,
-        num_positions_per_block,
-        num_chunks,
-        outer_slice_count,
-        witness_norms,
-        log_basis_open,
-        width_s,
-        num_digits_outer,
-        modeled_linf_cap: None,
-    })?
-    else {
-        return Ok(None);
-    };
-    let num_digits_fold = ab_candidate.num_digits_fold;
-    let inner_commit_matrix = ab_candidate.inner_commit_matrix;
-    let outer_commit_matrix = ab_candidate.outer_commit_matrix;
-
-    let Ok(main_d_width) = akita_params::opening_d_segment_width(
-        ctx.opening.method(),
-        policy.claim_ext_degree,
-        d_a,
-        dimensions.d_d(),
-        num_digits_open,
-        num_live_blocks,
-        ctx.main_num_polys,
-    ) else {
-        return Ok(None);
-    };
-    let Some((open_key, main_d_width)) = projected_collision_role_price(
-        policy,
-        akita_params::SisMatrixRole::Open,
-        dimensions.d_d(),
-        dimensions.d_d(),
-        main_d_width,
-        log_basis_open,
-    ) else {
-        return Ok(None);
-    };
-    // Every group width is already expressed in shared D-native subcolumns.
-    // The collision-role pricing above only selects the D key and bound.
-    let d_width = main_d_width
-        .checked_add(precommitted_d_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
-    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, d_width)
-    else {
-        return Ok(None);
-    };
-
-    let groups = precommitted_groups
-        .iter()
-        .copied()
-        .chain(std::iter::once(akita_params::GroupOpenPhaseParams {
-            profile: akita_params::GroupCommitPhaseParams {
-                version: akita_params::GroupCommitPhaseParams::VERSION,
-                group: akita_params::PolynomialGroupLayout::new(
-                    ctx.final_num_vars,
-                    ctx.main_num_polys,
-                ),
-                blocks: akita_params::BlockGeometry::new(
-                    num_live_ring_elements_per_claim,
-                    num_positions_per_block,
-                    num_live_blocks,
-                ),
-                outer_slice_count,
-                inner: akita_params::RoleParams::new(
-                    akita_params::GadgetDigits::new(log_basis_inner, num_digits_inner),
-                    inner_commit_matrix,
-                ),
-                outer: akita_params::RoleParams::new(
-                    akita_params::GadgetDigits::new(log_basis_open, num_digits_outer),
-                    outer_commit_matrix,
-                ),
-            },
-            opening: akita_params::GroupOpeningPlan {
-                opening_method: ctx.opening.method(),
-                fold_challenge_config: ctx.opening.challenge_config(),
-                log_basis_open,
-                num_digits_open,
-                num_digits_fold,
-            },
-            setup_natural_len: None,
-        }))
-        .collect();
-    let params = CommittedGroupParams::try_new(
-        groups,
-        open_commit_matrix,
-        akita_params::CommitmentPayloadMode::Compressed,
-        akita_params::RingRelationMode::QuotientLift,
-        akita_params::CommittedSourceEncoding::for_producer(
-            ctx.opening.method(),
-            policy.claim_ext_degree,
-            d_a,
-            ctx.final_num_vars,
-            true,
-        ),
-        // Root folds use the ordinary single-chunk precommit path before the
-        // schedule-level chunk policy is applied.
-        akita_params::ChunkedWitnessCfg::default(),
-    )?;
-
-    Ok(Some(params))
 }
 
 /// Build the fold schedule selected by a full schedule lookup key.
@@ -660,8 +386,8 @@ pub fn find_schedule(
 /// payload/relation phases, and direct-vs-offloaded edges form a guide. The
 /// grouped root's shared D matrix and every length-, setup-, rank-, response-,
 /// and relation-derived suffix value are rebuilt under `policy`. This guided
-/// search is a conditional search, not the globally optimal search performed
-/// by [`find_schedule`].
+/// search is conditional on that skeleton; [`find_schedule`] searches the full
+/// policy domain, with exact next-witness ranking for root opening products above 256.
 ///
 /// When that frozen skeleton is no longer feasible, the guided search reports
 /// [`AkitaError::UnsupportedSchedule`] and adaptation falls back to
@@ -669,7 +395,7 @@ pub fn find_schedule(
 /// full search fails too, or when the request itself is invalid. Invalid
 /// requests (no precommitted group, a mismatched final group, or a main row
 /// that does not pass audit under `policy`) are rejected without a fallback.
-/// A fallback row is the full search's optimum for the key and need not retain
+/// A fallback row is the full search's selected result and need not retain
 /// any part of the main row's skeleton. When both searches fail, the error
 /// carries both reasons.
 ///
@@ -945,8 +671,8 @@ pub(crate) fn find_schedule_in_relation_order(
             }) {
             format!(
                 "; {class_count} distinct precommitted classes can exceed the {}-assignment \
-                 root opening bound, so some coefficient-packing root openings may not have \
-                 been searched",
+                 root opening bound; larger domains retain the smallest next-witness \
+                 assignments, so some root openings may not have been searched",
                 crate::schedule_params::MAX_PRECOMMIT_OPENING_PRODUCTS
             )
         } else {
@@ -999,6 +725,7 @@ pub(crate) fn find_schedule_in_relation_order(
         },
         policy,
         &root_layout,
+        key.root_accumulated_setup_prefix_len,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),
     );

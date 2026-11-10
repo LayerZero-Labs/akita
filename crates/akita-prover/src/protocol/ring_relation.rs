@@ -8,6 +8,7 @@ use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use akita_params::dispatch_for_field;
 use akita_params::{CommittedGroupParams, SignedDigitKernel, MAX_I8_LOG_BASIS};
+use akita_transcript::ChallengeCodec;
 use akita_types::GrindingReplay;
 #[cfg(test)]
 use akita_types::RingRelationGroupOpening;
@@ -163,6 +164,7 @@ impl RingRelationProver {
             + 'static,
         <F as Unreduced>::Wide: From<F>,
         PointF: akita_types::FpExtEncoding<F>
+            + ChallengeCodec
             + jolt_field::ExtField<F>
             + akita_serialization::AkitaSerialize,
         B: crate::backend::ProverBackend<F, PointF>,

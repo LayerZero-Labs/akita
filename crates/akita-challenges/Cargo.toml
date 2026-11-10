@@ -11,23 +11,25 @@ readme = "../../README.md"
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 serde = { version = "1", features = ["derive"] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1618f4b6dc97effcec3568ca7cf2b7420ac9e75f", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
   "asm",
   "solinas",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
-keccak = { version = "0.1.6", features = ["asm"] }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 
-[dev-dependencies]
-shake = "0.1.0"
-
 [features]
-default = ["transcript-blake2b"]
+default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["jolt-field/parallel"]
 logging-transcript = ["akita-transcript/logging-transcript"]
+# Prover-only fold-response previews, which copy the public sponge state.
+prover = ["akita-transcript/prover"]
+
+# Recursion option (default off): the D64 selective-L2 operator-norm
+# table reads its base tables from generated static data (same entries).
+ont-static-base = []
 
 [lints]
 workspace = true

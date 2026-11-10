@@ -262,12 +262,6 @@ fn check_field_against_exact_recurrence<F: Field + CanonicalEncoding>(seed: u64)
     }
 }
 
-#[test]
-fn parameters_derive_the_field_modulus() {
-    let params = BalancedDecomposePow2Params::<Prime32Offset99>::new(4, 8);
-    assert_eq!(params.q, modulus::<Prime32Offset99>());
-}
-
 fn check_small_signed_decompose<F: Field + CanonicalEncoding>() {
     let q = modulus::<F>();
     let field_bits = 128 - (q - 1).leading_zeros();

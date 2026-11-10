@@ -215,7 +215,7 @@ proof-supplied negotiation field and there is no verifier fallback.
 Applications sometimes select a schedule for one large final polynomial group
 before they know the exact small groups that will already be committed when the
 final group opens. `akita_planner::find_adapted_schedule` handles this offline
-case, usually without rerunning the exhaustive planner.
+case, usually without rerunning the full planner.
 
 The application supplies a validated scalar `ResolvedScheduleRow` and a
 `GroupedGenerationRequest` containing exact frozen producer descriptors. The
@@ -228,17 +228,33 @@ proof accounting.
 
 This guided search is a conditional search, not a second global optimizer.
 When the scalar structure cannot support the grouped request, adaptation falls
-back to the exhaustive offline `find_schedule` for the same key. It therefore
-fails only when the request is invalid or no schedule exists in the audited
-domain. The fallback costs one full search, and its row need not retain the
+back to the offline `find_schedule` for the same key. An invalid request is
+rejected without fallback. A valid request fails when neither search returns a
+schedule. The fallback costs one full search, and its row need not retain the
 scalar row's structure.
 
 Both searches give every group of an interchangeable class (equal commit-phase
 profile and source contract) the same root opening. Many identical producers,
 such as the chunks of one large object, therefore cost one opening choice
-between them, and planning time grows only slowly with their number. Distinct
-classes multiply the opening choices; beyond 256 combinations the searches skip
-the affected root opening dimension instead of enumerating them.
+between them. Repeated groups do not add product axes, but their multiplicity
+still affects witness size and the work for each assignment.
+
+Both searches retain the original enumeration for products of at most 256
+assignments. For larger products, they stream every admitted assignment for
+each fixed root dimension tuple, final-group opening, and pair of decomposition
+bases. Each assignment is ranked by its smallest exact combined next witness
+over the allowed final-group splits and slices. The searches keep the 256
+assignments with the smallest scores. Equal scores use the original class
+opening order. Shared subrings receive no reserved slots. The dimension is not
+skipped because its product exceeds 256. See [Fold path and field
+geometry](./proving/fold-path.md) for the witness-sizing rules.
+
+The 256 limit bounds retained assignments, not enumeration work. Ranking time
+grows with the full Cartesian product and can grow exponentially with the
+number of distinct classes. The rule can discard an assignment that leads to a
+feasible or better complete schedule. Neither search guarantees feasibility
+completeness or global optimality over discarded assignments. The fallback uses
+the same rule, so it does not remove this limit.
 
 An adapted row is not trusted merely because planning succeeded. The
 application merges its selected rows, validates them with
@@ -293,8 +309,9 @@ small. It then multiplies the source estimate by the challenge squared energy,
 a 1.03 model envelope, and a `40/39` response allowance. If the model envelope
 bounds the conditional mean, Markov's inequality gives at least `1/40`
 acceptance probability on each independent attempt. The protocol permits 4096
-attempts, so the resulting exhaustion bound for one response is below
-`2^-149`.
+attempts, so the probability that every attempt misses the energy cap is below
+`2^-149`. This bounds the energy predicate only; response admission also
+checks the digit range, and terminal admission the Golomb-Rice payload budget.
 
 The 1.03 factor covers approximations in the normal, field digit, challenge
 covariance, and finite mixing models. It is an empirical completeness margin,

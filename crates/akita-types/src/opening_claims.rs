@@ -274,14 +274,14 @@ pub fn row_coefficients<F, L, G>(
 ) -> Result<Vec<L>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    L: ExtField<F>,
+    L: ExtField<F> + akita_transcript::ChallengeCodec,
     G: crate::GrindingReplay,
 {
     layout.check()?;
     if !layout.requires_row_batch_challenge() {
         return Ok(vec![L::one()]);
     }
-    grinding.grinded_ext_challenges::<F, L>(site, layout.num_total_polynomials())
+    grinding.grinded_ext_challenges::<L>(site, layout.num_total_polynomials())
 }
 
 #[cfg(test)]
