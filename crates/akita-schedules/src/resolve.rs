@@ -28,8 +28,9 @@ impl ResolvedScheduleRow {
     ///
     /// The row must use only opening methods that proving and verification
     /// execute: coefficient packing at folds 0 and 1 and every multi-chunk fold,
-    /// either method at later single-chunk nonterminal folds. Unsupported
-    /// evaluation trace is rejected here before geometry audit or the first proof.
+    /// and for extension-field setup prefixes; either method at other later
+    /// single-chunk nonterminal folds. Unsupported evaluation trace is rejected
+    /// here before geometry audit or the first proof.
     pub fn try_new(
         profiles: CommittedGroupBatchProfile,
         schedule: FoldSchedule,

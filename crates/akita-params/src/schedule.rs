@@ -601,7 +601,8 @@ impl FoldSchedule {
     /// and verification.
     ///
     /// Subring coefficient packing is required at folds 0 and 1 and every
-    /// multi-chunk fold. Later single-chunk folds admit either method. Every group
+    /// multi-chunk fold. Extension-field setup prefixes also require packing.
+    /// Other later single-chunk folds admit either method. Every group
     /// consumed by one fold uses the same method family. Packing requires the
     /// audited production challenge family under the L-infinity A route.
     pub fn validate_nonterminal_opening_execution(
@@ -697,6 +698,17 @@ impl FoldSchedule {
                 extension_degree,
                 &groups,
             )?;
+            // Prefix commitments contain canonical coefficients, not psi coordinates.
+            if witness.setup_prefix().is_some_and(|prefix| {
+                prefix
+                    .opening
+                    .opening_method
+                    .requires_extension_opening_reduction(extension_degree)
+            }) {
+                return Err(AkitaError::InvalidSetup(
+                    "extension-field setup prefixes require subring coefficient packing".into(),
+                ));
+            }
         }
         Ok(())
     }
