@@ -1,5 +1,8 @@
 //! Experimental binary measurement inside one caller transcript.
 
+// `p128` and `p64` each compile the same driver source with their field's types.
+#![allow(clippy::duplicate_mod)]
+
 #[path = "binary_full_size/config.rs"]
 mod config;
 #[path = "binary_full_size/metrics.rs"]
