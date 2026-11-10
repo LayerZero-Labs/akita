@@ -22,9 +22,6 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
-  "bn254",
-] }
 rand_chacha = "0.3"
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"

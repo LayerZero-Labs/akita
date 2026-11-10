@@ -131,8 +131,8 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
- "ark-bn254 0.6.0",
- "ark-ff 0.6.0",
+ "ark-bn254",
+ "ark-ff",
  "criterion",
  "jolt-field",
  "jolt-poly",
@@ -333,43 +333,12 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
 name = "ark-bn254"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "ark-ec 0.5.0",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
-]
-
-[[package]]
-name = "ark-bn254"
 version = "0.6.0"
 source = "git+https://github.com/arkworks-rs/algebra?rev=3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9#3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9"
 dependencies = [
- "ark-ec 0.6.0",
- "ark-ff 0.6.0",
- "ark-std 0.6.0",
-]
-
-[[package]]
-name = "ark-ec"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "ahash",
- "ark-ff 0.5.0",
- "ark-poly 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "educe",
- "fnv",
- "hashbrown 0.15.5",
- "itertools 0.13.0",
- "num-bigint 0.4.8",
- "num-integer",
- "num-traits",
- "zeroize",
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
 ]
 
 [[package]]
@@ -378,13 +347,13 @@ version = "0.6.0"
 source = "git+https://github.com/arkworks-rs/algebra?rev=3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9#3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9"
 dependencies = [
  "ahash",
- "ark-ff 0.6.0",
- "ark-poly 0.6.0",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
+ "ark-ff",
+ "ark-poly",
+ "ark-serialize",
+ "ark-std",
  "educe",
  "fnv",
- "hashbrown 0.17.1",
+ "hashbrown",
  "itertools 0.14.0",
  "num-bigint 0.4.8",
  "num-integer",
@@ -394,32 +363,13 @@ dependencies = [
 
 [[package]]
 name = "ark-ff"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "ark-ff-asm 0.5.0",
- "ark-ff-macros 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "arrayvec",
- "digest 0.10.7",
- "educe",
- "itertools 0.13.0",
- "num-bigint 0.4.8",
- "num-traits",
- "paste",
- "zeroize",
-]
-
-[[package]]
-name = "ark-ff"
 version = "0.6.0"
 source = "git+https://github.com/arkworks-rs/algebra?rev=3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9#3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9"
 dependencies = [
- "ark-ff-asm 0.6.0",
- "ark-ff-macros 0.6.0",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
+ "ark-ff-asm",
+ "ark-ff-macros",
+ "ark-serialize",
+ "ark-std",
  "digest 0.10.7",
  "educe",
  "num-bigint 0.4.8",
@@ -429,30 +379,9 @@ dependencies = [
 
 [[package]]
 name = "ark-ff-asm"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "ark-ff-asm"
 version = "0.6.0"
 source = "git+https://github.com/arkworks-rs/algebra?rev=3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9#3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9"
 dependencies = [
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "ark-ff-macros"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "num-bigint 0.4.8",
- "num-traits",
- "proc-macro2",
  "quote",
  "syn 2.0.119",
 ]
@@ -471,42 +400,16 @@ dependencies = [
 
 [[package]]
 name = "ark-poly"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "ahash",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "educe",
- "fnv",
- "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "ark-poly"
 version = "0.6.0"
 source = "git+https://github.com/arkworks-rs/algebra?rev=3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9#3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9"
 dependencies = [
  "ahash",
- "ark-ff 0.6.0",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
  "educe",
  "fnv",
- "hashbrown 0.17.1",
-]
-
-[[package]]
-name = "ark-serialize"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "ark-serialize-derive 0.5.0",
- "ark-std 0.5.0",
- "arrayvec",
- "digest 0.10.7",
- "num-bigint 0.4.8",
+ "hashbrown",
 ]
 
 [[package]]
@@ -514,20 +417,10 @@ name = "ark-serialize"
 version = "0.6.0"
 source = "git+https://github.com/arkworks-rs/algebra?rev=3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9#3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9"
 dependencies = [
- "ark-serialize-derive 0.6.0",
- "ark-std 0.6.0",
+ "ark-serialize-derive",
+ "ark-std",
  "digest 0.10.7",
  "num-bigint 0.4.8",
-]
-
-[[package]]
-name = "ark-serialize-derive"
-version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b8f0f5129501c42c8a934f4832746d335c8f8ca1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -538,16 +431,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "ark-std"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "246a225cc6131e9ee4f24619af0f19d67761fff15d7ccc22e42b80846e69449a"
-dependencies = [
- "num-traits",
- "rand 0.8.8",
 ]
 
 [[package]]
@@ -559,12 +442,6 @@ dependencies = [
  "num-traits",
  "rand 0.8.8",
 ]
-
-[[package]]
-name = "arrayvec"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
 name = "autocfg"
@@ -997,15 +874,6 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
-dependencies = [
- "allocator-api2",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
@@ -1060,9 +928,6 @@ name = "jolt-algebra"
 version = "0.1.0"
 source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
 dependencies = [
- "ark-bn254 0.5.0",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
  "cc",
  "num-traits",
  "rand_core 0.6.4",

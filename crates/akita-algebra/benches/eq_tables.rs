@@ -6,8 +6,8 @@ use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::split_eq::GruenSplitEq;
 use criterion::{BatchSize, BenchmarkId, Criterion};
 use jolt_field::{
-    Field, FpExt4, Fr, Prime128Offset275, Prime128Offset6A23801F, Prime128OffsetA7F7,
-    Prime32Offset99, Ring,
+    Field, FpExt4, Prime128Offset275, Prime128Offset6A23801F, Prime128OffsetA7F7, Prime32Offset99,
+    Ring,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -82,8 +82,8 @@ fn gruen(c: &mut Criterion) {
     let mut group = c.benchmark_group("gruen");
     for n in [16, 20] {
         let mut rng = ChaCha20Rng::seed_from_u64(0xe13 + n as u64);
-        let mut r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let challenges: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let mut r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let challenges: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
         r.reverse();
         let label = format!("LowToHigh_{n}");
         group.bench_function(BenchmarkId::new("construct", &label), |b| {
@@ -104,11 +104,11 @@ fn gruen(c: &mut Criterion) {
         });
         let split = GruenSplitEq::new(&r).unwrap();
         let (l0, l1) = split.linear_factor_evals();
-        let hint = l0 * Fr::from_u64(3) + l1 * Fr::from_u64(12);
+        let hint = l0 * F::from_u64(3) + l1 * F::from_u64(12);
         group.bench_function(BenchmarkId::new("degree_3", &label), |b| {
             b.iter(|| {
                 split
-                    .try_gruen_poly_deg_3(black_box(Fr::from_u64(3)), Fr::from_u64(2), hint)
+                    .try_gruen_poly_deg_3(black_box(F::from_u64(3)), F::from_u64(2), hint)
                     .unwrap()
             });
         });
@@ -134,11 +134,9 @@ fn main() {
         return;
     }
     let mut c = Criterion::default().configure_from_args();
-    orders::<Fr>(&mut c, "Fr");
     orders::<Prime128OffsetA7F7>(&mut c, "Prime128OffsetA7F7");
     orders::<F>(&mut c, "Prime128Offset6A23801F");
     orders::<FpExt4<Prime32Offset99>>(&mut c, "FpExt4");
-    builders::<Fr>(&mut c, "Fr");
     builders::<Prime128Offset275>(&mut c, "Prime128Offset275");
     builders::<FpExt4<Prime32Offset99>>(&mut c, "FpExt4");
     gruen(&mut c);
