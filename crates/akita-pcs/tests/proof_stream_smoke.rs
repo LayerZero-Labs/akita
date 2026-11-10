@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use akita_config::{
     proof_optimized::{fp128, fp32},

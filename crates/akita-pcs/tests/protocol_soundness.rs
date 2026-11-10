@@ -21,7 +21,7 @@ use jolt_field::{
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-mod common;
+use crate::common;
 #[cfg(feature = "logging-transcript")]
 use common::mutations::{
     assert_ranges_match_context, representative_mutation_ranges, selected_sumcheck_protocols,

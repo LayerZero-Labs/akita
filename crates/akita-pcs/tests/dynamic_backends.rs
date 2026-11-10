@@ -1,6 +1,6 @@
 //! The dynamic one-hot example, checked as a bounded integration test.
 
-mod common;
+use crate::common;
 #[path = "dynamic_backends/portable.rs"]
 mod portable;
 #[path = "dynamic_backends/private_cpu.rs"]

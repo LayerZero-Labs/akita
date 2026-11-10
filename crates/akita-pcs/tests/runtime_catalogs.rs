@@ -1,6 +1,6 @@
 //! Independent runtime catalogs must coexist without type-global geometry.
 
-mod common;
+use crate::common;
 
 use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 use akita_cpu_backend::{CpuBackend, GroupContext, OneHotPoly};
