@@ -104,5 +104,13 @@ harness = false
 name = "quotient_kernels"
 harness = false
 
+[[bench]]
+name = "range_sumcheck_rounds"
+harness = false
+
+[[bench]]
+name = "sumcheck_driver"
+harness = false
+
 [lints]
 workspace = true

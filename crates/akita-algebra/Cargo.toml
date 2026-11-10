@@ -22,6 +22,10 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+  "bn254",
+] }
+rand_chacha = "0.3"
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
@@ -33,11 +37,16 @@ harness = false
 name = "offset_eq_window"
 harness = false
 
+[[bench]]
+name = "eq_tables"
+harness = false
+
 [features]
 ntt-inline = ["dep:jolt-inlines-ntt"]
 default = []
 parallel = ["dep:rayon", "jolt-field/parallel"]
 tensor-no-carry = []
 tensor-eq-runs = []
+
 [lints]
 workspace = true
