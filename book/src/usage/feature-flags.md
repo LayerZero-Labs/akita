@@ -157,9 +157,14 @@ prefix. Other fields are decimal integers. `rank_one` is the colexicographic
 rank of the ±1 positions; `rank_two` ranks the ±2 positions within their
 complement.
 
-A message line precedes its candidate rank lines. Ranks are emitted serially
-in the order position advice will be consumed: one per in-range candidate
-examined, including candidates later rejected by the operator-norm predicate.
+To produce advice, capture from a process that only verifies. Prover draws,
+including previews, also emit capture lines; their output does not have the
+verifier's tape-consumption order.
+
+For a verification-only capture, a message line precedes its candidate rank
+lines. Ranks are emitted serially in the order position advice will be consumed:
+one per in-range candidate examined, including candidates later rejected by the
+operator-norm predicate.
 Out-of-range candidates emit no rank line, and decoding stops after the
 requested number of accepted challenges. Unfiltered D64/31/10 draws requesting
 at least 1024 challenges emit no rank lines because fold verification routes

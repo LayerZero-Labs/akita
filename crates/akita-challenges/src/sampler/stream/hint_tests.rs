@@ -202,7 +202,8 @@ fn compact_quartets_bind_magnitudes_positions_and_signs() {
         assert!(crate::checked_hint::validate(&words, 0, rank_space, signs ^ (1 << bit)).is_err());
     }
     assert!(crate::checked_hint::validate(&words, 1, rank_space, signs).is_err());
-    words[0] = (words[0] & !1023) | 1023;
+    // A zero-metadata fallback would preserve the otherwise zero final quartet.
+    words[3] = (words[3] & !(1023u64 << 30)) | (937u64 << 30);
     assert!(crate::checked_hint::validate(&words, 0, rank_space, signs).is_err());
 }
 
