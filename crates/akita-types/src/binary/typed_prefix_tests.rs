@@ -35,18 +35,17 @@ fn p64_typed_prefix_matches_base_setup_and_extension_authentication() {
     use akita_params::binary_setup::BinaryFieldProfile;
     use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
     type E = Ext2<Base>;
-    for (word, planes) in [(true, 0), (false, 2), (true, 2)] {
+    for planes in [0, 2] {
         let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
         let plan = BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),
             3,
             64,
             BinaryFieldProfile::P64,
-            word,
             planes,
         )
         .unwrap();
-        let typed = BinaryTypedPrefix::new(&manifest, word, planes, 64).unwrap();
+        let typed = BinaryTypedPrefix::new(&manifest, planes, 64).unwrap();
         assert_eq!(
             typed,
             BinaryTypedPrefix::from_plan(&manifest, &plan).unwrap()
@@ -55,7 +54,7 @@ fn p64_typed_prefix_matches_base_setup_and_extension_authentication() {
             typed.rows,
             [
                 manifest.b_rows(),
-                manifest.d_label(word, planes).unwrap().rank as usize
+                manifest.d_label(planes).unwrap().rank as usize
             ]
         );
         if planes == 0 {
@@ -192,12 +191,12 @@ fn p64_typed_layout_uses_separate_admitted_ranks_without_large_witnesses() {
     use akita_params::binary_setup::BinaryFieldProfile;
     for owners in [1, 158, 4096] {
         let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, owners);
-        let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+        let typed = BinaryTypedPrefix::new(&manifest, 0, 64).unwrap();
         assert_eq!(
             typed.rows,
             [
                 manifest.b_rows(),
-                manifest.d_label(true, 0).unwrap().rank as usize
+                manifest.d_label(0).unwrap().rank as usize
             ]
         );
         for (role, &rows) in typed.rows.iter().enumerate() {

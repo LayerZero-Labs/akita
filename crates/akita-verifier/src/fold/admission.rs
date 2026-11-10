@@ -30,9 +30,7 @@ pub(super) fn validate_group_payload<F: Field>(
                 ));
             }
             manifest.validate_carrier(descriptor)?;
-            if let Some(claim) = claim {
-                claim.validate(manifest.descriptor())?;
-            }
+            claim.validate(manifest.descriptor())?;
             prime.validate(manifest.descriptor())?;
             if committed.rows().coeff_len() != manifest.payload_coefficients()? {
                 return Err(AkitaError::InvalidInput(
@@ -151,7 +149,7 @@ mod tests {
             let committed = CommittedGroup::new_binary(profile, payload, manifest.clone()).unwrap();
             let kind = GroupClaimKind::Binary {
                 manifest: Box::new(manifest),
-                claim: Some(claim),
+                claim,
                 prime,
             };
             validate_group_payload(&committed, &kind, 64).unwrap();

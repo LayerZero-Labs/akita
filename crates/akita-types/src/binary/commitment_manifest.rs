@@ -87,9 +87,9 @@ impl BinaryCommittedGroupManifest {
             .ok_or_else(|| AkitaError::InvalidInput("binary payload size overflow".into()))
     }
 
-    /// D setup for the selected word U and base-coordinate prime planes.
+    /// D setup for the word U and the selected base-coordinate prime planes.
     /// Each role selects its own least rank from its actual compact width.
-    pub fn d_label(&self, word: bool, planes: usize) -> Result<SetupStreamLabel, AkitaError> {
+    pub fn d_label(&self, planes: usize) -> Result<SetupStreamLabel, AkitaError> {
         if planes
             > checked::product([
                 self.descriptor.polynomials().len(),
@@ -97,7 +97,6 @@ impl BinaryCommittedGroupManifest {
             ])
             .ok_or(AkitaError::InvalidProof)?
             || !planes.is_multiple_of(self.field_profile.extension_degree())
-            || (!word && planes == 0)
         {
             return Err(AkitaError::InvalidInput(
                 "invalid binary D selection".into(),
@@ -106,11 +105,7 @@ impl BinaryCommittedGroupManifest {
         let digits = self.field_profile.prime_plane_digits();
         let lanes = checked::sum([
             checked::product([planes, digits]).ok_or(AkitaError::InvalidProof)?,
-            if word {
-                self.descriptor.polynomials().len()
-            } else {
-                0
-            },
+            self.descriptor.polynomials().len(),
         ])
         .ok_or(AkitaError::InvalidProof)?;
         let columns = checked::product([lanes, 162, self.descriptor.index_map().columns()])

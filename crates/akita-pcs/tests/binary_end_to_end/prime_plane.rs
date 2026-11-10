@@ -74,21 +74,11 @@ fn claim(words: &[u128], polynomial: usize) -> PrimePlaneClaim {
 }
 
 #[test]
-fn prime_plane_prime_only() {
-    init_rayon_pool();
-    run_on_large_stack(|| {
-        fixture(false, false, 1, 1, true);
-        fixture(false, false, 2, 2, false);
-        fixture(false, false, 5, 5, true);
-    });
-}
-
-#[test]
 fn prime_plane_word_and_several_polynomials() {
     init_rayon_pool();
     run_on_large_stack(|| {
         for planes in [1, 2, 5] {
-            fixture(false, true, planes, planes, false);
+            fixture(false, planes, planes, planes != 2);
         }
     });
 }
@@ -98,8 +88,7 @@ fn prime_plane_mixed_ordinary_group() {
     init_rayon_pool();
     run_on_large_stack(|| {
         for planes in [1, 2, 5] {
-            fixture(true, true, planes, planes, false);
-            fixture(true, false, planes, planes, false);
+            fixture(true, planes, planes, false);
         }
     });
 }
@@ -108,17 +97,17 @@ fn prime_plane_mixed_ordinary_group() {
 fn word_reading_with_multiple_polynomials_and_no_prime_planes() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        fixture(false, true, 0, 2, false);
+        fixture(false, 0, 2, false);
     });
 }
 
 #[test]
 fn projection_two_polynomials_and_prime_plane_rejects_y_mutations() {
     init_rayon_pool();
-    run_on_large_stack(|| fixture(false, false, 1, 2, true));
+    run_on_large_stack(|| fixture(false, 1, 2, true));
 }
 
-fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: bool) {
+fn fixture(mixed: bool, planes: usize, owners: usize, mutations: bool) {
     let (layout, catalog) = if owners == 1 {
         (
             PolynomialGroupLayout::new(if mixed { 23 } else { 18 }, owners),
@@ -198,7 +187,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         .serialize_compressed(&mut packed_bytes)
         .unwrap();
     assert_eq!(packed_bytes, logical_bytes);
-    let word_claim = word.then(|| honest_claim(&descriptor, &words[0]));
+    let word_claim = honest_claim(&descriptor, &words[0]);
     let primes = (planes > 0).then(|| PrimeGroupClaim {
         point: prime_point().into_iter().map(Into::into).collect(),
         evaluations: (0..planes)
@@ -212,11 +201,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     )
     .unwrap();
     assert_eq!(checked.planes().len(), planes);
-    if word && planes == 1 && owners == 1 && !mixed {
-        assert!(
-            PolynomialGroupClaims::<F, _>::new_binary_planes(commitment.clone(), None, None)
-                .is_err()
-        );
+    if planes == 1 && owners == 1 && !mixed {
         for mutation in 0..7 {
             let mut bad = primes.clone().unwrap();
             match mutation {
@@ -299,7 +284,6 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         .collect::<Vec<_>>();
     let typed = BinaryTypedPrefix::new(
         &manifest,
-        word,
         planes,
         resolved.schedule().recursive_folds[0].params.d_a(),
     )
@@ -388,12 +372,14 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
     let packed_proof = prove(primes.clone(), packed.private_handle);
     assert_eq!(packed_proof.0, proof, "packed prime/projection proof drift");
     assert_eq!(packed_proof.1, continuation, "packed continuation drift");
+    // The `-true-` keeps the file names of captures made when a binary group's
+    // word claim was optional, so those captures still compare.
     byte_contract::compare_baseline(
         &proof,
-        &format!("binary-prime-{mixed}-{word}-{planes}-{owners}.bin"),
+        &format!("binary-prime-{mixed}-true-{planes}-{owners}.bin"),
     );
     eprintln!(
-        "prime_plane dev={} mixed={mixed} word={word} owners={owners} planes={planes}: {} bytes",
+        "prime_plane dev={} mixed={mixed} owners={owners} planes={planes}: {} bytes",
         akita_params::DEV_PROTOCOL,
         proof.len()
     );
@@ -477,9 +463,15 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         first_prefix.n_prefix().unwrap().trailing_zeros() as usize,
         |bytes| rejects("Stage 3 message", bytes, &commitment, primes.clone()),
     );
-    projection::mutate_values(&proof, successor_coefficients, word, owners, |bytes| {
-        rejects("projection output", bytes, &commitment, primes.clone());
-    });
+    projection::mutate_values(
+        &proof,
+        successor_coefficients,
+        projection::d_payload(&ranges),
+        owners,
+        |bytes| {
+            rejects("projection output", bytes, &commitment, primes.clone());
+        },
+    );
     let prime = primes.as_ref().unwrap();
     for index in 0..prime.evaluations.len() {
         let mut altered = prime.clone();
@@ -492,12 +484,11 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
         altered.point[coordinate] = (altered.point[coordinate].coordinates()[0] ^ 1).into();
         rejects("prime coordinate", &proof, &commitment, Some(altered));
     }
-    // The prime-only D payload is the first prover message. Alter one field
-    // coefficient of its EP commitment without disturbing its framing.
+    // Alter one field coefficient of the D payload without disturbing its framing.
     let mut altered = proof.clone();
-    altered[0] ^= 1;
+    altered[projection::d_payload(&ranges).start] ^= 1;
     rejects(
-        "EP D payload coefficient",
+        "D payload coefficient",
         &altered,
         &commitment,
         primes.clone(),
@@ -525,7 +516,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             GroupContext::explicit(&carrier),
         )
         .unwrap();
-    if planes == 1 && !word && !mixed && owners == 1 {
+    if planes == 1 && !mixed && owners == 1 {
         for (fault, public) in [
             (Fault::PrimePlane, &commitment),
             (Fault::ForeignCommitment, &foreign.committed_group),
@@ -539,7 +530,7 @@ fn fixture(mixed: bool, word: bool, planes: usize, owners: usize, mutations: boo
             let claims =
                 OpeningClaims::from_groups(vec![PolynomialGroupClaims::<F, _>::new_binary_planes(
                     public.clone(),
-                    None,
+                    word_claim.clone(),
                     primes.clone(),
                 )
                 .unwrap()])
@@ -629,6 +620,7 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
         BinaryFieldProfile::P128,
     )
     .unwrap();
+    let word_claim = honest_claim(&descriptor, &WORDS);
     let claim = PrimeGroupClaim {
         point: prime_point().into_iter().map(Into::into).collect(),
         evaluations: vec![claim(&WORDS, 0), claim(&WORDS, 1)],
@@ -645,7 +637,7 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
         binary_root_statement::<F, F, _>(
             &mut prover,
             &manifest,
-            None,
+            &word_claim,
             &planes,
             &[F::one(); 128],
             None,
@@ -654,7 +646,7 @@ fn prime_plane_every_claim_field_binds_first_challenge_on_both_sides() {
         binary_root_statement::<F, F, _>(
             &mut verifier,
             &manifest,
-            None,
+            &word_claim,
             &planes,
             &[F::one(); 128],
             None,
@@ -796,13 +788,12 @@ fn multiple_owner_catalog(
             BinaryFieldProfile::P128,
         )
         .unwrap();
-        let typed = BinaryTypedPrefix::new(&manifest, true, owners, first.d_a()).unwrap();
+        let typed = BinaryTypedPrefix::new(&manifest, owners, first.d_a()).unwrap();
         let plan = akita_types::binary::BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),
             manifest.a_rank(),
             first.d_a(),
             manifest.field_profile(),
-            true,
             owners,
         )
         .unwrap();
@@ -862,8 +853,15 @@ fn multiple_owner_catalog(
 fn prime_plane_p64_extension_claims_and_extension_typed_prefix_endpoint() {
     use jolt_field::{Ext2, Prime64Offset59 as Base};
     type E = Ext2<Base>;
-    let manifest = stage3::p64_typed_prefix_endpoint(false, 2);
-    stage3::p64_typed_prefix_endpoint(true, 2);
+    let manifest = stage3::p64_typed_prefix_endpoint(2);
+    let split = manifest.descriptor().index_map().claim_variable_split();
+    let word_claim = akita_types::binary::BinaryWordClaim::new(
+        manifest.descriptor(),
+        manifest.descriptor().polynomials()[0],
+        vec![[0; 16]; split.intra_carrier + split.carrier_address],
+        [0; 16],
+    )
+    .unwrap();
     let extension_claim = PrimeGroupClaim {
         point: vec![[2, 3].into(); 11],
         evaluations: vec![PrimePlaneClaim {
@@ -881,7 +879,7 @@ fn prime_plane_p64_extension_claims_and_extension_typed_prefix_endpoint() {
     binary_root_statement::<Base, E, _>(
         &mut channel,
         &manifest,
-        None,
+        &word_claim,
         &prime,
         &vec![Base::zero(); manifest.payload_coefficients().unwrap()],
         None,
@@ -966,68 +964,65 @@ fn prime_plane_p64_extension_reading_rejects_each_coordinate_and_plane() {
     )
     .unwrap();
     let extension = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + 31 * i + 43 * c) as u64));
-    for word in [false, true] {
-        let plan = BinaryRootWitnessPlan::for_profile(descriptor, 3, 64, field, word, 2).unwrap();
-        let repacking = plan.repacking();
-        let segment = plan.prime_segment().unwrap();
-        let mut natural = repacking
-            .segments()
-            .iter()
-            .map(|s| vec![0; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()])
-            .collect::<Vec<_>>();
-        natural[0] = BinaryRootRelation::response_digits(&response).unwrap();
-        natural[segment] = prime_plane_digits::<Base>(descriptor, &prime, &sources).unwrap();
-        let plane_len = 2 * 22 * 162;
-        assert_eq!(natural[segment].len(), 2 * plane_len);
-        assert!(natural[segment][plane_len..].iter().any(|&d| d != 0));
-        let table = repacking
-            .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
-            .unwrap()
-            .into_iter()
-            .map(|v| E::from_i128(i128::from(v)))
-            .collect::<Vec<_>>();
-        let weights = |manifest: &PrimePlaneManifest| {
-            prime_plane_relation_weights(
-                descriptor,
-                manifest,
-                repacking,
-                0,
-                segment,
-                &challenges,
-                extension(0),
-                &[extension(1), extension(2)],
-            )
-            .unwrap()
-        };
-        weights(&prime).check_table(&table).unwrap();
-        for coordinate in 0..2 {
-            let mut changed = table.clone();
-            let address = repacking
-                .coefficient_address(segment, 2 * coordinate, 0, 0)
-                .unwrap();
-            changed[address] += E::one();
+    let plan = BinaryRootWitnessPlan::for_profile(descriptor, 3, 64, field, 2).unwrap();
+    let repacking = plan.repacking();
+    let segment = plan.prime_segment().unwrap();
+    let mut natural = repacking
+        .segments()
+        .iter()
+        .map(|s| vec![0; s.elements * s.digits * s.geometry.polynomial_modulus_dimension()])
+        .collect::<Vec<_>>();
+    natural[0] = BinaryRootRelation::response_digits(&response).unwrap();
+    natural[segment] = prime_plane_digits::<Base>(descriptor, &prime, &sources).unwrap();
+    let plane_len = 2 * 22 * 162;
+    assert_eq!(natural[segment].len(), 2 * plane_len);
+    assert!(natural[segment][plane_len..].iter().any(|&d| d != 0));
+    let table = repacking
+        .repack(&natural.iter().map(Vec::as_slice).collect::<Vec<_>>())
+        .unwrap()
+        .into_iter()
+        .map(|v| E::from_i128(i128::from(v)))
+        .collect::<Vec<_>>();
+    let weights = |manifest: &PrimePlaneManifest| {
+        prime_plane_relation_weights(
+            descriptor,
+            manifest,
+            repacking,
+            0,
+            segment,
+            &challenges,
+            extension(0),
+            &[extension(1), extension(2)],
+        )
+        .unwrap()
+    };
+    weights(&prime).check_table(&table).unwrap();
+    for coordinate in 0..2 {
+        let mut changed = table.clone();
+        let address = repacking
+            .coefficient_address(segment, 2 * coordinate, 0, 0)
+            .unwrap();
+        changed[address] += E::one();
+        assert!(matches!(
+            weights(&prime).check_table(&changed),
+            Err(AkitaError::InvalidProof)
+        ));
+        for point in [false, true] {
+            let mut changed = claim.clone();
+            let v = if point {
+                &mut changed.point[3]
+            } else {
+                &mut changed.evaluations[0].value
+            };
+            let mut c: [u128; 2] = v.coordinates().try_into().unwrap();
+            c[coordinate] = (c[coordinate] + 1) % field.modulus();
+            *v = c.into();
+            let changed =
+                PrimePlaneManifest::with_field_profile(descriptor, Some(changed), field).unwrap();
             assert!(matches!(
-                weights(&prime).check_table(&changed),
+                weights(&changed).check_table(&table),
                 Err(AkitaError::InvalidProof)
             ));
-            for point in [false, true] {
-                let mut changed = claim.clone();
-                let v = if point {
-                    &mut changed.point[3]
-                } else {
-                    &mut changed.evaluations[0].value
-                };
-                let mut c: [u128; 2] = v.coordinates().try_into().unwrap();
-                c[coordinate] = (c[coordinate] + 1) % field.modulus();
-                *v = c.into();
-                let changed =
-                    PrimePlaneManifest::with_field_profile(descriptor, Some(changed), field)
-                        .unwrap();
-                assert!(matches!(
-                    weights(&changed).check_table(&table),
-                    Err(AkitaError::InvalidProof)
-                ));
-            }
         }
     }
 }

@@ -229,7 +229,7 @@ The root's transcript order is unchanged
 ([`verify_root`](../crates/akita-verifier/src/fold/binary_root.rs)):
 
 1. **Before any proof atom:** the verifier rebuilds the typed layout from
-   `(manifest, word, planes, d_a)`. It rejects unless the setup context for
+   `(manifest, planes, d_a)`. It rejects unless the setup context for
    the scheduled slot equals `identity(manifest, slot)`. The identity string is
    `akita/binary-source/typed-prefix/a-then-digit-pieces/v3`, followed by the
    manifest bytes, the A geometry, every segment, region and piece field,

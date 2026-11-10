@@ -241,7 +241,6 @@ macro_rules! round_trip {
                 .collect::<Vec<_>>();
             let typed = BinaryTypedPrefix::new(
                 &manifest,
-                true,
                 usize::from(mixed) * field.extension_degree(),
                 resolved.schedule().recursive_folds[0].params.d_a(),
             )
@@ -261,7 +260,7 @@ macro_rules! round_trip {
 
             let mut groups = vec![PolynomialGroupClaims::<Ext, _>::new_binary_planes(
                 commitment.clone(),
-                Some(word.clone()),
+                word.clone(),
                 prime.clone(),
             )
             .unwrap()];
@@ -308,7 +307,7 @@ macro_rules! round_trip {
             let verify = move |bytes: &[u8], prime: Option<PrimeGroupClaim>| {
                 let binary = PolynomialGroupClaims::<Ext, _>::new_binary_planes(
                     commitment.clone(),
-                    Some(word.clone()),
+                    word.clone(),
                     prime,
                 )?
                 .map_commitment(|_| &commitment);

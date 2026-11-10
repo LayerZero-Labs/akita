@@ -23,7 +23,6 @@ pub(super) fn plan(
     let descriptor = claims::descriptor(log)?;
     let manifest =
         BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, carrier, FIELD)?;
-    let word = true;
     let claims = usize::from(shape != "binary-claim");
     let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
     // Only the claim count prices the planes; the canonical shape of a
@@ -46,14 +45,13 @@ pub(super) fn plan(
         FIELD,
     )?;
     let price = akita_planner::prime_planes::price_binary_root_planes(
-        &manifest, word, &prime, dimension, ordinary,
+        &manifest, &prime, dimension, ordinary,
     )?;
     let mut canonical = BinaryRootWitnessPlan::for_profile(
         &descriptor,
         manifest.a_rank(),
         dimension,
         manifest.field_profile(),
-        word,
         prime.planes().len(),
     )?;
     if let Some(ordinary) = ordinary {

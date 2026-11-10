@@ -109,11 +109,11 @@ fn check(shape: Shape, seed: u64) {
     }
 }
 
-/// Nineteen root shapes, shared by the differential test and the padding
+/// Fifteen root shapes, shared by the differential test and the padding
 /// regression. They include every claim, plane and owner combination of the
 /// prime-plane end-to-end tests.
 ///
-/// The shapes cover word-only, prime-only and mixed ordinary openings, one
+/// The shapes cover word-only, word-with-prime and mixed ordinary openings, one
 /// point with values on several owners, wider source rows and extra zero rings.
 /// Every plane has a distinct owner; no shape reaches production size.
 fn shapes() -> Vec<Shape> {
@@ -122,7 +122,6 @@ fn shapes() -> Vec<Shape> {
         carriers: 8,
         columns: 2,
         owners: 1,
-        word_claim: true,
         prime_planes: 0,
         extra_rings: 0,
         mixed: false,
@@ -138,12 +137,6 @@ fn shapes() -> Vec<Shape> {
             ..base
         },
         Shape {
-            word_claim: false,
-            owners: 2,
-            prime_planes: 2,
-            ..base
-        },
-        Shape {
             prime_planes: 1,
             ..base
         },
@@ -153,17 +146,16 @@ fn shapes() -> Vec<Shape> {
             ..base
         },
         Shape {
-            word_claim: false,
-            prime_planes: 3,
-            extra_rings: 5,
-            ..base
-        },
-        Shape {
             prime_planes: 2,
             ..base
         },
         Shape {
             prime_planes: 5,
+            ..base
+        },
+        Shape {
+            prime_planes: 3,
+            extra_rings: 5,
             ..base
         },
         Shape { owners: 2, ..base },
@@ -172,21 +164,6 @@ fn shapes() -> Vec<Shape> {
             word_width: 8,
             prime_planes: 1,
             extra_rings: 3,
-            ..mixed
-        },
-        Shape {
-            word_claim: false,
-            prime_planes: 1,
-            ..mixed
-        },
-        Shape {
-            word_claim: false,
-            prime_planes: 2,
-            ..mixed
-        },
-        Shape {
-            word_claim: false,
-            prime_planes: 5,
             ..mixed
         },
         Shape {
@@ -281,7 +258,7 @@ fn typed_prefix_offloads_the_digit_authentication_rows() {
         let manifest = &public.manifest;
         let prefix = BinaryTypedPrefix::from_plan(manifest, plan).unwrap();
         assert_eq!(
-            BinaryTypedPrefix::new(manifest, shape.word_claim, shape.prime_planes, 64).unwrap(),
+            BinaryTypedPrefix::new(manifest, shape.prime_planes, 64).unwrap(),
             prefix,
             "{shape:?}"
         );

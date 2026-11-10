@@ -272,8 +272,7 @@ mod p64 {
             PrimePlaneManifest::with_field_profile(&descriptor, None, BinaryFieldProfile::P128)
                 .unwrap();
         let public =
-            BinaryRootPublic::new(&manifest, Some(&claim), &prime, &setup, 1 << 17, 64, None)
-                .unwrap();
+            BinaryRootPublic::new(&manifest, &claim, &prime, &setup, 1 << 17, 64, None).unwrap();
         let plan = public.plan();
         let quotient = plan.quotient_segment().unwrap();
         let bounds = plan.projection_bounds().quotient().unwrap();
@@ -308,7 +307,7 @@ mod p64 {
             binary_public_digit_commitment::<F>(&seed, manifest.b_label(), 0, &natural[1]).unwrap();
         let d = binary_public_digit_commitment::<F>(
             &seed,
-            manifest.d_label(true, 0).unwrap(),
+            manifest.d_label(0).unwrap(),
             0,
             &natural[2],
         )
@@ -464,7 +463,7 @@ mod p64 {
         );
         // The same dense coefficient coordinates feed Stage 3 over the
         // selected base setup; no integer representative of E64 is used.
-        let typed = akita_types::binary::BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+        let typed = akita_types::binary::BinaryTypedPrefix::new(&manifest, 0, 64).unwrap();
         let stage2_point = (0..variables)
             .map(|round| extension(500 + round))
             .collect::<Vec<_>>();

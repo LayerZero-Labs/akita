@@ -48,7 +48,6 @@ pub(crate) struct Shape {
     pub(crate) carriers: usize,
     pub(crate) columns: usize,
     pub(crate) owners: usize,
-    pub(crate) word_claim: bool,
     pub(crate) prime_planes: usize,
     pub(crate) extra_rings: usize,
     pub(crate) mixed: bool,
@@ -177,20 +176,18 @@ fn public(
     )
     .expect("fixture manifest");
     let rows = descriptor.index_map().padded_carriers() / descriptor.index_map().columns();
-    let claim = shape.word_claim.then(|| {
-        BinaryTerminalClaim::new(
-            &descriptor,
-            polynomials[shape.owners - 1],
-            (0..rows.trailing_zeros())
-                .map(|_| stream.binary_field_bytes())
-                .collect(),
-            (0..descriptor.index_map().columns().trailing_zeros())
-                .map(|_| stream.binary_field_bytes())
-                .collect(),
-            stream.binary_field_bytes(),
-        )
-        .expect("fixture word claim")
-    });
+    let claim = BinaryTerminalClaim::new(
+        &descriptor,
+        polynomials[shape.owners - 1],
+        (0..rows.trailing_zeros())
+            .map(|_| stream.binary_field_bytes())
+            .collect(),
+        (0..descriptor.index_map().columns().trailing_zeros())
+            .map(|_| stream.binary_field_bytes())
+            .collect(),
+        stream.binary_field_bytes(),
+    )
+    .expect("fixture word claim");
     let arity = descriptor.index_map().padded_carriers().trailing_zeros() as usize + 8;
     let claims = (shape.prime_planes > 0).then(|| PrimeGroupClaim {
         point: (0..arity).map(|_| stream.u127().into()).collect(),
@@ -214,15 +211,7 @@ fn public(
         .mixed
         .then(|| binary_ordinary_profile_fixture(BinaryFieldProfile::P128));
     let build = |logical_len| {
-        BinaryRootPublic::new(
-            &manifest,
-            claim.as_ref(),
-            &prime,
-            &setup,
-            logical_len,
-            64,
-            ordinary,
-        )
+        BinaryRootPublic::new(&manifest, &claim, &prime, &setup, logical_len, 64, ordinary)
     };
     let natural_end = build(1 << 22)
         .and_then(|public| public.plan().repacking().natural_end())
@@ -415,7 +404,6 @@ pub fn root_weight_scenarios() -> impl Iterator<Item = RootWeightScenario> {
         carriers: 8,
         columns: 2,
         owners: 1,
-        word_claim: true,
         prime_planes: 0,
         extra_rings: 0,
         mixed: false,
@@ -432,7 +420,6 @@ pub fn root_weight_scenarios() -> impl Iterator<Item = RootWeightScenario> {
             ..base
         },
         Shape {
-            word_claim: false,
             prime_planes: 3,
             extra_rings: 5,
             ..base

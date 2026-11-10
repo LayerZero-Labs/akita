@@ -204,8 +204,8 @@ fn stage3_p64_layout_has_a_distinct_identity_and_remains_outside_the_catalog() {
         .unwrap();
     let legacy = binary_word_manifest_fixture(BinaryFieldProfile::P128, 1);
     let p64 = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
-    let old = BinaryTypedPrefix::new(&legacy, true, 0, 64).unwrap();
-    let new = BinaryTypedPrefix::new(&p64, true, 0, 64).unwrap();
+    let old = BinaryTypedPrefix::new(&legacy, 0, 64).unwrap();
+    let new = BinaryTypedPrefix::new(&p64, 0, 64).unwrap();
     let old_id = old.identity(&legacy, &slot).unwrap();
     let new_id = new.identity(&p64, &slot).unwrap();
     assert!(old_id.starts_with(b"akita/binary-source/typed-prefix/a-then-digit-pieces/v3"));

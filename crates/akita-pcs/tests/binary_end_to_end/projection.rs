@@ -6,16 +6,31 @@ use akita_types::binary::{
     BINARY_SOURCE_Q,
 };
 
+/// Byte range of the root D payload, which follows the field switch.
+pub(super) fn d_payload(ranges: &[akita_transcript::ProofMessageRange]) -> std::ops::Range<usize> {
+    let site = akita_types::FoldSite::OpeningPayload {
+        level: 0,
+        ring_dimension: 64,
+    }
+    .id()
+    .unwrap()
+    .to_bytes();
+    let range = ranges
+        .iter()
+        .find(|range| range.context.site_id == site)
+        .unwrap();
+    range.start..range.start + range.len
+}
+
 pub(super) fn mutate_values(
     proof: &[u8],
     successor_coefficients: usize,
-    word: bool,
+    d_payload: std::ops::Range<usize>,
     polynomials: usize,
     rejects: impl Fn(&[u8]),
 ) {
-    // A word claim contributes three frontend rounds. The 128-field D payload,
-    // response nonce, and scheduled outgoing payload are present in every case.
-    let nonce_start = usize::from(word) * (128 * 16 + 3 * 42 + 21) + 128 * 16;
+    // The response nonce and scheduled outgoing payload follow the D payload.
+    let nonce_start = d_payload.end;
     let nonce_len = proof[nonce_start..]
         .iter()
         .position(|byte| byte & 0x80 == 0)
@@ -236,8 +251,7 @@ fn p64_dense_batches_replay_both_coordinates_after_the_outgoing_commitment() {
             .unwrap();
     let descriptor = BinarySourceDescriptor::new(index, vec![[1; 32]], profiles).unwrap();
     let plan =
-        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
-            .unwrap();
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, 0).unwrap();
     // Fixture: two word rows, rank-two B and rank-one word-only D.
     let count = plan.coefficient_batch_count().unwrap() + 2 + 2 + 1;
     let run = |commitment: u8| {

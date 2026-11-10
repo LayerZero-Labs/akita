@@ -259,7 +259,7 @@ fn ordinary_operation() -> AkitaError {
 struct BinaryRootPreparation {
     binding: OperationBinding,
     source: BinarySourceStorage,
-    claim: Option<akita_types::binary::BinaryTerminalClaim>,
+    claim: akita_types::binary::BinaryTerminalClaim,
     prime_digits: Vec<i8>,
     plan: akita_types::binary::BinaryRootWitnessPlan,
     partials: Vec<i8>,
@@ -305,9 +305,7 @@ where
         destination_ring,
     )?;
     manifest.validate_carrier(&handle.committed.parameters)?;
-    if let Some(claim) = claim {
-        claim.validate(manifest.descriptor())?;
-    }
+    claim.validate(manifest.descriptor())?;
     if handle.owner != backend.owner_id()
         || context.fold_level() != 0
         || context
@@ -333,7 +331,6 @@ where
         manifest.a_rank(),
         destination_ring,
         manifest.field_profile(),
-        claim.is_some(),
         request.prime.planes().len(),
     )?;
     let ordinary_segments = if let Some((profile, ordinary_handle)) = &request.ordinary {
@@ -373,17 +370,11 @@ where
         ));
     }
     let span = tracing::info_span!("binary_root_row_partials").entered();
-    let partials = claim
-        .as_ref()
-        .map(|claim| {
-            crate::binary_root::evaluation::packed_row_partials(
-                manifest.descriptor(),
-                claim,
-                &source.sources,
-            )
-        })
-        .transpose()?
-        .unwrap_or_default();
+    let partials = crate::binary_root::evaluation::packed_row_partials(
+        manifest.descriptor(),
+        claim,
+        &source.sources,
+    )?;
     drop(span);
     let span = tracing::info_span!("binary_root_prime_digits").entered();
     let prime_digits = if request.prime.planes().is_empty() {
@@ -404,7 +395,7 @@ where
     d_digits.extend_from_slice(&prime_digits);
     let payload = digit_commitment::<F>(
         &source.setup_seed,
-        manifest.d_label(claim.is_some(), request.prime.planes().len())?,
+        manifest.d_label(request.prime.planes().len())?,
         &d_digits,
     )?;
     drop(span);
@@ -473,20 +464,14 @@ where
     let response_digits = crate::binary_root::BinaryRootRelation::response_digits(&response)?;
     drop(span);
     let span = tracing::info_span!("binary_root_evaluation_witness").entered();
-    let evaluation = preparation
-        .claim
-        .as_ref()
-        .map(|claim| {
-            crate::binary_root::BinaryEvaluationWitness::build(
-                source.manifest.descriptor(),
-                claim,
-                &preparation.partials,
-                &response,
-                challenges,
-                source.manifest.field_profile().modulus(),
-            )
-        })
-        .transpose()?;
+    let evaluation = crate::binary_root::BinaryEvaluationWitness::build(
+        source.manifest.descriptor(),
+        &preparation.claim,
+        &preparation.partials,
+        &response,
+        challenges,
+        source.manifest.field_profile().modulus(),
+    )?;
     drop(span);
     // P64 fixes K before committing the outgoing witness. Retain exactly the
     // residual used here for the later relation preparation; P128 keeps its
@@ -523,14 +508,13 @@ where
             residuals,
         });
     let span = tracing::info_span!("binary_root_repack").entered();
-    let mut natural: Vec<&[i8]> = vec![&response_digits, &source.image_digits];
-    if let Some(evaluation) = &evaluation {
-        natural.extend([
-            preparation.partials.as_slice(),
-            evaluation.parity_digits.as_slice(),
-            evaluation.value_digits.as_slice(),
-        ]);
-    }
+    let mut natural: Vec<&[i8]> = vec![
+        &response_digits,
+        &source.image_digits,
+        &preparation.partials,
+        &evaluation.parity_digits,
+        &evaluation.value_digits,
+    ];
     if preparation.plan.prime_segment().is_some() {
         natural.push(&preparation.prime_digits);
     }

@@ -44,7 +44,6 @@ pub struct BinaryPrimePlanePrice {
 /// still require their schedule's independent admission checks.
 pub fn price_binary_root_planes(
     manifest: &BinaryCommittedGroupManifest,
-    word: bool,
     prime: &PrimePlaneManifest,
     destination_ring_dimension: usize,
     ordinary: Option<GroupCommitPhaseParams>,
@@ -61,7 +60,6 @@ pub fn price_binary_root_planes(
         manifest.a_rank(),
         destination_ring_dimension,
         manifest.field_profile(),
-        word,
         prime.planes().len(),
     )?;
     if let Some(profile) = ordinary {
@@ -119,7 +117,7 @@ pub fn price_binary_root_planes(
         planes: prime.planes().len(),
         d_live_digits,
         d_columns,
-        d_rank: manifest.d_label(word, prime.planes().len())?.rank as usize,
+        d_rank: manifest.d_label(prime.planes().len())?.rank as usize,
         d_table_min_rank,
         outgoing_physical_cells,
         outgoing_domain_len: repacking.domain_len(),
@@ -261,26 +259,20 @@ mod tests {
 
     fn assert_price_matches_verifier_plan(
         manifest: &BinaryCommittedGroupManifest,
-        word: bool,
         prime: &PrimePlaneManifest,
         ordinary: Option<GroupCommitPhaseParams>,
     ) {
-        let price = price_binary_root_planes(manifest, word, prime, 64, ordinary).unwrap();
+        let price = price_binary_root_planes(manifest, prime, 64, ordinary).unwrap();
         let descriptor = manifest.descriptor();
         let index = descriptor.index_map();
-        let claim = word.then(|| {
-            BinaryTerminalClaim::new(
-                descriptor,
-                descriptor.polynomials()[0],
-                vec![
-                    [0; 21];
-                    (index.padded_carriers() / index.columns()).trailing_zeros() as usize
-                ],
-                vec![[0; 21]; index.columns().trailing_zeros() as usize],
-                [0; 21],
-            )
-            .unwrap()
-        });
+        let claim = BinaryTerminalClaim::new(
+            descriptor,
+            descriptor.polynomials()[0],
+            vec![[0; 21]; (index.padded_carriers() / index.columns()).trailing_zeros() as usize],
+            vec![[0; 21]; index.columns().trailing_zeros() as usize],
+            [0; 21],
+        )
+        .unwrap();
         let setup = akita_types::AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
@@ -289,7 +281,7 @@ mod tests {
         };
         let public = BinaryRootPublic::new(
             manifest,
-            claim.as_ref(),
+            &claim,
             prime,
             &setup,
             price.outgoing_physical_cells,
@@ -318,12 +310,12 @@ mod tests {
         );
         assert_eq!(
             price.d_rank,
-            manifest.d_label(word, prime.planes().len()).unwrap().rank as usize
+            manifest.d_label(prime.planes().len()).unwrap().rank as usize
         );
         // D commits the natural scalar digits, excluding carries, ordinary rows and K.
         let digits = index.columns()
             * 162
-            * (usize::from(word) * descriptor.polynomials().len()
+            * (descriptor.polynomials().len()
                 + prime.planes().len() * manifest.field_profile().prime_plane_digits());
         assert_eq!(price.d_live_digits, digits);
         assert_eq!(price.d_columns, digits.div_ceil(64));
@@ -372,28 +364,18 @@ mod tests {
             BinaryFieldProfile::P64,
         )
         .unwrap();
-        for word in [false, true] {
-            let price = price_binary_root_planes(&manifest, word, &prime, 64, None).unwrap();
-            assert_eq!(price.planes, 2);
-            assert_eq!(
-                price.d_live_digits,
-                (prime.planes().len() * field.prime_plane_digits() + usize::from(word)) * 162 * 2
-            );
-            assert_eq!(price.d_columns, price.d_live_digits.div_ceil(64));
-            assert_eq!(
-                price.d_rank,
-                manifest.d_label(word, 2).unwrap().rank as usize
-            );
-            assert_eq!(price.d_table_min_rank, Some(price.d_rank));
-            assert_ne!(price.d_rank, manifest.b_rows());
-            assert_price_matches_verifier_plan(&manifest, word, &prime, None);
-            assert_price_matches_verifier_plan(
-                &manifest,
-                word,
-                &prime,
-                Some(ordinary_profile(field)),
-            );
-        }
+        let price = price_binary_root_planes(&manifest, &prime, 64, None).unwrap();
+        assert_eq!(price.planes, 2);
+        assert_eq!(
+            price.d_live_digits,
+            (prime.planes().len() * field.prime_plane_digits() + 1) * 162 * 2
+        );
+        assert_eq!(price.d_columns, price.d_live_digits.div_ceil(64));
+        assert_eq!(price.d_rank, manifest.d_label(2).unwrap().rank as usize);
+        assert_eq!(price.d_table_min_rank, Some(price.d_rank));
+        assert_ne!(price.d_rank, manifest.b_rows());
+        assert_price_matches_verifier_plan(&manifest, &prime, None);
+        assert_price_matches_verifier_plan(&manifest, &prime, Some(ordinary_profile(field)));
         let foreign_prime = PrimePlaneManifest::with_field_profile(
             descriptor,
             Some(PrimeGroupClaim {
@@ -406,7 +388,7 @@ mod tests {
             BinaryFieldProfile::P128,
         )
         .unwrap();
-        assert!(price_binary_root_planes(&manifest, true, &foreign_prime, 64, None).is_err());
+        assert!(price_binary_root_planes(&manifest, &foreign_prime, 64, None).is_err());
     }
 
     #[test]
@@ -416,13 +398,11 @@ mod tests {
         {
             let manifest = manifest(3, 2, planes);
             let price =
-                price_binary_root_planes(&manifest, true, &prime(&manifest, planes), 64, None)
-                    .unwrap();
+                price_binary_root_planes(&manifest, &prime(&manifest, planes), 64, None).unwrap();
             assert_eq!(price.outgoing_physical_cells, expected_cells);
             assert_eq!(price.d_columns, expected_d);
             assert_eq!(price.segment_physical_cells.last(), Some(&(planes * 22016)));
-            assert_price_matches_verifier_plan(&manifest, true, &prime(&manifest, planes), None);
-            assert_price_matches_verifier_plan(&manifest, false, &prime(&manifest, planes), None);
+            assert_price_matches_verifier_plan(&manifest, &prime(&manifest, planes), None);
             println!("prime_plane small planes={planes}: {price:?}");
         }
     }
@@ -431,50 +411,27 @@ mod tests {
     fn prime_plane_maximum_admission_inputs_at_large_geometries() {
         let mut typed_lengths = Vec::new();
         for bits in [22, 23] {
-            for word in [false, true] {
-                for planes in [1, 2, 5] {
-                    let manifest = manifest(bits, 256, planes);
-                    let price = price_binary_root_planes(
-                        &manifest,
-                        word,
-                        &prime(&manifest, planes),
-                        64,
-                        None,
-                    )
-                    .unwrap();
-                    let base = if bits == 22 { 23138048 } else { 39915264 };
-                    let expected = planes * (base + 2818048 - if word { 0 } else { 69376 });
-                    assert_eq!(price.outgoing_physical_cells, expected);
-                    assert_eq!(
-                        price.d_columns,
-                        planes * (27864 + if word { 648 } else { 0 })
-                    );
-                    assert_eq!(price.outgoing_domain_len, expected.next_power_of_two());
-                    typed_lengths.push(price.typed_prefix.natural_len);
-                    assert_eq!(
-                        price.typed_prefix.domain_len,
-                        price.typed_prefix.natural_len.next_power_of_two()
-                    );
-                    println!("prime_plane n={bits} word={word} planes={planes}: {price:?}");
-                }
+            for planes in [1, 2, 5] {
+                let manifest = manifest(bits, 256, planes);
+                let price =
+                    price_binary_root_planes(&manifest, &prime(&manifest, planes), 64, None)
+                        .unwrap();
+                let base = if bits == 22 { 23138048 } else { 39915264 };
+                let expected = planes * (base + 2818048);
+                assert_eq!(price.outgoing_physical_cells, expected);
+                assert_eq!(price.d_columns, planes * (27864 + 648));
+                assert_eq!(price.outgoing_domain_len, expected.next_power_of_two());
+                typed_lengths.push(price.typed_prefix.natural_len);
+                assert_eq!(
+                    price.typed_prefix.domain_len,
+                    price.typed_prefix.natural_len.next_power_of_two()
+                );
+                println!("prime_plane n={bits} planes={planes}: {price:?}");
             }
         }
         assert_eq!(
             typed_lengths,
-            vec![
-                20179968, 31709184, 66296832, 20262912, 31875072, 66711552, 33554432, 40359936,
-                74947584, 33554432, 40525824, 75362304,
-            ]
+            vec![20262912, 31875072, 66711552, 33554432, 40525824, 75362304]
         );
-    }
-
-    #[test]
-    fn prime_planes_are_bounded_by_the_polynomial_manifest() {
-        let manifest = manifest(3, 2, 5);
-        let price =
-            price_binary_root_planes(&manifest, false, &prime(&manifest, 5), 64, None).unwrap();
-        assert_eq!(price.planes, 5);
-        assert_eq!(price.segment_physical_cells.last(), Some(&110080));
-        assert_eq!(price.d_columns, 1089);
     }
 }

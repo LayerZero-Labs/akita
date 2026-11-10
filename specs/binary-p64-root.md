@@ -17,7 +17,8 @@ base-field challenges, to `p = 2^64 - 59`, with quadratic-extension challenges.
 The current seven integer projections do not fit the smaller characteristic.
 Replace them with committed coefficient quotients and independent extension-field
 batching. Keep the rank-three degree-648 commitment modulo q and the
-GF(2^128) word claim. This spec approves the protocol design.
+GF(2^128) word claim. Every binary group carries this word claim; prime
+claims are optional on top. This spec approves the protocol design.
 Production security admission remains a separate requirement.
 
 ## Intent
@@ -77,7 +78,7 @@ It does not preserve binary-root proof or persisted-setup compatibility.
 
 ### Acceptance Criteria
 
-- [ ] A p64/E64 word-only, prime-only and mixed opening uses the same grouped
+- [ ] A p64/E64 word-only, word-plus-prime and mixed opening uses the same grouped
   PCS entry points, caller transcript and grinding cursor as its successor.
   Word-only and mixed are met (`crates/akita-pcs/tests/binary_end_to_end/p64.rs`);
   prime-only binary groups are being removed, so this box stays open.
@@ -283,12 +284,12 @@ Each element has d digit lanes of stride 1024.
 Order the natural digits by owner, rank row, digit, then coefficient.
 The coefficient weights use the corresponding owner, rank row and coefficient
 index i. Bind the shape, depth, segment offset and addresses in the root plan.
-K is present in word-only, prime-only and mixed roots.
+K is present in word-only, word-plus-prime and mixed roots.
 
 | Order | Required action |
 | --- | --- |
 | 0 | Bind the versioned p64/E64 statement, manifest, commitments, claims and selected schedule. |
-| 2 | Run the unchanged binary carrier field switch when a word claim is selected. |
+| 2 | Run the unchanged binary carrier field switch for the group's word claim. |
 | 3 | Commit selected U and EP views in D with the p64 encoding, digit depth and admitted rank. |
 | 4 | Draw the column challenges and accept the bounded response using the existing response rule. |
 | 5 | Commit Z, T, selected U/EP, `K_parity`, `K_value`, ordinary segments and K's digits in one outgoing witness. |
@@ -305,8 +306,7 @@ Use the existing A/T adjoint with the explicit vector rho.
 Its entries no longer come from combinations of q-valued J rows.
 
 For P64 prime claims, let
-`H_other = 2*[word] + r_B + r_D + O + 2*claims`.
-Here `[word]` is one when the word frontend is selected and zero otherwise.
+`H_other = 2 + r_B + r_D + O + 2*claims`, where 2 counts the word claim.
 The values r_B and r_D are the B and D authentication ranks.
 O counts the selected ordinary linear rows and negative-bit addresses.
 Here `planes = 2*claims`, with at most one prime point per group and at most
@@ -440,8 +440,8 @@ At `C = 256`, one base-coordinate plane has 912,384 natural digits and
 Two planes per claim have 1,824,768 natural digits and 2,883,584 physical
 cells. Five claims have ten planes, 9,123,840 natural digits and 14,417,920
 physical cells.
-Prime-only D has `ceil(planes*22*162*C/64)` columns.
-Word U adds `s*162*C` compact digits before division into degree-64 columns.
+D has `ceil((s + planes*22)*162*C/64)` columns: the word U contributes
+`s*162*C` compact digits and each prime plane `22*162*C`.
 
 P64 prime points and values are E64 elements. `PrimeClaimValue` represents
 one P128 residue or two P64 coordinates `c0 + c1*u`. Both P64 coordinates
@@ -592,7 +592,7 @@ Paths without a crate prefix in this table are under
 | `typed_prefix.rs`, `typed_prefix_weights.rs`, `a_product.rs` | Generic F/E interfaces are orchestrated only by the admitted degree-one root. | Test base setup coefficients with E64 factors, claims and successor consumption. Bind changed layouts and ranks in the prefix identity. |
 | `crates/akita-types/src/proof/commitment/binary.rs` | `new_binary` requires the P128 proof modulus and the constant payload length `BINARY_COMMITTED_PAYLOAD_COEFFICIENTS`. | Require the selected p64 profile. Size the payload from the manifest's admitted B rank. |
 | `crates/akita-types/src/proof/commitment/wire.rs`, `crates/akita-verifier/src/fold/admission.rs` | Validation and deserialization compare binary payloads with the same constant rank-two length. | Derive the expected payload length from the manifest's admitted B rank. |
-| `crates/akita-cpu-backend/src/opaque/binary_ordinary.rs` | Signed source decoding, reached from `opaque/binary.rs`, subtracts canonical coefficients from `BINARY_SETUP_P`. Over p64, a valid coefficient -1 is encoded as p-1 and would fail the signed-width check. | Decode signed values against the selected field modulus. |
+| `crates/akita-cpu-backend/src/opaque/binary_ordinary.rs` | Balanced digit decoding, reached from `opaque/binary.rs`, subtracts canonical coefficients from `BINARY_SETUP_P`. Over p64, a valid coefficient -1 is encoded as p-1 and would fail the digit check. | Decode balanced digits against the selected field modulus. |
 
 The canonical relation compiler remains the source of truth.
 Do not add a parallel p64 compiler with duplicated bounds.
@@ -645,7 +645,7 @@ The switch produces the same B terminal.
 Only its surrounding parity/value authentication moves to the new proof
 field.
 For n field-switch rounds, the error remains `(7+2n)/2^162`.
-At `n <= 23` it is at most `53/2^162 < 2^-156` per selected word frontend.
+At `n <= 23` it is at most `53/2^162 < 2^-156` per binary group's word frontend.
 Charge multiple frontends separately.
 The fixture frontend remains 2,195 bytes.
 
@@ -877,7 +877,7 @@ The stages below describe future changes; this spec commit changes no Rust.
    Use 22 digits per base coordinate and the new unit proof.
    Use E64 points and values with explicit two-plane resource accounting.
    Select the actual p64 ordinary compression/norm contract.
-   Decode signed ordinary sources against the selected field modulus.
+   Decode balanced ordinary digits against the selected field modulus.
 6. **Admit and measure the complete schedule.** Touch
    `crates/akita-types/src/binary/grinding.rs`,
    `crates/akita-pcs/examples/binary_full_size.rs` and its

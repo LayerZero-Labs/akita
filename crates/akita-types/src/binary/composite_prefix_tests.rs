@@ -139,7 +139,7 @@ fn placement_bound_holds_across_heterogeneous_domain_sequences() {
 #[test]
 fn identities_bind_seed_order_role_subset_rank_and_destination() {
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 2);
-    let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+    let typed = BinaryTypedPrefix::new(&manifest, 0, 64).unwrap();
     let local_slot = slot(typed.domain_len);
     let first = CompositePrefixBlock::binary(0, &[1; 32], &manifest, &typed, &local_slot).unwrap();
     assert_eq!(
@@ -175,8 +175,8 @@ fn identities_bind_seed_order_role_subset_rank_and_destination() {
                 .identity()
         );
     }
-    for (word, planes, ring) in [(true, 2, 64), (false, 4, 64)] {
-        let changed = BinaryTypedPrefix::new(&manifest, word, planes, ring).unwrap();
+    for (planes, ring) in [(2, 64), (4, 64)] {
+        let changed = BinaryTypedPrefix::new(&manifest, planes, ring).unwrap();
         let block = CompositePrefixBlock::binary(
             0,
             &[1; 32],
@@ -193,7 +193,7 @@ fn identities_bind_seed_order_role_subset_rank_and_destination() {
     }
     let larger = binary_word_manifest_fixture(BinaryFieldProfile::P64, 160);
     assert_ne!(manifest.b_rows(), larger.b_rows());
-    let larger_prefix = BinaryTypedPrefix::new(&larger, true, 0, 64).unwrap();
+    let larger_prefix = BinaryTypedPrefix::new(&larger, 0, 64).unwrap();
     let larger_slot = slot(larger_prefix.domain_len);
     let larger_block =
         CompositePrefixBlock::binary(0, &[1; 32], &larger, &larger_prefix, &larger_slot).unwrap();
@@ -296,7 +296,7 @@ fn malformed_rosters_domains_caps_and_counts_reject_without_tables() {
 #[test]
 fn corrupted_local_lengths_reject_before_composite_preparation() {
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
-    let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+    let typed = BinaryTypedPrefix::new(&manifest, 0, 64).unwrap();
     let mut shortened = typed.clone();
     shortened.domain_len = 256;
     assert!(CompositePrefixBlock::binary(0, &[1; 32], &manifest, &shortened, &slot(256)).is_err());
