@@ -48,7 +48,7 @@ pub(crate) struct ReducedDirectScanWeights<E> {
 pub(crate) struct GroupScanPartition<E> {
     /// Logical base-ring footprint of the group.
     pub(crate) required: usize,
-    /// Scan jobs in increasing base-ring order.
+    /// Packed D/B/A segments in increasing base-ring order.
     pub(crate) segments: Vec<GroupSetupSegment<E>>,
 }
 

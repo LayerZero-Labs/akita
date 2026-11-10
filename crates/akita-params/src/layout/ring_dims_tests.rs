@@ -7,7 +7,7 @@ use crate::{
 
 fn committed(ring_dimension: usize) -> CommittedGroupParams {
     CommittedGroupParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
+        crate::SisModulusProfileId::Q128Offset6A23801F,
         ring_dimension,
         3,
         1,
@@ -170,7 +170,7 @@ fn rejects_sub_d64_commitment_matrix_dimensions() {
 #[test]
 fn reduced_residue_oracle_tracks_every_admitted_commitment_dimension() {
     use jolt_algebra::{
-        Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+        Ext2, ExtField, Field, FpExt4, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
     };
 
     fn check<F, E>(dimension: usize)
@@ -214,6 +214,6 @@ fn reduced_residue_oracle_tracks_every_admitted_commitment_dimension() {
     for dimension in SUPPORTED_COMMITMENT_RING_DIMS {
         check::<Prime32Offset99, FpExt4<Prime32Offset99>>(dimension);
         check::<Prime64Offset59, Ext2<Prime64Offset59>>(dimension);
-        check::<Prime128OffsetA7F7, Prime128OffsetA7F7>(dimension);
+        check::<Prime128Offset6A23801F, Prime128Offset6A23801F>(dimension);
     }
 }

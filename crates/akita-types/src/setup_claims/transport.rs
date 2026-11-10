@@ -90,7 +90,7 @@ impl Reader<'_> {
                             return Err(invalid());
                         }
                         let count = self.integer()?;
-                        if count > 8 {
+                        if count > super::MAX_SETUP_QUERY_TENSOR_AXES {
                             return Err(invalid());
                         }
                         let mut axes = Vec::with_capacity(count);

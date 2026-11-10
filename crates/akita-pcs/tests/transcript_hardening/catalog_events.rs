@@ -270,8 +270,12 @@ where
     let backend = CpuBackend::new(setup.expanded.clone()).expect("backend");
     let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     assert!(
-        akita_config::TrustedScheduleCatalog::<Cfg>::verifier_admits(&setup.expanded, row)
-            .expect("admission"),
+        akita_config::TrustedScheduleCatalog::<Cfg>::verifier_admits(
+            &setup.expanded,
+            row,
+            akita_params::SetupMode::Check
+        )
+        .expect("admission"),
         "setup sized from the row must admit it"
     );
 

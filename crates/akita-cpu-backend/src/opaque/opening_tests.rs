@@ -6,10 +6,10 @@ use akita_params::*;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
 use akita_types::*;
-use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, One, Prime128Offset6A23801F, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use std::sync::Arc;
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 type E = Ext2<F>;
 
 type CpuBackend = GenericCpuBackend<F, E>;
@@ -373,7 +373,7 @@ fn witness_level_transition_requires_one_successor_commitment() {
 
 /// Tests that draw extension-field challenges through the transcript. Jolt's
 /// challenge codec needs a quadratic tower that is a field, which
-/// `Prime128OffsetA7F7` lacks, and the setup-prefix test also needs an SIS
+/// `Prime128Offset6A23801F` lacks, and the setup-prefix test also needs an SIS
 /// modulus profile for the execution field. On main only `Prime64Offset59`
 /// has both, so these tests run over it with the `Q64Offset59` profile.
 mod extension_challenges {

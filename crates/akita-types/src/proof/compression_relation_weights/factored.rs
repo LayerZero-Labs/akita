@@ -997,7 +997,7 @@ impl<E: Field> CompressionRelationWeights<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_algebra::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128Offset6A23801F as F;
     use jolt_algebra::{One, Zero};
 
     /// Deterministic full-width field elements (no external RNG).

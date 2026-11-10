@@ -843,7 +843,7 @@ pub mod crosscheck;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_algebra::Prime128OffsetA7F7 as F;
+    use jolt_algebra::Prime128Offset6A23801F as F;
     use jolt_algebra::{One, Zero};
 
     #[test]

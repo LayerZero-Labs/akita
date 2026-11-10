@@ -71,6 +71,10 @@ jobs:
         run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,logging-transcript,transcript-keccak -- -D warnings
       - name: Clippy (dev protocol)
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-keccak,dev-protocol -- -D warnings
+      - name: Rust version declarations
+        run: |
+          scripts/test-check-rust-version.sh
+          scripts/check-rust-version.sh
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -492,6 +496,13 @@ jobs:
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
+      - name: Run host challenge capture modes
+        if: matrix.backend == 'transcript-keccak'
+        run: |
+          env -u AKITA_CAPTURE_CHALLENGES cargo test --release -p akita-challenges --lib \
+            --no-default-features --features parallel,experiment-capture,transcript-keccak
+          AKITA_CAPTURE_CHALLENGES=1 cargo test --release -p akita-challenges --lib \
+            --no-default-features --features parallel,experiment-capture,transcript-keccak
       - name: Run Spongefish stream and mutation suites
         run: |
           cargo test --release -p akita-transcript \

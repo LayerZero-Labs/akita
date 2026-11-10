@@ -67,7 +67,7 @@ fn euclidean_width_goldens_match_checked_in_l2_table() {
             AkitaModulusProfileId::Q25Plus14561 | AkitaModulusProfileId::Q24Minus2523807 => {
                 panic!("binary commitment primes have no native Euclidean runtime profile")
             }
-            AkitaModulusProfileId::Q128OffsetA7F7 => SisModulusProfileId::Q128OffsetA7F7,
+            AkitaModulusProfileId::Q128Offset6A23801F => SisModulusProfileId::Q128Offset6A23801F,
             AkitaModulusProfileId::Q128Offset275 => SisModulusProfileId::Q128Offset275,
         };
         let key = sis_l2_table_key_for_collision_sq(
@@ -126,7 +126,7 @@ fn parse_family_from_q(q: &str) -> AkitaModulusProfileId {
     match q {
         "4294967197" => AkitaModulusProfileId::Q32Offset99,
         "18446744073709551557" => AkitaModulusProfileId::Q64Offset59,
-        "340282366920938463463374607427473266697" => AkitaModulusProfileId::Q128OffsetA7F7,
+        "340282366920938463463374607429987500001" => AkitaModulusProfileId::Q128Offset6A23801F,
         _ => panic!("unknown q in golden CSV: {q}"),
     }
 }

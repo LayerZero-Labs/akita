@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_types::{setup_claims::SetupClaim, AkitaExpandedSetup, AkitaSetupDescriptor};
-use jolt_algebra::Prime128OffsetA7F7 as F;
+use jolt_algebra::Prime128Offset6A23801F as F;
 use jolt_crypto::lattice::derive_public_matrix_prefix;
 
 fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>> {

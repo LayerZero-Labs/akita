@@ -169,14 +169,14 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
     let inner_key = sis_table_key_for_linf_bound(
         DEFAULT_SIS_SECURITY_POLICY,
         SisTableDigest::CURRENT,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         SisMatrixRole::Inner,
         u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
         32_767,
     )
     .expect("audited prefix A bound");
     let inner_digits = akita_params::sis::compute_num_digits_field_width(
-        SisModulusProfileId::Q128OffsetA7F7.field_bits(),
+        SisModulusProfileId::Q128Offset6A23801F.field_bits(),
         1,
     );
     let inner_commit_matrix =
@@ -186,7 +186,7 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
         SisTableKey {
             policy: DEFAULT_SIS_SECURITY_POLICY,
             table_digest: SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
             role: SisMatrixRole::Outer,
             ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
             coeff_linf_bound: 3,

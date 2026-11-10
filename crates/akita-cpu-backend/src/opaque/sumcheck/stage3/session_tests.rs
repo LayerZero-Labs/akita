@@ -1,6 +1,6 @@
 use super::*;
 use crate::opaque::{ProofContext, ProofScope};
-use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
+use jolt_algebra::{One, Prime128Offset6A23801F as F, Zero};
 
 fn proof_scope<B: jolt_algebra::Field, E>(
     backend: &CpuBackend<B, E>,

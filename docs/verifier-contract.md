@@ -64,6 +64,12 @@ squeezing. Message length, pool size, binomial tables and decoding use checked
 arithmetic and fallible allocation. A message whose operator-norm pool runs
 out returns `AkitaError::InvalidProof` and poisons the verifier state.
 
+Checked sparse-challenge advice is bounded before copying by a trusted byte
+budget supplied to `install_checked_hints`. Duplicate sessions and malformed
+frames reject before tape allocation; allocation failure returns `AkitaError`.
+See [checked challenge advice](../book/src/how/verification.md#checked-challenge-advice)
+for the caller contract and cleanup requirements.
+
 ## Rules
 
 1. Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.

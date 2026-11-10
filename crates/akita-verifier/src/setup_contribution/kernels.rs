@@ -1,10 +1,9 @@
-use super::PhysicalBWeightTerm;
-use akita_algebra::row_batch::WeightedRowBatch;
+use super::{DirectScanWeights, PhysicalBWeightTerm};
 use akita_error::AkitaError;
-use jolt_algebra::CyclotomicRing;
-use jolt_algebra::{ExtField, Field, MulBaseUnreduced};
+#[cfg(test)]
+use jolt_algebra::{ExtField, MulBaseUnreduced};
+use jolt_algebra::{Field, Unreduced, Zero};
 
-#[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {
     pub(super) lo: usize,
     pub(super) hi: usize,
@@ -19,58 +18,6 @@ pub(crate) struct GroupSetupSegment<E> {
     pub(super) a_row_weight: E,
 }
 
-macro_rules! dispatch_segment_roles {
-    ($segment:expr, $none:expr, |$has_d:ident, $has_b:ident, $has_a:ident| $body:block) => {{
-        match ($segment.has_d, $segment.has_b, $segment.has_a) {
-            (true, true, true) => {
-                const $has_d: bool = true;
-                const $has_b: bool = true;
-                const $has_a: bool = true;
-                $body
-            }
-            (true, true, false) => {
-                const $has_d: bool = true;
-                const $has_b: bool = true;
-                const $has_a: bool = false;
-                $body
-            }
-            (true, false, true) => {
-                const $has_d: bool = true;
-                const $has_b: bool = false;
-                const $has_a: bool = true;
-                $body
-            }
-            (false, true, true) => {
-                const $has_d: bool = false;
-                const $has_b: bool = true;
-                const $has_a: bool = true;
-                $body
-            }
-            (true, false, false) => {
-                const $has_d: bool = true;
-                const $has_b: bool = false;
-                const $has_a: bool = false;
-                $body
-            }
-            (false, true, false) => {
-                const $has_d: bool = false;
-                const $has_b: bool = true;
-                const $has_a: bool = false;
-                $body
-            }
-            (false, false, true) => {
-                const $has_d: bool = false;
-                const $has_b: bool = false;
-                const $has_a: bool = true;
-                $body
-            }
-            (false, false, false) => $none,
-        }
-    }};
-}
-
-pub(super) use dispatch_segment_roles;
-
 pub(super) enum RoleProjection<E> {
     Identity,
     Projected {
@@ -78,13 +25,6 @@ pub(super) enum RoleProjection<E> {
         shift: usize,
         mask: usize,
     },
-}
-
-impl<E: Field> RoleProjection<E> {
-    #[inline(always)]
-    pub(super) fn is_identity(&self) -> bool {
-        matches!(self, Self::Identity)
-    }
 }
 
 pub(super) fn role_projection<E: Field>(
@@ -120,242 +60,175 @@ pub(super) fn role_projection<E: Field>(
     })
 }
 
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn base_ring_segment_inner_sum_typed<
-    F,
-    E,
-    const D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
->(
-    range: std::ops::Range<usize>,
-    setup_flat: &[CyclotomicRing<F, D>],
-    base_pows: &[E],
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-    d_projection: &RoleProjection<E>,
-    b_projection: &RoleProjection<E>,
-    a_projection: &RoleProjection<E>,
-) -> Result<E, AkitaError>
-where
-    F: Field,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    let setup = setup_flat
-        .get(range.clone())
-        .ok_or(AkitaError::InvalidProof)?;
-    // Rows with a zero weight contribute nothing; the rest go through the
-    // shared-powers kernel in bounded batches.
-    let mut batch = WeightedRowBatch::new(base_pows);
-    for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
-        range,
-        segment,
-        e_eq,
-        t_eq,
-        z_eq,
-        d_projection,
-        b_projection,
-        a_projection,
-        |offset, weight| {
-            if !weight.is_zero() {
-                let ring = setup.get(offset).ok_or(AkitaError::InvalidProof)?;
-                batch.push(ring.coefficients(), weight);
-            }
-            Ok(())
-        },
-    )?;
-    Ok(batch.finish())
+/// An accumulator for a sum of products of field elements.
+///
+/// The setup scan uses one for each ring's weight, for each job's outer sum,
+/// and for the reduced path's per-class scalars. [`DelayedProductSum`] defers
+/// reduction for fields whose product sums are exact; [`CanonicalProductSum`]
+/// reduces every product. Both finish to the same field element.
+pub(super) trait ProductSum<E: Unreduced> {
+    fn zero() -> Self;
+    fn add_product(&mut self, lhs: E, rhs: E);
+    fn finish(self) -> E;
 }
 
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn for_each_base_ring_segment_weight_typed<
-    E,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
->(
-    range: std::ops::Range<usize>,
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-    d_projection: &RoleProjection<E>,
-    b_projection: &RoleProjection<E>,
-    a_projection: &RoleProjection<E>,
-    mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
-) -> Result<(), AkitaError>
-where
-    E: Field,
-{
-    let len = range
-        .end
-        .checked_sub(range.start)
-        .ok_or(AkitaError::InvalidProof)?;
-    let identity =
-        d_projection.is_identity() && b_projection.is_identity() && a_projection.is_identity();
-    if identity {
-        let d_eq = checked_role_eq_slice::<E, HAS_D>(e_eq, range.start, len, segment.d_start_abs)?;
-        let a_eq = checked_role_eq_slice::<E, HAS_A>(z_eq, range.start, len, segment.a_start_abs)?;
-        let mut d_eq = d_eq.iter();
-        let mut a_eq = a_eq.iter();
-        for offset in 0..len {
-            let mut weight = E::zero();
-            if HAS_D {
-                weight += segment.d_weight * *d_eq.next().ok_or(AkitaError::InvalidProof)?;
-            }
-            if HAS_B {
-                weight +=
-                    projected_b_role_weight_at(range.start + offset, segment, t_eq, b_projection)?;
-            }
-            if HAS_A {
-                weight += segment.a_row_weight * *a_eq.next().ok_or(AkitaError::InvalidProof)?;
-            }
-            visit(offset, weight)?;
-        }
-        return Ok(());
+pub(super) struct DelayedProductSum<E: Unreduced>(E::Product);
+
+impl<E: Unreduced> ProductSum<E> for DelayedProductSum<E> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self(E::Product::zero())
     }
 
-    for offset in 0..len {
-        let base_idx = range
-            .start
-            .checked_add(offset)
-            .ok_or(AkitaError::InvalidProof)?;
-        let weight = base_ring_segment_weight_at::<E, HAS_D, HAS_B, HAS_A>(
-            base_idx,
-            segment,
-            e_eq,
-            t_eq,
-            z_eq,
+    #[inline(always)]
+    fn add_product(&mut self, lhs: E, rhs: E) {
+        self.0 += lhs.mul_unreduced(rhs);
+    }
+
+    #[inline(always)]
+    fn finish(self) -> E {
+        E::reduce_product(self.0)
+    }
+}
+
+pub(super) struct CanonicalProductSum<E>(E);
+
+impl<E: Unreduced> ProductSum<E> for CanonicalProductSum<E> {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self(E::zero())
+    }
+
+    #[inline(always)]
+    fn add_product(&mut self, lhs: E, rhs: E) {
+        self.0 += lhs * rhs;
+    }
+
+    #[inline(always)]
+    fn finish(self) -> E {
+        self.0
+    }
+}
+
+/// Add the D/B/A weights `segment` assigns to the base rings of `overlap`.
+///
+/// `slots[0]` is base ring `overlap.start`. Each role adds
+/// `row_weight · eq[role(b) − start] · scale(b)` to every base ring `b`, one
+/// contiguous pass per role, so the hot loop carries no per-ring dispatch.
+pub(super) fn add_segment_weights<E, A>(
+    slots: &mut [A],
+    overlap: std::ops::Range<usize>,
+    segment: &GroupSetupSegment<E>,
+    weights: &DirectScanWeights<E>,
+    [a_projection, b_projection, d_projection]: [&RoleProjection<E>; 3],
+) -> Result<(), AkitaError>
+where
+    E: Field + Unreduced,
+    A: ProductSum<E>,
+{
+    if segment.has_d {
+        add_role_weights(
+            slots,
+            overlap.clone(),
+            segment.d_start_abs,
+            segment.d_weight,
+            &weights.e,
             d_projection,
-            b_projection,
+        )?;
+    }
+    if segment.has_b {
+        for term in segment.b_terms.iter() {
+            let t = weights
+                .t
+                .get(term.logical_start..)
+                .ok_or(AkitaError::InvalidProof)?;
+            add_role_weights(
+                slots,
+                overlap.clone(),
+                segment.b_start_abs,
+                term.row_weight,
+                t,
+                b_projection,
+            )?;
+        }
+    }
+    if segment.has_a {
+        add_role_weights(
+            slots,
+            overlap,
+            segment.a_start_abs,
+            segment.a_row_weight,
+            &weights.z,
             a_projection,
         )?;
-        visit(offset, weight)?;
     }
     Ok(())
 }
 
-fn checked_role_eq_slice<E, const ACTIVE: bool>(
-    eq: &[E],
-    base_start: usize,
-    len: usize,
-    role_start: usize,
-) -> Result<&[E], AkitaError> {
-    if !ACTIVE {
-        return Ok(&[]);
-    }
-    let start = base_start
-        .checked_sub(role_start)
-        .ok_or(AkitaError::InvalidProof)?;
-    let end = start.checked_add(len).ok_or(AkitaError::InvalidProof)?;
-    eq.get(start..end).ok_or(AkitaError::InvalidProof)
-}
-
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn base_ring_segment_weight_at<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
-    base_idx: usize,
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-    d_projection: &RoleProjection<E>,
-    b_projection: &RoleProjection<E>,
-    a_projection: &RoleProjection<E>,
-) -> Result<E, AkitaError>
-where
-    E: Field,
-{
-    let mut weight = E::zero();
-    if HAS_D {
-        weight += projected_role_weight_at(
-            base_idx,
-            segment.d_start_abs,
-            segment.d_weight,
-            e_eq,
-            d_projection,
-        )?;
-    }
-    if HAS_B {
-        weight += projected_b_role_weight_at(base_idx, segment, t_eq, b_projection)?;
-    }
-    if HAS_A {
-        weight += projected_role_weight_at(
-            base_idx,
-            segment.a_start_abs,
-            segment.a_row_weight,
-            z_eq,
-            a_projection,
-        )?;
-    }
-    Ok(weight)
-}
-
-#[inline(always)]
-fn projected_b_role_weight_at<E: Field>(
-    base_idx: usize,
-    segment: &GroupSetupSegment<E>,
-    weights: &[E],
-    projection: &RoleProjection<E>,
-) -> Result<E, AkitaError> {
-    let (role_idx, scale) = projected_role_index_and_scale(base_idx, projection)?;
-    let local = role_idx
-        .checked_sub(segment.b_start_abs)
-        .ok_or(AkitaError::InvalidProof)?;
-    let mut weight = E::zero();
-    for term in segment.b_terms.iter() {
-        let logical = term
-            .logical_start
-            .checked_add(local)
-            .and_then(|index| weights.get(index))
-            .copied()
-            .ok_or(AkitaError::InvalidProof)?;
-        weight += term.row_weight * logical;
-    }
-    Ok(scale.map_or(weight, |scale| weight * scale))
-}
-
-#[inline(always)]
-fn projected_role_weight_at<E: Field>(
-    base_idx: usize,
+fn add_role_weights<E, A>(
+    slots: &mut [A],
+    range: std::ops::Range<usize>,
     start_abs: usize,
     row_weight: E,
-    eq_slice: &[E],
+    eq: &[E],
     projection: &RoleProjection<E>,
-) -> Result<E, AkitaError> {
-    let (role_idx, scale) = projected_role_index_and_scale(base_idx, projection)?;
-    let eq_idx = role_idx
-        .checked_sub(start_abs)
-        .ok_or(AkitaError::InvalidProof)?;
-    let weight = row_weight * *eq_slice.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
-    Ok(scale.map_or(weight, |scale| weight * scale))
-}
-
-#[inline(always)]
-fn projected_role_index_and_scale<E: Field>(
-    base_idx: usize,
-    projection: &RoleProjection<E>,
-) -> Result<(usize, Option<E>), AkitaError> {
-    Ok(match projection {
-        RoleProjection::Identity => (base_idx, None),
+) -> Result<(), AkitaError>
+where
+    E: Field + Unreduced,
+    A: ProductSum<E>,
+{
+    if slots.len() != range.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    match projection {
+        RoleProjection::Identity => {
+            let first = range
+                .start
+                .checked_sub(start_abs)
+                .ok_or(AkitaError::InvalidProof)?;
+            let end = first
+                .checked_add(slots.len())
+                .ok_or(AkitaError::InvalidProof)?;
+            let eq = eq.get(first..end).ok_or(AkitaError::InvalidProof)?;
+            for (slot, &eq) in slots.iter_mut().zip(eq) {
+                slot.add_product(row_weight, eq);
+            }
+        }
         RoleProjection::Projected {
             scales,
             shift,
             mask,
-        } => (
-            base_idx >> shift,
-            Some(
-                *scales
-                    .get(base_idx & mask)
-                    .ok_or(AkitaError::InvalidProof)?,
-            ),
-        ),
-    })
+        } => {
+            // One role ring covers `scales.len()` consecutive base rings: its
+            // weighted equality value is formed once, then scaled per lane.
+            let mut slots = slots.iter_mut();
+            let mut base = range.start;
+            while base < range.end {
+                let role = base >> shift;
+                let role_end = role
+                    .checked_add(1)
+                    .and_then(|next| next.checked_mul(scales.len()))
+                    .ok_or(AkitaError::InvalidProof)?
+                    .min(range.end);
+                let eq_index = role
+                    .checked_sub(start_abs)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let value = row_weight * *eq.get(eq_index).ok_or(AkitaError::InvalidProof)?;
+                for base_idx in base..role_end {
+                    let scale = *scales
+                        .get(base_idx & mask)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    slots
+                        .next()
+                        .ok_or(AkitaError::InvalidProof)?
+                        .add_product(value, scale);
+                }
+                base = role_end;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -256,10 +256,10 @@ impl<E: Field> PreparedReducedRelationPoint<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_algebra::{One, Ring, Zero};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     fn point_for(field_len: usize) -> Vec<F> {
         (0..field_len.trailing_zeros() as usize)

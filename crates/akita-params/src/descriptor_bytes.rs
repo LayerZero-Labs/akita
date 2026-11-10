@@ -26,7 +26,7 @@ pub fn sis_modulus_profile_tag(family: SisModulusProfileId) -> u8 {
     match family {
         SisModulusProfileId::Q32Offset99 => 0,
         SisModulusProfileId::Q64Offset59 => 1,
-        SisModulusProfileId::Q128OffsetA7F7 => 2,
+        SisModulusProfileId::Q128Offset6A23801F => 2,
         // Tag 3 stays unassigned: it is the slot of the retired Q16 profile.
         SisModulusProfileId::Q128Offset275 => 4,
     }

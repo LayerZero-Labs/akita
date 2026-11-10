@@ -689,7 +689,7 @@ mod linf_matrix_tests {
     const STATIC_OUTER: OuterCommitMatrixParams = OuterCommitMatrixParams::new_unchecked(
         DEFAULT_SIS_SECURITY_POLICY,
         SisTableDigest::CURRENT,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         128,
         7,
@@ -725,7 +725,7 @@ mod linf_matrix_tests {
         let open = OpenCommitMatrixParams::new_unchecked(
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             64,
             128,
             7,

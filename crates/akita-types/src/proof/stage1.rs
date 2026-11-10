@@ -196,7 +196,7 @@ mod tests {
         let linf = InnerCommitSecurityRoute::Linf(SisTableKey {
             policy: SisSecurityPolicyId::Quantum169BitADPS16,
             table_digest: SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
             role: akita_params::SisMatrixRole::Inner,
             ring_dimension: 64,
             coeff_linf_bound: 1,
@@ -209,7 +209,7 @@ mod tests {
             table_key: SisL2TableKey {
                 policy: SisSecurityPolicyId::Quantum169BitADPS16,
                 table_digest: SisL2TableDigest::CURRENT,
-                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
                 ring_dimension: 64,
                 collision_l2_sq: 1,
             },
