@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{Unreduced, Zero};
+use jolt_field::Unreduced;
 
 /// One distinct coefficient functional over the shared setup base rings.
 ///
@@ -23,50 +23,6 @@ impl<'a, E> ReducedFunctionalClass<'a, E> {
         self.functional
             .get(start..end)
             .ok_or(AkitaError::InvalidProof)
-    }
-}
-
-trait ProductSum<E: Unreduced> {
-    fn zero() -> Self;
-    fn add_product(&mut self, lhs: E, rhs: E);
-    fn finish(self) -> E;
-}
-
-struct DelayedProductSum<E: Unreduced>(E::Product);
-
-impl<E: Unreduced> ProductSum<E> for DelayedProductSum<E> {
-    #[inline(always)]
-    fn zero() -> Self {
-        Self(E::Product::zero())
-    }
-
-    #[inline(always)]
-    fn add_product(&mut self, lhs: E, rhs: E) {
-        self.0 += lhs.mul_unreduced(rhs);
-    }
-
-    #[inline(always)]
-    fn finish(self) -> E {
-        E::reduce_product(self.0)
-    }
-}
-
-struct CanonicalProductSum<E>(E);
-
-impl<E: Unreduced> ProductSum<E> for CanonicalProductSum<E> {
-    #[inline(always)]
-    fn zero() -> Self {
-        Self(E::zero())
-    }
-
-    #[inline(always)]
-    fn add_product(&mut self, lhs: E, rhs: E) {
-        self.0 += lhs * rhs;
-    }
-
-    #[inline(always)]
-    fn finish(self) -> E {
-        self.0
     }
 }
 
@@ -94,6 +50,35 @@ where
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     let (functional_classes, scan_groups) = reduced_functional_classes::<_, BASE_D>(plan, weights)?;
+    // A single base-ring functional is independent of the physical ring
+    // index, so the scan is the lifted weighted scan with that functional as
+    // its powers and identity role projections. Mixed dimensions or distinct
+    // functionals retain the general per-class path.
+    if let [class] = functional_classes.as_slice() {
+        if class.ratio == 1 {
+            if partitions.len() != plan.groups().len() {
+                return Err(AkitaError::InvalidSetup(
+                    "cached setup scan geometry is malformed".into(),
+                ));
+            }
+            let identity = RoleProjection::Identity;
+            let groups = plan
+                .groups()
+                .iter()
+                .zip(weights)
+                .zip(partitions)
+                .map(|((group, direct), partition)| {
+                    ScanGroup::new(
+                        group,
+                        partition,
+                        &direct.weights,
+                        [&identity, &identity, &identity],
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return evaluate_weighted_scan(plan, setup_view, class.functional, &groups);
+        }
+    }
     if E::SUM_IS_EXACT {
         evaluate_groups_reduced_with::<F, _, BASE_D, DelayedProductSum<E>>(
             plan,
@@ -185,24 +170,14 @@ where
     A: ProductSum<E>,
 {
     let required = plan.projection_geometry().required();
-    if plan.d_weights().len() != plan.d_rows()
-        || scan_groups.len() != plan.groups().len()
-        || partitions.len() != plan.groups().len()
-    {
+    if scan_groups.len() != plan.groups().len() || partitions.len() != plan.groups().len() {
         return Err(AkitaError::InvalidSetup(
             "cached setup scan geometry is malformed".into(),
         ));
     }
     let setup_flat = setup_view.as_slice();
-    let job_rings = super::super::segments::SETUP_SCAN_JOB_RINGS;
+    let job_rings = SETUP_SCAN_JOB_RINGS;
     let num_jobs = required.div_ceil(job_rings);
-    // A single base-ring functional is independent of the physical ring index,
-    // so every row of a job goes through the field's weighted row kernel. Mixed
-    // dimensions or distinct functionals retain the general per-class path.
-    let shared_functional = match functional_classes {
-        [class] if class.ratio == 1 => Some(class.functional),
-        _ => None,
-    };
     cfg_try_fold_reduce!(
         0..num_jobs,
         E::zero,
@@ -213,16 +188,6 @@ where
                 .ok_or(AkitaError::InvalidProof)?
                 .min(required);
             let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
-            let mut shared_rows = Vec::new();
-            let mut shared_weights = Vec::new();
-            if shared_functional.is_some() {
-                shared_rows.try_reserve_exact(setup.len()).map_err(|_| {
-                    AkitaError::InvalidSetup("reduced scan row allocation failed".into())
-                })?;
-                shared_weights.try_reserve_exact(setup.len()).map_err(|_| {
-                    AkitaError::InvalidSetup("reduced scan weight allocation failed".into())
-                })?;
-            }
             let mut segment_cursors = partitions
                 .iter()
                 .map(|partition| {
@@ -258,25 +223,15 @@ where
                 for (class, scalar) in functional_classes.iter().zip(&mut class_scalars) {
                     let scalar = std::mem::replace(scalar, A::zero()).finish();
                     if !scalar.is_zero() {
-                        if shared_functional.is_some() {
-                            shared_rows.push(ring.coefficients().as_slice());
-                            shared_weights.push(scalar);
-                        } else {
-                            let functional = class.chunk::<BASE_D>(base_idx)?;
-                            term.add_product(
-                                MulBaseUnreduced::dot_base(functional, ring.coefficients()),
-                                scalar,
-                            );
-                        }
+                        let functional = class.chunk::<BASE_D>(base_idx)?;
+                        term.add_product(
+                            MulBaseUnreduced::dot_base(functional, ring.coefficients()),
+                            scalar,
+                        );
                     }
                 }
             }
-            let contribution = if let Some(functional) = shared_functional {
-                E::weighted_dot_base_rows(&shared_rows, &shared_weights, functional)
-            } else {
-                term.finish()
-            };
-            Ok(acc + contribution)
+            Ok(acc + term.finish())
         },
         |lhs, rhs| Ok(lhs + rhs)
     )
