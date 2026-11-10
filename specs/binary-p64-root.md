@@ -168,8 +168,8 @@ For projection-induced scheduling changes, the proof delta is
 `-84 + bytes(new selected schedule) - bytes(old selected schedule)`.
 Base-field encoding changes and B/D rank changes contribute separately.
 Prime planes shrink from 43 to 22 digits per base coordinate.
-There is no exact complete-proof size until a p64 catalog selects the domains
-and successor schedule.
+Complete proof sizes from the full-size example are in the measurement table
+below.
 
 The prover reuses the accepted integer residual.
 It replaces seven projections and their J-to-rho combination with `a` exact
@@ -184,10 +184,34 @@ The verifier draws `a` E64 weights and evaluates K's digit weights.
 A direct compiler uses `O(a)` challenge work and `O(a*d)` digit-weight work.
 The existing rank-many A/image adjoints avoid an online scan over m A rows.
 Stream weights at large owner counts where the compiler permits it.
-Benchmark tiny, `2^22` and `2^23` word, prime and mixed shapes with
-`crates/akita-pcs/examples/binary_full_size.rs` and its catalog module.
-Report complete bytes, selected domains, prefix size, time and peak memory.
-Measure the two-coordinate A adjoint separately.
+The two-coordinate A adjoint has not been measured separately.
+
+The table below compares the two roots with
+`scripts/binary-full-size.sh --field p128|p64` at commit `8046b4cd2`.
+It was run once per row on an M4 Max shared with other jobs (one-minute load
+7.7 to 13.9), so times are indicative only; bytes are exact.
+"Carriers" is the number of committed binary carriers; the shapes are the
+example's `binary-claim`, `binary-and-prime-claims` and
+`binary-and-prime-claims-plus-ordinary` ("plus-ordinary").
+
+| Carriers | Shape | Root | Proof bytes | Commit ms | Prove ms | Verify ms | Prover RSS GB | Verifier RSS MB |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2^22 | binary-claim | P128 | 82,764 | 174 | 648 | 8.5 | 2.70 | 73 |
+| 2^22 | binary-claim | P64 | 79,236 | 207 | 1,045 | 11.0 | 2.27 | 66 |
+| 2^22 | binary-and-prime-claims | P128 | 84,437 | 212 | 1,145 | 11.9 | 3.97 | 154 |
+| 2^22 | binary-and-prime-claims | P64 | 83,536 | 162 | 907 | 9.3 | 2.68 | 82 |
+| 2^22 | plus-ordinary | P128 | 84,396 | 297 | 1,647 | 19.8 | 4.30 | 166 |
+| 2^22 | plus-ordinary | P64 | 83,531 | 185 | 1,103 | 15.9 | 3.15 | 105 |
+| 2^23 | binary-claim | P128 | 84,590 | 296 | 922 | 9.5 | 4.85 | 156 |
+| 2^23 | binary-claim | P64 | 83,684 | 296 | 1,072 | 10.4 | 3.81 | 83 |
+| 2^23 | binary-and-prime-claims | P128 | 84,604 | 294 | 993 | 9.6 | 4.97 | 155 |
+| 2^23 | binary-and-prime-claims | P64 | 83,586 | 293 | 1,132 | 10.8 | 3.93 | 83 |
+| 2^23 | plus-ordinary | P128 | 84,613 | 295 | 1,049 | 13.1 | 5.17 | 174 |
+| 2^23 | plus-ordinary | P64 | 83,671 | 296 | 1,249 | 16.7 | 4.33 | 112 |
+
+P64 proofs are 1.0 to 4.3 percent smaller, and P64 peak memory is 16 to 32
+percent lower on the prover and 10 to 47 percent lower on the verifier.
+At this load, the timing differences are within run-to-run noise.
 
 ## Design
 
