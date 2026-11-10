@@ -1,105 +1,16 @@
 //! Fixed-seed first-round baselines. Fixture preparation is outside timing.
-//!
-//! The module declarations below compile the existing private CPU kernels with
-//! their original ancestor paths. No production visibility or implementation changes.
-
-#[path = "../src/arithmetic/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-pub(crate) mod arithmetic;
-#[path = "range_sumcheck_rounds/cache/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-mod cache;
-#[path = "../src/commitment/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-pub(crate) mod commitment;
-#[path = "../src/kernels/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-pub(crate) mod kernels;
-#[path = "../src/opaque/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-pub(crate) mod opaque;
-#[path = "../src/portable_witness.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-mod portable_witness;
-#[path = "../src/setup/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-pub(crate) mod setup;
-#[path = "../src/sources/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-pub(crate) mod sources;
-#[path = "../src/validation.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-mod validation;
-pub use portable_witness::{CompressionWitnessFragment, PortableWitnessPatch};
-
-use akita_algebra::CyclotomicRing;
-use akita_error::{checked, AkitaError};
-use akita_types::RingVec;
-use jolt_field::Field;
-
-pub(crate) use akita_prover::protocol;
-pub use commitment::{
-    GroupContext, PortableCompressionOutput, PortableCompressionState, SetupPrefixProverRegistry,
-    SetupPrefixSlot,
-};
-pub use opaque::standalone;
-pub use opaque::{
-    evaluate_root_polynomial, CpuBackend, CpuExportPacket, CpuImportPacket, CpuPacketDescriptor,
-    CpuPacketSections, PreparedCrtNttProfile, PreparedNttCacheMetric, RootPolyMeta, RootPolyShape,
-    RootPolynomialEvaluator, SuccessorEncoding, SuccessorSection, SuccessorSectionDescriptor,
-};
-pub use opaque::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
-pub use setup::AkitaProverSetup;
-pub use sources::{DensePoly, OneHotIndex, OneHotPoly, OneHotSource};
-
-// Root imports required by the existing source modules' cfg(test) helpers.
-#[cfg(test)]
-#[allow(unused_imports)]
-mod custom_source {
-    pub(crate) use crate::sources::poly::SourceCoefficients;
-    pub(crate) use crate::sources::signed_blocks::SignedBlockPoly;
-}
-
-/// Prover-side output of the inner Ajtai commit step.
-///
-/// Ring dimension is stored by the single flat A-ring buffer. Public commit
-/// parameters own the source-block and row boundaries.
-#[allow(dead_code)]
-pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
-    recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
-) -> Result<RingVec<F>, AkitaError> {
-    let row_count = checked::sum(recomposed_inner_rows.iter().map(Vec::len))
-        .ok_or_else(|| AkitaError::Internal("inner commitment row count overflow".into()))?;
-    let coefficient_count = checked::product([row_count, D]).ok_or_else(|| {
-        AkitaError::Internal("inner commitment coefficient count overflow".into())
-    })?;
-    let mut coefficients = Vec::with_capacity(coefficient_count);
-    for block in recomposed_inner_rows {
-        for row in block {
-            coefficients.extend_from_slice(row.coefficients());
-        }
-    }
-    RingVec::from_coeffs_with_ring_dim(coefficients, D)
-}
-
-#[cfg(test)]
-#[path = "../src/tests/mod.rs"]
-#[allow(dead_code, unused_imports, unused_macros, unreachable_pub)]
-mod tests;
 
 use akita_algebra::eq_poly::EqPolynomial;
+use akita_cpu_backend::benchmark_support::{
+    DenseRelationWeights, LowBasisRangeCheckProver, PackedSignedDigits, PreparedProverLinearTerms,
+    RelationRangeImageProver, RelationWeightOracle,
+};
 use akita_params::DigitRangePlan;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+use jolt_field::{Field, One, Prime128OffsetA7F7 as F, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::hint::black_box;
-
-use opaque::sumcheck::digit_range::LowBasisRangeCheckProver;
-use opaque::sumcheck::relation_range_image::{
-    DenseRelationWeights, PreparedProverLinearTerms, RelationRangeImageProver, RelationWeightOracle,
-};
-use sources::packed_digits::PackedSignedDigits;
 
 const LANE_BITS: usize = 6;
 const COEFFICIENT_BITS: usize = 6;

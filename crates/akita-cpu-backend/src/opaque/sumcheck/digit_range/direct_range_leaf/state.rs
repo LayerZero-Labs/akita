@@ -17,7 +17,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     /// Returns an error if the plan has product stages, if any declared
     /// width overflows, or if the witness or `tau0` length disagrees with
     /// the declared `(live_x_cols, col_bits, ring_bits)` shape.
-    pub(crate) fn new(
+    pub fn new(
         digit_witness: PackedSignedDigits,
         tau0: &[E],
         plan: DigitRangePlan,

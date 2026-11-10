@@ -18,15 +18,6 @@ const NUM_VARIABLES: usize = 16;
 
 // Test-only constructors and readback for the prepared linear terms.
 impl<E: Field> PreparedProverLinearTerms<E> {
-    pub(crate) fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
-        Self {
-            lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
-            sources: Vec::new(),
-            live_lane_count,
-            coeff_count,
-        }
-    }
-
     pub(crate) fn from_dense(dense: Vec<E>, live_lane_count: usize, coeff_count: usize) -> Self {
         assert_eq!(dense.len(), live_lane_count * coeff_count);
         let mut lane_terms = vec![Vec::new(); live_lane_count];

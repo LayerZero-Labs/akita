@@ -219,7 +219,7 @@ pub(crate) struct StructuredLinearWeights<E: Field> {
 /// Scalar factors are compiled once. Source-coordinate vectors stay factored while
 /// coefficient coordinates are folded; lane challenges then merge the prepared support
 /// directly. No full coefficient-domain weight table is materialized.
-pub(crate) struct PreparedProverLinearTerms<E: Field> {
+pub struct PreparedProverLinearTerms<E: Field> {
     pub(super) lane_weights: PreparedLaneWeights<E>,
     pub(super) sources: Vec<PreparedTraceSource<E>>,
     pub(super) live_lane_count: usize,
@@ -227,6 +227,16 @@ pub(crate) struct PreparedProverLinearTerms<E: Field> {
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
+    /// Prepare an empty linear contribution for the declared Stage-2 geometry.
+    pub fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
+        Self {
+            lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
+            sources: Vec::new(),
+            live_lane_count,
+            coeff_count,
+        }
+    }
+
     /// Prepare a rank-one response-norm term over validated Stage-2 geometry.
     pub(crate) fn from_response_norm_factors(
         coefficient_weights: Vec<E>,
