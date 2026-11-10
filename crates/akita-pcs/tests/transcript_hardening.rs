@@ -3,7 +3,7 @@
 #[cfg(feature = "logging-transcript")]
 #[path = "transcript_hardening/catalog_events.rs"]
 mod catalog_events;
-mod common;
+use crate::common;
 
 use akita_cpu_backend::CpuBackend;
 #[cfg(feature = "logging-transcript")]

@@ -1,7 +1,7 @@
 use super::*;
 
 /// Run `$func` on the prepared base of `$slot`. Only the bases field `$field`
-/// can select are compiled; see [`FieldCrtBases`].
+/// can select are compiled; see [`crt_profile_selectable`].
 macro_rules! dispatch_slot {
     ($field:ty, $slot:expr, $num_rows:expr, $num_cols:expr, $func:ident $(, $arg:expr)*) => {{
         let nr: usize = $num_rows;
@@ -17,17 +17,17 @@ macro_rules! dispatch_slot {
             }};
         }
         'dispatch: {
-            if FieldCrtBases::<$field>::Q32 {
+            if const { crt_profile_selectable::<$field>(CrtNttProfile::Q32) } {
                 if let Some(base) = $slot.q32_base() {
                     break 'dispatch run_base!(base);
                 }
             }
-            if FieldCrtBases::<$field>::Q64 {
+            if const { crt_profile_selectable::<$field>(CrtNttProfile::Q64) } {
                 if let Some(base) = $slot.q64_base() {
                     break 'dispatch run_base!(base);
                 }
             }
-            if FieldCrtBases::<$field>::Q128 {
+            if const { crt_profile_selectable::<$field>(CrtNttProfile::Q128) } {
                 if let Some(base) = $slot.q128_base() {
                     break 'dispatch run_base!(base);
                 }

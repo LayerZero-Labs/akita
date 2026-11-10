@@ -22,7 +22,7 @@ use jolt_algebra::{
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-mod common;
+use crate::common;
 use common::load_workspace_scheme;
 #[cfg(feature = "logging-transcript")]
 use common::mutations::{

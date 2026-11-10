@@ -150,17 +150,17 @@ pub fn centered_quotient_rows_with_i16_tail<F: Field + CanonicalEncoding, const 
             )
         }};
     }
-    if FieldCrtBases::<F>::Q32 {
+    if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } {
         if let (Some(neg), Some(cyc)) = (negacyclic_slot.q32_base(), cyclic_slot.q32_base()) {
             return dispatch!(neg, cyc);
         }
     }
-    if FieldCrtBases::<F>::Q64 {
+    if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } {
         if let (Some(neg), Some(cyc)) = (negacyclic_slot.q64_base(), cyclic_slot.q64_base()) {
             return dispatch!(neg, cyc);
         }
     }
-    if FieldCrtBases::<F>::Q128 {
+    if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } {
         if let (Some(neg), Some(cyc)) = (negacyclic_slot.q128_base(), cyclic_slot.q128_base()) {
             return dispatch!(neg, cyc);
         }

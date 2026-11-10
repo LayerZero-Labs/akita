@@ -130,7 +130,9 @@ pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize
     rhs_abs_bound: u64,
 ) -> Result<Option<ExactCachePlan<D>>, AkitaError> {
     match selected {
-        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => {
+        ProtocolCrtNttParams::Q32(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
+        {
             if let Some(needs_tail) = ifma52_tail_requirement::<F, 1, D>(
                 [IFMA52_PRIMES[0]],
                 I16_TAIL_PRIME.p as u128,
@@ -159,7 +161,9 @@ pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize
                 }))
             }
         }
-        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => {
+        ProtocolCrtNttParams::Q64(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } =>
+        {
             if matches!(
                 ifma52_tail_requirement::<F, 2, D>(
                     [IFMA52_PRIMES[0], IFMA52_PRIMES[1]],
@@ -185,7 +189,9 @@ pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize
                 needs_tail,
             }))
         }
-        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => {
+        ProtocolCrtNttParams::Q128(params)
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } =>
+        {
             let requirement = |tail_modulus: u128| {
                 ifma52_tail_requirement::<F, 3, D>(
                     IFMA52_PRIMES,
@@ -222,7 +228,7 @@ pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize
                 }))
             }
         }
-        _ => Err(FieldCrtBases::<F>::unselectable_base()),
+        _ => Err(unselectable_crt_profile_error::<F>()),
     }
 }
 
@@ -293,18 +299,26 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
     }
 
     let prepared = match plan {
-        ExactCachePlan::Q32 { params, needs_tail } if FieldCrtBases::<F>::Q32 => {
+        ExactCachePlan::Q32 { params, needs_tail }
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
+        {
             homogeneous!(params, Q32, needs_tail)
         }
-        ExactCachePlan::Q32Ifma52 { params, needs_tail } if FieldCrtBases::<F>::Q32 => {
+        ExactCachePlan::Q32Ifma52 { params, needs_tail }
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
+        {
             let (neg, tail) =
                 prepare_ifma52_exact(matrix, tail_prefix_len, *params, I16_TAIL_PRIME, needs_tail)?;
             PreparedNttCacheRepr::Q32Ifma52 { neg, tail }
         }
-        ExactCachePlan::Q64 { params, needs_tail } if FieldCrtBases::<F>::Q64 => {
+        ExactCachePlan::Q64 { params, needs_tail }
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } =>
+        {
             homogeneous!(params, Q64, needs_tail)
         }
-        ExactCachePlan::Q64Ifma52 { params } if FieldCrtBases::<F>::Q64 => {
+        ExactCachePlan::Q64Ifma52 { params }
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } =>
+        {
             if tail_prefix_len.is_some_and(|length| length > 0) {
                 return Err(AkitaError::InvalidSetup(
                     "IFMA52 exact cache does not require an i16 tail".into(),
@@ -314,10 +328,14 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
                 neg: Ifma52NttMatrix::prepare(matrix.as_slice(), &params),
             }
         }
-        ExactCachePlan::Q128 { params, needs_tail } if FieldCrtBases::<F>::Q128 => {
+        ExactCachePlan::Q128 { params, needs_tail }
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } =>
+        {
             homogeneous!(params, Q128, needs_tail)
         }
-        ExactCachePlan::Q128Ifma52 { params, needs_tail } if FieldCrtBases::<F>::Q128 => {
+        ExactCachePlan::Q128Ifma52 { params, needs_tail }
+            if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } =>
+        {
             // A tail retained without a planned one is exactness-only: the
             // base primes suffice, so it takes the cheaper 14-bit prime.
             let tail_prime = q128_primes()[0];
@@ -350,7 +368,7 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
             }
             PreparedNttCacheRepr::Limbs(PreparedLimbMatrix::prepare(matrix, plan))
         }
-        _ => return Err(FieldCrtBases::<F>::unselectable_base()),
+        _ => return Err(unselectable_crt_profile_error::<F>()),
     };
     prepared.validate()?;
     Ok(PreparedNttCache(prepared))

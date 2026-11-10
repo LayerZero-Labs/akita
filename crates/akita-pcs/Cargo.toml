@@ -18,6 +18,7 @@ keywords = [
   "post-quantum",
 ]
 categories = ["cryptography", "algorithms"]
+autotests = false
 include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
@@ -249,6 +250,10 @@ serde = { version = "1", features = ["derive"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 libc = "0.2"
 
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
 [[example]]
 name = "profile"
 path = "examples/profile/main.rs"
@@ -294,3 +299,27 @@ harness = false
 
 [lints]
 workspace = true
+
+[[test]]
+name = "binary_source_end_to_end"
+path = "tests/binary_source_end_to_end.rs"
+
+[[test]]
+name = "borrowed_session"
+path = "tests/borrowed_session.rs"
+
+[[test]]
+name = "golden_proof_digests"
+path = "tests/golden_proof_digests.rs"
+
+[[test]]
+name = "ordinary_grouped_root_bytes"
+path = "tests/ordinary_grouped_root_bytes.rs"
+
+[[test]]
+name = "q128_offset275_e2e"
+path = "tests/q128_offset275_e2e.rs"
+
+[[test]]
+name = "zero_knowledge"
+path = "tests/zero_knowledge.rs"
