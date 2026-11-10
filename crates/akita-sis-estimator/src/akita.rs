@@ -14,8 +14,8 @@ pub enum AkitaModulusProfileId {
     Q32Offset99,
     /// `2^64 - 59`.
     Q64Offset59,
-    /// `2^128 - (2^32 - 22537)`.
-    Q128OffsetA7F7,
+    /// `2^128 - 1780711455`.
+    Q128Offset6A23801F,
 }
 
 impl AkitaModulusProfileId {
@@ -28,7 +28,7 @@ impl AkitaModulusProfileId {
         match label {
             "q32" | "Q32Offset99" => Ok(Self::Q32Offset99),
             "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
-            "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
+            "q128" | "Q128Offset6A23801F" => Ok(Self::Q128Offset6A23801F),
             _ => Err(EstimatorError::InvalidParameter {
                 field: "modulus_profile",
                 reason: format!("unknown Akita modulus profile {label:?}"),
@@ -42,7 +42,7 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => akita_q32(),
             Self::Q64Offset59 => akita_q64(),
-            Self::Q128OffsetA7F7 => akita_q128(),
+            Self::Q128Offset6A23801F => akita_q128(),
         }
     }
 
@@ -52,7 +52,7 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => "q32",
             Self::Q64Offset59 => "q64",
-            Self::Q128OffsetA7F7 => "q128",
+            Self::Q128Offset6A23801F => "q128",
         }
     }
 }
@@ -62,7 +62,7 @@ impl From<akita_params::sis::SisModulusProfileId> for AkitaModulusProfileId {
         match profile {
             akita_params::sis::SisModulusProfileId::Q32Offset99 => Self::Q32Offset99,
             akita_params::sis::SisModulusProfileId::Q64Offset59 => Self::Q64Offset59,
-            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7 => Self::Q128OffsetA7F7,
+            akita_params::sis::SisModulusProfileId::Q128Offset6A23801F => Self::Q128Offset6A23801F,
         }
     }
 }

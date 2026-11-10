@@ -402,7 +402,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
     let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
         .expect("multi-group test ring dimension has a production challenge");
     let lp = CommittedGroupParams::params_only(
-        akita_params::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128Offset6A23801F,
         MULTI_GROUP_D,
         3,
         2,
@@ -413,7 +413,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
     .with_decomp(4, 16, 2, 2, 2)
     .expect("multi-group main params");
     let mut precommit_lp = CommittedGroupParams::params_only(
-        akita_params::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128Offset6A23801F,
         MULTI_GROUP_D,
         3,
         2,

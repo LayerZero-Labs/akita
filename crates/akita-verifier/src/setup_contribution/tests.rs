@@ -13,7 +13,7 @@ use akita_types::{
     AkitaExpandedSetup, AkitaSetupDescriptor, PhysicalBSetupPlan, PreparedRelationAddress,
     SetupContributionGroupInputs,
 };
-use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
+use jolt_field::{CanonicalEncoding, One, Prime128Offset6A23801F, Zero};
 
 mod address_spans;
 mod direct_evaluation_regressions;
@@ -23,7 +23,7 @@ mod prepare;
 mod reduced_shared;
 mod span_evaluators;
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 const TEST_D: usize = 64;
 type StructuredWeightFixture = (
     TestSetupInputs,
@@ -222,7 +222,7 @@ fn test_inputs_for_group_sizes(
 ) -> TestSetupInputs {
     let num_claims: usize = group_sizes.iter().copied().sum();
     let mut lp = CommittedGroupParams::params_only(
-        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
         TEST_D,
         log_basis,
         n_a,
@@ -250,7 +250,7 @@ fn test_inputs_for_group_sizes(
             akita_params::OuterCommitMatrixParams::new_unchecked(
                 akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 akita_params::sis::SisTableDigest::CURRENT,
-                akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
                 n_b,
                 expected_b_width,
                 3,
@@ -261,7 +261,7 @@ fn test_inputs_for_group_sizes(
         let a_bound = akita_params::sis::rounded_up_role_a_inf_norm(
             akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
             akita_params::sis::SisTableDigest::CURRENT,
-            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
             TEST_D,
             lp.open().digits.log_basis,
             &lp.fold_challenge_config(),
@@ -273,7 +273,7 @@ fn test_inputs_for_group_sizes(
             akita_params::InnerCommitMatrixParams::new_unchecked(
                 akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 akita_params::sis::SisTableDigest::CURRENT,
-                akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
                 n_a,
                 lp.inner().matrix.input_width(),
                 a_bound,
@@ -285,7 +285,7 @@ fn test_inputs_for_group_sizes(
             akita_params::OuterCommitMatrixParams::new_unchecked(
                 akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 akita_params::sis::SisTableDigest::CURRENT,
-                akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
                 n_b,
                 lp.outer().matrix.input_width(),
                 3,

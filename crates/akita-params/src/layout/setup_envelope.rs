@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn commit_only_envelope_prices_complete_sliced_b_image() {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             64,
             4,
             1,
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn compression_envelope_covers_maps_that_dominate_direct_matrices() {
         let params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             64,
             4,
             2,
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn compression_envelope_includes_the_setup_prefix_group() {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             64,
             4,
             2,

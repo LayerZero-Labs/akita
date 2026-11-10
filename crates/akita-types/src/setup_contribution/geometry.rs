@@ -33,9 +33,9 @@ pub fn ensure_setup_envelope<F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {

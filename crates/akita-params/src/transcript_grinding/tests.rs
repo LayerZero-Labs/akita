@@ -37,7 +37,7 @@ fn full_capacity_security_inequality_holds_for_every_supported_target() {
 
 #[test]
 fn exact_pseudo_mersenne_orders_meet_the_security_bound_with_minimal_bits() {
-    const FP128_MODULUS: u128 = 340_282_366_920_938_463_463_374_607_427_473_266_697;
+    const FP128_MODULUS: u128 = 340_282_366_920_938_463_463_374_607_429_987_500_001;
     const FP64_MODULUS: u128 = 18_446_744_073_709_551_557;
     const FP32_MODULUS: u128 = 4_294_967_197;
 
@@ -98,7 +98,7 @@ fn exact_pseudo_mersenne_orders_meet_the_security_bound_with_minimal_bits() {
 
 #[test]
 fn exact_orders_above_the_comparison_width_require_no_small_loss_grinding() {
-    const FP128_MODULUS: u128 = 340_282_366_920_938_463_463_374_607_427_473_266_697;
+    const FP128_MODULUS: u128 = 340_282_366_920_938_463_463_374_607_429_987_500_001;
     let quadratic = ChallengeFieldOrder::from_field(128, 2, FP128_MODULUS).unwrap();
     assert_eq!(quadratic.grind_bits(2).unwrap(), 0);
     assert_eq!(quadratic.grind_bits(u64::MAX).unwrap(), 0);

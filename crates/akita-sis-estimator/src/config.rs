@@ -163,7 +163,7 @@ impl OptimizerConfig {
     pub fn validate(&self) -> Result<()> {
         match *self {
             Self::Fixed { beta, zeta: _ } => validate_min_beta("optimizer.beta", beta),
-            Self::OptimizeBeta { zeta: _, .. } => Ok(()),
+            Self::OptimizeBeta { .. } => Ok(()),
             Self::OptimizeZeta { .. } => Ok(()),
         }
     }

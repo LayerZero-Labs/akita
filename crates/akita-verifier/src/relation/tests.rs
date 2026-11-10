@@ -9,11 +9,11 @@ use akita_types::{
     relation_rhs_coeff_len, AkitaSetupDescriptor, PreparedRelationAddress,
     RingRelationGroupOpening, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
 };
-use jolt_field::{Fp32, One, Prime128OffsetA7F7, Zero};
+use jolt_field::{Fp32, One, Prime128Offset6A23801F, Zero};
 
 type F = Fp32<251>;
 const D: usize = 128;
-type MixedF = Prime128OffsetA7F7;
+type MixedF = Prime128Offset6A23801F;
 const D_INNER: usize = 128;
 const D_PROJECTED: usize = 64;
 
@@ -59,7 +59,7 @@ impl MixedReplayFixture {
 
 fn mixed_replay_fixture(mode: akita_params::RingRelationMode) -> MixedReplayFixture {
     let mut lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         D_INNER,
         2,
         1,

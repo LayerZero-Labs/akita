@@ -15,30 +15,30 @@ use akita_types::{
     relation_rhs_coeff_len, AkitaExpandedSetup, AkitaSetupDescriptor, RingMultiplierOpeningPoint,
     RingRelationGroupOpening, RingRelationInstance, RingVec,
 };
-use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7};
+use jolt_field::{CanonicalEncoding, Prime128Offset6A23801F};
 
 /// Inputs for one exact production relation-evaluator benchmark cell.
 pub struct RelationEvaluatorBenchmarkCase {
     /// Prepared verifier evaluator.
-    pub evaluator: RelationMatrixEvaluator<Prime128OffsetA7F7>,
+    pub evaluator: RelationMatrixEvaluator<Prime128Offset6A23801F>,
     /// Complete coefficient/lane/column evaluation point.
-    pub point: Vec<Prime128OffsetA7F7>,
+    pub point: Vec<Prime128Offset6A23801F>,
     /// Expanded public setup scanned by direct evaluation.
-    pub setup: AkitaExpandedSetup<Prime128OffsetA7F7>,
+    pub setup: AkitaExpandedSetup<Prime128Offset6A23801F>,
     /// Ring-switch alpha challenge.
-    pub alpha: Prime128OffsetA7F7,
+    pub alpha: Prime128Offset6A23801F,
 }
 
 /// One production-prepared relation evaluation used for isolated phase timing.
 pub struct PreparedRelationEvaluatorBenchmark<'a> {
-    prepared: PreparedDirectRelation<'a, Prime128OffsetA7F7>,
+    prepared: PreparedDirectRelation<'a, Prime128Offset6A23801F>,
 }
 
 impl RelationEvaluatorBenchmarkCase {
     /// Prepare the production relation point, setup-contribution plan, and
     /// direct setup scan (column weights and packed segments).
     pub fn prepare(&self) -> Result<PreparedRelationEvaluatorBenchmark<'_>, AkitaError> {
-        let prepared = PreparedDirectRelation::prepare::<Prime128OffsetA7F7>(
+        let prepared = PreparedDirectRelation::prepare::<Prime128Offset6A23801F>(
             &self.evaluator,
             &self.point,
             self.alpha,
@@ -51,25 +51,28 @@ impl PreparedRelationEvaluatorBenchmark<'_> {
     /// Scan the active setup exactly once with the prepared direct scan.
     pub fn setup_scan(
         self,
-        setup: &AkitaExpandedSetup<Prime128OffsetA7F7>,
-    ) -> Result<Prime128OffsetA7F7, AkitaError> {
-        self.prepared.evaluate_setup::<Prime128OffsetA7F7>(setup)
+        setup: &AkitaExpandedSetup<Prime128Offset6A23801F>,
+    ) -> Result<Prime128Offset6A23801F, AkitaError> {
+        self.prepared
+            .evaluate_setup::<Prime128Offset6A23801F>(setup)
     }
 
     /// Evaluate only the non-setup relation weight.
-    pub fn relation_weight(self) -> Result<Prime128OffsetA7F7, AkitaError> {
+    pub fn relation_weight(self) -> Result<Prime128Offset6A23801F, AkitaError> {
         self.prepared
-            .evaluate_relation_weight::<Prime128OffsetA7F7>()
+            .evaluate_relation_weight::<Prime128Offset6A23801F>()
     }
 
     /// Evaluate the structured group contribution only.
-    pub fn structured_groups(self) -> Result<Prime128OffsetA7F7, AkitaError> {
-        self.prepared.evaluate_structured::<Prime128OffsetA7F7>()
+    pub fn structured_groups(self) -> Result<Prime128Offset6A23801F, AkitaError> {
+        self.prepared
+            .evaluate_structured::<Prime128Offset6A23801F>()
     }
 
     /// Evaluate the quotient-tail contribution, identically zero in reduced mode.
-    pub fn quotient_tail(self) -> Result<Prime128OffsetA7F7, AkitaError> {
-        self.prepared.evaluate_quotient_tail::<Prime128OffsetA7F7>()
+    pub fn quotient_tail(self) -> Result<Prime128Offset6A23801F, AkitaError> {
+        self.prepared
+            .evaluate_quotient_tail::<Prime128Offset6A23801F>()
     }
 }
 
@@ -98,7 +101,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     outgoing_ring_dimension: usize,
     witness_chunks: usize,
 ) -> Result<RelationEvaluatorBenchmarkCase, AkitaError> {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const A_D: usize = 128;
     const NUM_CLAIMS: usize = 2;
     const NUM_LIVE_BLOCKS: usize = 64;
@@ -116,7 +119,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         ));
     }
     let mut level_params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         A_D,
         LOG_BASIS,
         N_A,
@@ -286,6 +289,6 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     })
 }
 
-fn scalar(value: u128) -> Prime128OffsetA7F7 {
-    Prime128OffsetA7F7::from_u128_checked(value).expect("benchmark scalar must be canonical")
+fn scalar(value: u128) -> Prime128Offset6A23801F {
+    Prime128Offset6A23801F::from_u128_checked(value).expect("benchmark scalar must be canonical")
 }
