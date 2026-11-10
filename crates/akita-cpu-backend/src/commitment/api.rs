@@ -61,7 +61,7 @@ pub struct GroupContext<'a> {
 }
 
 impl<'a> GroupContext<'a> {
-    /// Extension seam: bind an explicitly selected source group to its ordered context.
+    /// Extension seam: number of precommitted groups, the zero-based position of this group.
     /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
     pub fn group_index(&self) -> usize {
         self.precommitted_groups.as_slice().len()
@@ -105,6 +105,26 @@ impl<'a> GroupContext<'a> {
     pub const fn explicit(profile: &'a GroupCommitPhaseParams) -> Self {
         Self {
             precommitted_groups: PrecommittedGroupContext::NoPrecommittedGroups,
+            parameter_source: GroupParameterSource::Explicit(profile),
+        }
+    }
+
+    /// Extension seam: select an explicit profile with a borrowed precommitted-group roster.
+    /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
+    ///
+    /// Binary commits check the carrier profile and use only the roster length to
+    /// check the manifest's setup group. Each precommitted group's profile is checked
+    /// when its commitment is admitted to an opening. This is commit-side support only;
+    /// the binary opening entry points do not yet open a group at index > 0.
+    /// For ordinary sources, the explicit profile alone determines the commitment;
+    /// the roster is not read.
+    #[must_use]
+    pub const fn explicit_with_precommitted_groups(
+        profile: &'a GroupCommitPhaseParams,
+        precommitteds: &'a PrecommittedGroupProfiles,
+    ) -> Self {
+        Self {
+            precommitted_groups: PrecommittedGroupContext::WithPrecommittedGroups(precommitteds),
             parameter_source: GroupParameterSource::Explicit(profile),
         }
     }
