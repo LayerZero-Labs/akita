@@ -94,8 +94,8 @@ Extend `root_plan_tests.rs`, `typed_prefix_tests.rs` and the CPU Stage 2 oracle
 tests with heterogeneous group geometries, setup seeds, ranks and owner subsets.
 Test non-power-of-two roster sizes and offsets that cross power-of-two
 boundaries. Use genuinely non-base E64 points for every adjoint and translated
-weight test. Test the one-point API with word-only, prime-only and both claim
-kinds. Test each group's early and late response retries and sampler exhaustion.
+weight test. Test the one-point API with word-only and word-plus-prime
+claims. Test each group's early and late response retries and sampler exhaustion.
 Test all `G_b in {1,2,4}` and `G_o in {0,1,3,4}` combinations end to end. Check
 transcript continuation, complete grinding-plan consumption and exact EOF. Test
 full-field ordinary recomposition. Check count overflow, aggregate caps,
@@ -152,11 +152,12 @@ A binary group contains:
   payload, A/B setup identities and carrier/suffix compatibility profile. `N_b =
   4m_b C_b` padded carriers **per polynomial**. Its q image has rank three in
   `Z_q[Y]/(Y^648-Y^324+1)`, with `q = 14,253,409`.
-* Either or both of: one word claim on one owned polynomial, over
-  `H = GF(2^128)`; one common prime point `x_b` with a nonempty ordered
-  subset of owned polynomials and one value per selected polynomial. Let `w_b`
-  be the word-presence bit and `t_b` the number of claimed prime polynomials.
-  Require `w_b + [t_b>0] >= 1`. Each claim owns `degree` base-coordinate EP
+* One word claim on one owned polynomial, over `H = GF(2^128)`, and
+  optionally one common prime point `x_b` with a nonempty ordered subset of
+  owned polynomials and one value per selected polynomial. Every binary group
+  carries its word claim; prime claims are optional on top, and prime-field
+  data without a word claim belongs in an ordinary group. Let `t_b` be the
+  number of claimed prime polynomials (possibly zero). Each claim owns `degree` base-coordinate EP
   planes (two for P64, one for P128) and contributes two Stage 2 identities
   (over E64 for P64), as in the [64-bit root](binary-p64-root.md#prime-planes). No extra
   tensor-component choice or alternate point survives into this API.
@@ -225,11 +226,11 @@ Absorb this record, in order:
    count, then canonical base coefficients as eight-byte residues `<p`. For
    binary B, the count is `64 r_B,b`. A rank/ring is never taken from an
    unvalidated payload length. Ordinary counts come from the frozen profile.
-4. For each binary occurrence: word presence, and if present its owner index,
-   full H point and value; prime presence, and if present one E64 point with its
+4. For each binary occurrence: its word claim (owner index, full H point and
+   value); prime presence, and if present one E64 point with its
    prescribed dimension, `t_b`, and strictly increasing owner indices with their
    E64 values. Reject repeated owners, conflicting values, duplicate requests
-   and empty presence records. H elements are 16 little-endian polynomial-basis bytes; F_p
+   and empty prime records. H elements are 16 little-endian polynomial-basis bytes; F_p
    elements are eight.
 5. For each ordinary occurrence: prescribed point dimension and E64 coordinates,
    prescribed evaluation count and values, in owner order. E64 encoding is two
@@ -266,7 +267,7 @@ deployment may select smaller trusted limits.
 | Binary dimensions | `m_b,C_b` powers of two; `1 <= m_b <= 8192`, `1 <= C_b <= 256`; `N_b=4m_b C_b <= 2^23` |
 | Binary input words | `ell_b` power of two in `[1,128]`; `1 <= logical_len_b <= N_b*(128/ell_b)` |
 | Total input volume | `sum_b s_b N_b <= 2^28`; `sum_o s_o n_o <= 2^28`; `v_o <= 25` |
-| Prime claims `t_b` | `0 <= t_b <= s_b`; `sum_b t_b <= 4096`; zero only if word present; physical planes `= degree*t_b` |
+| Prime claims `t_b` | `0 <= t_b <= s_b`; `sum_b t_b <= 4096`; zero for a word-only group; physical planes `= degree*t_b` |
 | Binary fold coordinates | `I=sum_b s_b C_b <= 4096*256 = 1,048,576` |
 | Residual coefficients | `a=sum_b 1944s_b <= 7,962,624` |
 | Setup/ring parameters | Binary q A rank 3/degree 648; B/D degree 64 and rank 1..5; ordinary native degrees at most 648, each profile otherwise independently admitted |
@@ -348,7 +349,7 @@ For B/D resource and estimator selection, use
 
 ```
 width_B,b = (s_b*C_b*3*8*648)/64 = 243*s_b*C_b
-width_D,b = ceil((w_b*s_b*162*C_b + 22*degree*t_b*162*C_b)/64)
+width_D,b = ceil((s_b*162*C_b + 22*degree*t_b*162*C_b)/64)
 ```
 
 Select the least rank whose q64 `(degree=64, digit_difference=7)` width cap
@@ -379,7 +380,7 @@ or independently seeded proof transcripts.
 |---|---|
 | 0 | Bind the complete statement, all earlier commitments, setups, layouts and the one suffix schedule. No group may be appended afterward. |
 | 1 | No library message. Application reductions have already produced the admitted single claims. |
-| 2 | For each binary b with w_b=1, send its 128 H carrier partials; draw its seven B selector coordinates; run n_b=log2(N_b) quadratic B rounds, message before challenge; send its B terminal value. All these frontends finish before order 3. Group indices label every frontend atom. No frontend is needed for a prime-only group. |
+| 2 | For each binary b, send its 128 H carrier partials; draw its seven B selector coordinates; run n_b=log2(N_b) quadratic B rounds, message before challenge; send its B terminal value. All these frontends finish before order 3. Group indices label every frontend atom. |
 | 3 | Construct all U and EP planes. Send D_0,...,D_(G_b-1), in order, each with exactly 64*r_D,b base coefficients. This is a barrier: every D and every frontend terminal is fixed before any response coordinate can be queried. Freeze the common post-D prefix Pi. |
 | 4 | Search each group's response nonce at its Pi-bound local address. After absorbing each candidate, run its priced column proof of work, then draw its indexed challenges and check response admission. Collect accepted response/work nonces and replay them in group order. Bind canonical supports in (group,owner,column) order to the live transcript. No ordinary response draw occurs. |
 | 5 | Build all accepted responses Z_b, residual quotients K_b, existing T/U/EP and carries, and all ordinary preimages. Send exactly one outgoing commitment C_W for their concatenation. No response vector or quotient is sent in clear. |
@@ -585,15 +586,14 @@ retain the legacy local order:
 |---|---:|---:|---:|---:|
 | Z_b | `s_b m_b` | 4 | 648 | 1024 |
 | T_b | `3s_b C_b` | 8 | 648 | 1024 |
-| U_b, if word | `s_b C_b` | 1 | 162 | 256 |
-| Cpar_b, if word | `s_b` | dpar_b | 162 | 256 |
-| Cval_b, if word | `s_b` | 6 | 162 | 256 |
+| U_b | `s_b C_b` | 1 | 162 | 256 |
+| Cpar_b | `s_b` | dpar_b | 162 | 256 |
+| Cval_b | `s_b` | 6 | 162 | 256 |
 | EP_b, if prime | `degree*t_b C_b` | 22 | 162 | 256 |
 | K_b, in final quotient bank | `3s_b` | dK_b | 648 | 1024 |
 
-When a word is selected, the all-owner U/carry shapes preserve current layout;
-only the selected word owner's reading rows are active. A group without a word
-has no U/carry segments. An optimization to omit unused owner views
+The all-owner U/carry shapes preserve current layout; only the word owner's
+reading rows are active. An optimization to omit unused owner views
 would need a new layout version. The prime subset is in increasing owner order,
 then base-coordinate order within each claim.
 There is no EP for an unclaimed polynomial and no per-point expansion.
@@ -638,7 +638,7 @@ The map widths include their prescribed bit expansion. Do not multiply them by
 
 ```
 L_b = 4096*s_b*m_b + 24576*s_b*C_b
-    + w_b*256*s_b*(C_b+dpar_b+6)
+    + 256*s_b*(C_b+dpar_b+6)
     + 5632*degree*t_b*C_b + 3072*s_b*dK_b.
 W_min = next_power_of_two(max(destination_ring_degree, sum_b L_b + sum_o L_o)).
 ```
@@ -728,7 +728,7 @@ is:
 
 1. All quotient defects, in `(binary group,owner,A row,natural coefficient)`
    order, with independent E64 weights rho_b,j,r,t.
-2. For each binary group: selected word parity/value rows (two ring rows),
+2. For each binary group: word parity/value rows (two ring rows),
    B authentication rows, D authentication rows, then the prime response and
    reading rows (two ring rows per claim).
 3. For each ordinary group: A image rows, B rows, first/second compression rows,
@@ -748,7 +748,7 @@ complete-preimage grammar, generalized to p64, has
 ```
 O_o = s_o*h_o*r_A,o + slices_o*r_B,o + 2 + s_o
 H_o = width_map1*degree_map1 + width_map2*degree_map2
-Batches = sum_b (1944*s_b + 2*w_b + r_B,b + r_D,b + 2*t_b)
+Batches = sum_b (1944*s_b + 2 + r_B,b + r_D,b + 2*t_b)
           + sum_o (O_o + H_o).
 ```
 
@@ -859,7 +859,7 @@ already supplied by the application,
 
 ```
 B_open = B_shared(W,Pfx,schedule)
-       + sum_b [w_b*(2048 + 42*log2(N_b) + 21)
+       + sum_b [2048 + 42*log2(N_b) + 21
                 + 512*r_D,b + nu(response_nonce_b) + work_bytes_b]
        + framing(profile).
 ```
@@ -1081,7 +1081,7 @@ A safe unfiltered ledger per complete interactive attempt is:
 | Event | Charge or condition |
 |---|---|
 | Binary extraction addresses | Conditional unfiltered `I/2^136`; priced column charge `sum_b q_b*2^-g_b*I_b/2^136` in the query ledger |
-| Field switches | `sum_b w_b*(7+2*log2(N_b))/2^162`; at N<=2^23 each term <=53/2^162 |
+| Field switches | `sum_b (7+2*log2(N_b))/2^162`; at N<=2^23 each term <=53/2^162 |
 | Quotient integer lift | Zero additional error under each group's strict bound and digit checks |
 | Common ring switch | At most `d_alpha/e`, where d_alpha is the maximum actual ring-polynomial degree across selected rows; reduced degree <=647, conservative admitted numerator 648; if any unreduced product is used, use its actual bound, up to 1294, instead |
 | One independent row batch | At most `1/e` for its fixed nonzero defect vector |
@@ -1301,8 +1301,8 @@ changed lines, including tests; split mechanical test fixtures if needed. Split 
    pair, one prefix evaluation and one ordinary successor. Remove the hardcoded
    first/second-group dispatch only for the new profile. End-to-end tests in
    `crates/akita-pcs/tests/binary_end_to_end.rs` cover the full Cartesian
-   set `G_b in {1,2,4}` and `G_o in {0,1,3,4}`, including prime-only, word-only
-   and both. Compare transcript continuation and exact EOF. Test each group
+   set `G_b in {1,2,4}` and `G_o in {0,1,3,4}`, including word-only and
+   word-plus-prime groups. Compare transcript continuation and exact EOF. Test each group
    commitment, claim owner, point/value, D, nonce and setup identity tampering;
    reorder/remove/duplicate groups; reject an unconsumed prefix. **Follows p64,
    one-point and PRs 1–8**. No fallback or second opening is introduced.

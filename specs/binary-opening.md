@@ -18,7 +18,7 @@ Several binary and ordinary groups in one opening are specified in
 [binary-multigroup.md](binary-multigroup.md).
 
 A binary source is a commitment-group kind in the canonical grouped PCS. The
-caller commits, supplies an optional binary word claim over GF(2^128) and/or
+caller commits, supplies a binary word claim over GF(2^128) and optional
 prime evaluation claims, and uses the
 ordinary grouped opening entry points inside the caller's transcript. A carrier-level
 field switch produces an internal binary terminal before the root checks
@@ -27,7 +27,7 @@ negacyclic witness. The existing grouped recursion and terminal then finish
 the same proof.
 
 The implementation is available through the default-off `binary`
-feature. Selecting a binary source handle and a word or prime claim selects the
+feature. Selecting a binary source handle and its word claim selects the
 extension at runtime. Enabling the feature alone does not select it. Ordinary
 groups retain their existing encoding and protocol path.
 
@@ -97,7 +97,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding>
 
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
-        word: Option<BinaryWordClaim>,
+        claim: BinaryWordClaim,
         primes: Option<PrimeGroupClaim>,
     ) -> Result<Self, AkitaError>;
 }
@@ -149,11 +149,11 @@ identify the state transitions of the binary source opening contract.
 
 | Order | Implemented action | Fixed before the next challenge |
 | --- | --- | --- |
-| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the optional word claim, the single canonical P point once followed by polynomial/value pairs in polynomial order, and any ordinary point/value. | The complete public statement. |
-| 2 | If a word claim is selected, send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
-| 3 | Commit the selected U table and every EP plane in one ordinary D payload. U uses one digit; EP coefficients use 43 centered balanced digits. | The complete D payload precedes all column challenges. |
+| 0 | Bind caller context, setup, selected schedule, group kinds, commitments, binary manifest, the word claim, the optional single canonical P point once followed by polynomial/value pairs in polynomial order, and any ordinary point/value. | The complete public statement. |
+| 2 | Send 128 H carrier partials; draw seven B row-selector coordinates; run n degree-two B sumcheck rounds; send the whole-carrier terminal value. | All partials precede the row selector; each round message precedes its challenge; the terminal precedes U and the column challenges. |
+| 3 | Commit the U table and every EP plane in one ordinary D payload. U uses one digit; EP coefficients use 43 centered balanced digits. | The complete D payload precedes all column challenges. |
 | 4 | Send the ordinary response nonce and draw the indexed binary column challenges; the mixed ordinary group uses complete preimages rather than a column-fold response. | The accepted bounded response Z. |
-| 5 | Commit the outgoing witness containing Z/T digits for every polynomial, selected U/EP views and selected K/K_val; a mixed opening also includes ordinary commitment preimages. | Every witness segment, including Z and T, precedes projection rows. |
+| 5 | Commit the outgoing witness containing Z/T digits for every polynomial, U, K, K_val and the selected EP views; a mixed opening also includes ordinary commitment preimages. | Every witness segment, including Z and T, precedes projection rows. |
 | 6 | Draw seven exactly uniform q-valued rows J, then send the seven signed integer values y in order. Check each encoding, bound and divisibility by q. | The outgoing commitment precedes J; all seven y precede output batching. |
 | 7 | Draw the shared ring-switch challenge, range-image point and independent relation-batching weights, whose first seven entries are the output scalars mu; form rho = sum_l mu_l J_l and compile the non-A public weights. | All tested tables, commitments and projection values. |
 | 8 | Run the ordinary Stage 1 range-image sumcheck with the base-eight digit alphabet. | The range-image terminal precedes Stage 2 batching. |
@@ -282,7 +282,7 @@ RA_i = rem_Psi(sum_j A_ij z_j - sum_b iota(c_b) T_(b,i))
 y_l = <J_l, RA>,  y_l = 0 (mod q),  l = 0..6
 ```
 
-When a word claim is present, the root also enforces:
+The root also enforces the word claim:
 
 ```text
 rem_Phi(sum_r Br V0_r - sum_b U_b c_b) = 2 K
@@ -296,8 +296,7 @@ the binary fold challenge. K has nine balanced base-eight digits per
 coefficient and K_val has six. These carry tables are committed at order 5 and
 never transmitted in the clear. A word opening has five base binary segments:
 response, image, U, K and K_val, with EP appended when prime planes are selected.
-A prime-only opening has response, image and EP segments. U has no Booleanity
-predicate; admission uses its full malicious digit interval `[-4, 3]`.
+U has no Booleanity predicate; admission uses its full malicious digit interval `[-4, 3]`.
 
 ### Exact divisibility projections
 
@@ -306,7 +305,7 @@ After fixing the accepted response nonce and committing the outgoing witness,
 binds the domain label `binary exact divisibility rows` and draws seven rows
 of `a = rank * n_poly * 648` coefficients each, in projection, polynomial,
 rank-row and natural coefficient order. One set of seven rows covers the entire
-group, including prime-only openings; the seven messages remain 84 bytes
+group, including its prime planes; the seven messages remain 84 bytes
 independently of the polynomial count. Each 32-byte transcript challenge block supplies ten
 nonoverlapping little-endian three-byte candidates; its final two bytes are
 discarded. Candidates `0 <= x < q` are accepted unchanged; candidates
@@ -429,7 +428,7 @@ the offload is sound:
 ```rust
 impl BinaryTypedPrefix {
     pub fn new(
-        manifest: &BinaryCommittedGroupManifest, word: bool, planes: usize,
+        manifest: &BinaryCommittedGroupManifest, planes: usize,
         destination_ring_dimension: usize,
     ) -> Result<Self, AkitaError>;
     pub fn validate_prefix(&self, prefix_len: usize) -> Result<(), AkitaError>;
@@ -913,7 +912,7 @@ The field-switch acceptance tests cover the frontend's additional obligations:
 The projection acceptance tests cover the root's additional obligations:
 
 - `projection_two_polynomials_and_prime_plane_rejects_y_mutations` opens two
-  committed polynomials with a prime plane and no word claim, then rejects
+  committed polynomials with a word claim and a prime plane, then rejects
   mutations of each of the seven shared projection messages without panic.
 - `projection_polynomial_count_admission_starts_rejecting_at_upper_envelope`
   discovers the largest admitted polynomial count through the constructor and
@@ -978,11 +977,12 @@ discharged by a binary terminal alone.
 ## Prime evaluation planes
 
 The default-off feature exposes
-`PolynomialGroupClaims::new_binary_planes(commitment, word, primes)`, where
-`word: Option<BinaryWordClaim>` and `primes: Option<PrimeGroupClaim>`.
-The existing `new_binary` constructor retains its word-only behavior. A group
-must contain a word claim or a prime claim. As in the ordinary grouped opening,
-the prime claim has one point for the whole group, at most one claimed value
+`PolynomialGroupClaims::new_binary_planes(commitment, claim, primes)`, where
+`claim: BinaryWordClaim` and `primes: Option<PrimeGroupClaim>`.
+The existing `new_binary` constructor retains its word-only behavior. Every
+binary group carries its word claim; prime claims are optional on top, and
+prime-field data without a word claim belongs in an ordinary group.
+As in the ordinary grouped opening, the prime claim has one point for the whole group, at most one claimed value
 per committed polynomial, and one evaluation plane per claimed polynomial:
 
 ```rust
@@ -1037,7 +1037,7 @@ At order 0, the canonical manifest binds the shared point once, then the
 `(polynomial, value)` list in polynomial order, before any challenge. Counts
 and polynomial indices use little-endian u64; coordinates and values use
 16-byte little-endian residues. At order 3, D commits the compact natural-digit
-concatenation of U, if selected, followed by all EP planes in polynomial
+concatenation of U followed by all EP planes in polynomial
 order. Within EP the order is plane, column, digit, natural coefficient. There
 is no inter-plane degree-64 padding: only the final D chunk is padded. D is
 fixed before the order-4 nonce and indexed column challenges. At order 5, those
@@ -1046,9 +1046,8 @@ D authentication addresses this exact compact-to-padded map. Order 9 proves
 the equations above in the same Stage 2 as the ordinary root obligations.
 No new proof messages or challenges are inserted after the suffix.
 
-A prime-only opening skips order 2 and omits U, K and K_val completely from
-both D and the outgoing witness. It still authenticates A through the same seven exact projections; no KA
-segment remains for any polynomial.
+A word-plus-prime opening authenticates A through the same seven exact
+projections; no KA segment remains for any polynomial.
 An opening with no prime claims preserves the projection word-only transcript
 atoms, witness addresses and bytes.
 
@@ -1091,14 +1090,14 @@ pub fn batched_verify_readings_embedded(
     session_id: [u8; 32],
     group_id: [u8; 32],
 ) -> Result<
-    (PendingEof, BinaryOpening<Option<BinaryWordClaim>, Option<PrimeGroupClaim>>),
+    (PendingEof, BinaryOpening<BinaryWordClaim, Option<PrimeGroupClaim>>),
     AkitaError,
 >;
 ```
 
 This method constructs the existing conditional-agreement result only after
 the complete grouped opening and suffix verify. It returns the authenticated single-point
-prime claim with values in polynomial order and the optional word reading. The terminal
+prime claim with values in polynomial order and the word reading. The terminal
 prime digest binds the commitment payload, source descriptor and canonical prime claims using a
 domain-separated encoding. Session and group identifiers name context already
 authenticated by the caller for this exact committed source. The method adds no transcript messages, preserves
@@ -1110,7 +1109,7 @@ checker nor an application helper. The caller checks final proof exhaustion.
 
 `akita_planner::prime_planes::price_binary_root_planes` is behind the planner's
 default-off `binary` feature. It uses the verifier's canonical
-witness plan, including one plane per claimed polynomial, optional word views, and optional
+witness plan, including one plane per claimed polynomial, the word views, and optional
 ordinary preimages. It reports compact D digits/columns, physical segment
 widths, the next power-of-two domain, ordinary ring-element count, and an
 existing-table D rank lookup. It neither selects an extension nor changes
@@ -1119,7 +1118,6 @@ schedule artifacts.
 ```rust
 pub fn price_binary_root_planes(
     manifest: &BinaryCommittedGroupManifest,
-    word: bool,
     prime: &PrimePlaneManifest,
     destination_ring_dimension: usize,
     ordinary: Option<GroupCommitPhaseParams>,
@@ -1128,39 +1126,39 @@ pub fn price_binary_root_planes(
 
 At C=256, one plane contributes `43*162*256 = 1,783,296` natural digits
 and `43*256*256 = 2,818,048` physical cells. With `p` committed polynomials
-and `m <= p` prime values, D has `27,864*m` prime-only columns, or
-`27,864*m + 648*p` columns with the word views. The current layouts when
-every polynomial is claimed are:
+and `m <= p` prime values, D has `27,864*m + 648*p` columns: `648*p` for
+the word views and `27,864` per plane. The current layouts when every
+polynomial is claimed are:
 
-| Polynomials and planes | Prime-only D columns | With word views D columns |
-| --- | ---: | ---: |
-| 1 | 27,864 | 28,512 |
-| 2 | 55,728 | 57,024 |
-| 5 | 139,320 | 142,560 |
+| Polynomials and planes | D columns |
+| --- | ---: |
+| 1 | 28,512 |
+| 2 | 57,024 |
+| 5 | 142,560 |
 
 For C=2, five polynomials claimed at the shared point add 69,660 natural
-prime digits and 110,080 physical prime cells; D has 1,089 prime-only columns
-or 1,114 with the word views. The canonical plan contains no KA segment.
+prime digits and 110,080 physical prime cells; D has 1,114 columns with the
+word views. The canonical plan contains no KA segment.
 
 The following historical complete totals were measured through
 `price_binary_root_planes` at rank three with one polynomial, multiple points
-and no ordinary preimages; each row gives prime-only and word-plus-prime physical cells.
+and no ordinary preimages; each row gives word-plus-prime physical cells.
 
-| Geometry | Planes | Prime-only cells | With word cells | Minimum domain | Ordinary degree-64 elements |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| N=2^22, C=256 | 1 | 25,886,720 | 25,956,096 | 33,554,432 | 524,288 |
-| N=2^22, C=256 | 2 | 28,704,768 | 28,774,144 | 33,554,432 | 524,288 |
-| N=2^22, C=256 | 5 | 37,158,912 | 37,228,288 | 67,108,864 | 1,048,576 |
-| N=2^23, C=256 | 1 | 42,663,936 | 42,733,312 | 67,108,864 | 1,048,576 |
-| N=2^23, C=256 | 2 | 45,481,984 | 45,551,360 | 67,108,864 | 1,048,576 |
-| N=2^23, C=256 | 5 | 53,936,128 | 54,005,504 | 67,108,864 | 1,048,576 |
+| Geometry | Planes | Cells | Minimum domain | Ordinary degree-64 elements |
+| --- | ---: | ---: | ---: | ---: |
+| N=2^22, C=256 | 1 | 25,956,096 | 33,554,432 | 524,288 |
+| N=2^22, C=256 | 2 | 28,774,144 | 33,554,432 | 524,288 |
+| N=2^22, C=256 | 5 | 37,228,288 | 67,108,864 | 1,048,576 |
+| N=2^23, C=256 | 1 | 42,733,312 | 67,108,864 | 1,048,576 |
+| N=2^23, C=256 | 2 | 45,551,360 | 67,108,864 | 1,048,576 |
+| N=2^23, C=256 | 5 | 54,005,504 | 67,108,864 | 1,048,576 |
 
 The historical small N=8, C=2 word-plus-prime fixture had 79,616, 101,632 and
 167,680 cells for one, two and five planes respectively; their domains are
 131,072, 131,072 and 262,144. Optional ordinary preimages add their canonical
 segment widths before rounding the domain. At the two large geometries, Z
 occupies 16,777,216 and 33,554,432 cells respectively, T occupies 6,291,456,
-and optional U/K/K_val occupy 65,536/2,304/1,536. These measured segment
+and U/K/K_val occupy 65,536/2,304/1,536. These measured segment
 widths account for each complete total above.
 
 Balanced digit differences have coefficient bound 7. The existing degree-64,
@@ -1199,15 +1197,9 @@ transcript, which also covers the B and D authentication rows.
 
 | Reading | Planes | Proof bytes |
 | --- | ---: | ---: |
-| Prime only | 1 | 78,804 |
-| Prime only | 2 | 78,771 |
-| Prime only | 5 | 78,782 |
 | Word and prime | 1 | 81,011 |
 | Word and prime | 2 | 80,973 |
 | Word and prime | 5 | 81,025 |
-| Prime only, mixed ordinary | 1 | 78,881 |
-| Prime only, mixed ordinary | 2 | 78,888 |
-| Prime only, mixed ordinary | 5 | 78,948 |
 | Word and prime, mixed ordinary | 1 | 81,149 |
 | Word and prime, mixed ordinary | 2 | 81,081 |
 | Word and prime, mixed ordinary | 5 | 81,068 |
@@ -1235,8 +1227,6 @@ projection set, one typed prefix, and one Stage 3:
 | Two-polynomial reading | Planes | Proof bytes |
 | --- | ---: | ---: |
 | Word only | 0 | 80,232 |
-| Prime only, projection mutation fixture | 1 | 78,032 |
-| Prime only | 2 | 78,025 |
 | Word and prime | 2 | 80,228 |
 
 ## Full-size measurements
@@ -3885,14 +3875,13 @@ serves both sides: the verifier evaluates the family's multilinear extension
 at the Stage 2 point, and the prover streams the same field elements into its
 dense table. No family stores one term per address or scans the outgoing
 domain. A test-only copy of the previous flat construction checks the
-evaluation and the dense table on nineteen small shapes. Sixteen use the
+evaluation and the dense table on fourteen small shapes. Eleven use the
 end-to-end geometry of 8 padded carriers and 2 columns, which has one response
 quad. Without the mixed ordinary group they cover the word claim with zero,
-one, two or five prime planes, prime-only claims with two or three planes, word
-widths 128 and 8, up to five owners, and extra zero rings. Each plane now has
-a distinct owner at the one shared point. With the mixed
-group they cover zero, one, two or five planes beside the word claim, and one,
-two or five prime-only planes. Three more use 32 carriers and 2 columns, or 64
+one, two or five prime planes, word widths 128 and 8, and up to five owners.
+Each plane now has a distinct owner at the one shared point. With the mixed
+group they cover zero, one, two or five planes beside the word claim, one of
+them with word width 8 and extra zero rings. Three more use 32 carriers and 2 columns, or 64
 carriers and 4 columns, which have four response quads. No tested shape
 reaches a production-size geometry.
 
@@ -4165,7 +4154,7 @@ The initial current-protocol smoke runs were taken on 2026-11-02 with the
 harness source subsequently
 identified by commit `e6f7ddbd98f0b17231267c04a9c121839bcfb6a8`. The mixed
 driver started before that commit and logged base HEAD `8f515ebbcb3015cf9988ad6de4004c96075e90cc`
-with a dirty tree; the prime-only run logged HEAD `e6f7ddbd9`, with specification
+with a dirty tree; the five-prime-claims run logged HEAD `e6f7ddbd9`, with specification
 edits still uncommitted. Both openings verified, matched the
 caller's transcript continuation, and passed with the online A accessor
 forbidden. Every proof byte was accounted for exactly once. These N=2^10,
@@ -4207,8 +4196,8 @@ stage numbers.
 
 The following are inclusive tracing-span wall times in nanoseconds. `uptime`
 load averages immediately before/after the mixed run were
-**50.12/27.48/19.77 → 100.45/46.82/27.57**; before/after the prime-only run
-they were **72.09/52.27/31.41 → 16.04/35.55/29.48**. These noisy timings
+**50.12/27.48/19.77 → 100.45/46.82/27.57**; before/after the five-prime-claims
+run they were **72.09/52.27/31.41 → 16.04/35.55/29.48**. These noisy timings
 are not optimization comparisons. Peak RSS includes each process's cold
 preparation and planner work.
 
@@ -4707,9 +4696,9 @@ the removed multi-point shape, and of the removed multi-point shape at N=2^23, w
 | 2^23 | five-prime-claims | 18,256,384 → 1,814,528 → 565,248 → 245,504 → 121,856 → 93,696 |
 
 The other chains are unchanged by the offload. The end-to-end fixture sizes
-before the offload were, in the current and dev protocols: prime only
-83,824/78,781, 83,836/78,765 and 83,806/78,817 bytes for one, two and five
-planes; word and prime 86,024/80,991, 86,060/80,963 and 86,029/80,973; the
+before the offload were, in the current and dev protocols: prime claims
+without a word claim (a removed shape) 83,824/78,781, 83,836/78,765 and
+83,806/78,817 bytes for one, two and five planes; word and prime 86,024/80,991, 86,060/80,963 and 86,029/80,973; the
 word-only fixtures 86,070/80,987 (width 128), 86,046/81,013 (width 8) and
 86,155/81,075 (with the ordinary group).
 
