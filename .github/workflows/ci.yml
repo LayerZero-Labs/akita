@@ -169,8 +169,7 @@ jobs:
 
   test-schedule-artifact-drift:
     name: Schedule artifact drift
-    # Planning and the SIS check are CPU bound and scale with cores.
-    runs-on: GitHubRunner-Large-Public
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -190,21 +189,15 @@ jobs:
           scripts/check-external-schedule-artifacts.sh
           cargo test --release -p akita-config --test trusted_schedule_artifact
       - name: Regenerate schedule artifacts in temporary storage
-        # Planning took 18-25 minutes on a 4-vCPU runner with two workers, and
-        # runner variance alone has moved this step by about 1.3x. The bound
-        # stops a runaway search. Growth in search size (states, candidates,
+        # Planning measured about 18 minutes on CI with two workers, and runner
+        # variance alone has moved this step by about 1.3x. The bound stops a
+        # runaway search. Growth in search size (states, candidates,
         # descriptors) fails the --planner-cost-baseline check instead; slower
         # per-candidate pricing is caught only by this timeout.
         timeout-minutes: 35
+        env:
+          AKITA_SCHEDULE_GEN_JOBS: 2
         run: |
-          # One worker per core, capped at one per 3 GiB of memory. The
-          # heaviest row (fp64_dense nv=26) peaks at about 1.7 GB.
-          cpus=$(nproc)
-          mem_gib=$(free -g | awk '/^Mem:/ {print $2}')
-          jobs=$(( cpus < mem_gib / 3 ? cpus : mem_gib / 3 ))
-          jobs=$(( jobs > 1 ? jobs : 1 ))
-          echo "runner: ${cpus} CPUs, ${mem_gib} GiB; planner workers: ${jobs}"
-          export AKITA_SCHEDULE_GEN_JOBS="$jobs"
           artifact_dir="$RUNNER_TEMP/akita-schedule-artifacts"
           mkdir -p "$artifact_dir"
           cargo run --release -p akita-planner --features catalog-gen \
@@ -225,33 +218,16 @@ jobs:
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
-    # Compiling dominates this job: logging-transcript changes akita-pcs, so
-    # every akita-pcs test target below rebuilds and monomorphizes the prover
-    # and verifier. The large runner compiles those targets in parallel.
-    runs-on: GitHubRunner-Large-Public
-    # About 12 minutes on the large runner, 10 of them compiling.
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    # Cold release builds span several logging-transcript test binaries and
+    # can exceed 40 minutes before the final protocol suites finish compiling.
+    timeout-minutes: 60
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-      # Build every akita-pcs test target that the later steps run in one Cargo
-      # invocation, so the targets compile concurrently instead of in three
-      # sequential batches. The later steps use the same profile and features
-      # and only run the prebuilt binaries.
-      - name: Build akita-pcs transcript test targets
-        run: >-
-          cargo test --release -p akita-pcs --no-run
-          --lib
-          --test transcript_hardening
-          --test transcript_hardening_proptest
-          --test embedded_transcript
-          --test protocol_soundness
-          --test fold_linf
-          --no-default-features
-          --features parallel,logging-transcript,${{ matrix.backend }}
       - name: Run semantic transcript suites
         run: >-
           cargo test --release -p akita-pcs
