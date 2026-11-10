@@ -27,6 +27,23 @@ pub fn derive_public_matrix_range<F: Field + CanonicalEncoding>(
     Ok(())
 }
 
+pub(super) fn fill_pages<F: Field + CanonicalEncoding>(
+    seed: &AkitaSetupSeed,
+    first_page: usize,
+    output: &mut [F],
+) {
+    let page_size = seed.derivation.page_field_elements();
+    #[cfg(target_arch = "x86_64")]
+    if output.len() == 4 * page_size && super::four_way::available() {
+        // SAFETY: available() checked AVX2 on this host, including OS support.
+        unsafe { super::four_way::fill_pages(seed, first_page, output) };
+        return;
+    }
+    for (index, page) in output.chunks_mut(page_size).enumerate() {
+        fill_page(seed, first_page + index, 0, page);
+    }
+}
+
 pub(super) fn fill_page<F: Field + CanonicalEncoding>(
     seed: &AkitaSetupSeed,
     page: usize,

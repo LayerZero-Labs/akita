@@ -16,6 +16,8 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
+#[cfg(target_arch = "x86_64")]
+mod four_way;
 mod range;
 pub use range::derive_public_matrix_range;
 
@@ -303,10 +305,10 @@ pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
     id: &AkitaSetupSeed,
 ) -> FlatMatrix<F> {
     let mut data = vec![F::zero(); num_field_elements];
-    cfg_chunks_mut!(data, id.derivation.page_field_elements())
+    cfg_chunks_mut!(data, 4 * id.derivation.page_field_elements())
         .enumerate()
         .for_each(|(page_index, coeffs)| {
-            range::fill_page(id, page_index, 0, coeffs);
+            range::fill_pages(id, 4 * page_index, coeffs);
         });
 
     FlatMatrix::from_flat_data(data)
@@ -381,8 +383,18 @@ type SetupSeedXofReader = <Shake256 as ExtendableOutput>::Reader;
 // it never changes the bytes consumed by Field::random, including on rejection.
 const SETUP_XOF_RATE: usize = 136;
 
-struct SetupSeedPageXof {
-    reader: SetupSeedXofReader,
+trait SetupPageReader {
+    fn read_block(&mut self, block: &mut [u8; SETUP_XOF_RATE]);
+}
+
+impl SetupPageReader for SetupSeedXofReader {
+    fn read_block(&mut self, block: &mut [u8; SETUP_XOF_RATE]) {
+        XofReader::read(self, block);
+    }
+}
+
+struct SetupSeedPageXof<R = SetupSeedXofReader> {
+    reader: R,
     buffer: [u8; SETUP_XOF_RATE],
     position: usize,
 }
@@ -390,33 +402,23 @@ struct SetupSeedPageXof {
 impl SetupSeedPageXof {
     fn new<F: Field + CanonicalEncoding>(id: &AkitaSetupSeed, page_index: usize) -> Self {
         let mut xof = Shake256::default();
-        absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
-        let derivation_tag = match id.derivation {
-            PublicMatrixDerivation::Shake256PagedV1 => PUBLIC_MATRIX_DERIVATION_TAG,
-        };
-        absorb_len_prefixed(&mut xof, b"derivation", derivation_tag);
-        absorb_len_prefixed(
-            &mut xof,
-            b"page_field_elements",
-            &(id.derivation.page_field_elements() as u64).to_le_bytes(),
-        );
-        absorb_len_prefixed(&mut xof, b"seed", &id.seed);
-        absorb_len_prefixed(&mut xof, b"field", &field_modulus_bytes::<F>());
-        absorb_len_prefixed(&mut xof, b"page", &(page_index as u64).to_le_bytes());
+        absorb_page_prefix::<F>(id, page_index, |bytes| xof.update(bytes));
         Self {
             reader: xof.finalize_xof(),
             buffer: [0; SETUP_XOF_RATE],
             position: SETUP_XOF_RATE,
         }
     }
+}
 
+impl<R: SetupPageReader> SetupSeedPageXof<R> {
     // The usual field draw is served by fill_bytes' contiguous-copy fast path.
     // Handle refills and draws crossing a rate boundary out of that hot path.
     #[inline(never)]
     fn fill_bytes_across_blocks(&mut self, mut dest: &mut [u8]) {
         while !dest.is_empty() {
             if self.position == self.buffer.len() {
-                XofReader::read(&mut self.reader, &mut self.buffer);
+                self.reader.read_block(&mut self.buffer);
                 self.position = 0;
             }
             // position starts at the buffer length and advances by at most the
@@ -438,7 +440,7 @@ fn field_modulus_bytes<F: Field + CanonicalEncoding>() -> [u8; 32] {
         .expect("setup fields must have a modulus of at most 256 bits")
 }
 
-impl RngCore for SetupSeedPageXof {
+impl<R: SetupPageReader> RngCore for SetupSeedPageXof<R> {
     #[inline]
     fn next_u32(&mut self) -> u32 {
         let mut buf = [0u8; 4];
@@ -474,8 +476,35 @@ impl RngCore for SetupSeedPageXof {
     }
 }
 
-impl CryptoRng for SetupSeedPageXof {}
+impl<R: SetupPageReader> CryptoRng for SetupSeedPageXof<R> {}
 
+fn absorb_page_prefix<F: Field + CanonicalEncoding>(
+    id: &AkitaSetupSeed,
+    page_index: usize,
+    mut absorb: impl FnMut(&[u8]),
+) {
+    let derivation_tag = match id.derivation {
+        PublicMatrixDerivation::Shake256PagedV1 => PUBLIC_MATRIX_DERIVATION_TAG,
+    };
+    for (label, data) in [
+        (b"domain".as_slice(), PUBLIC_MATRIX_DOMAIN),
+        (b"derivation".as_slice(), derivation_tag),
+        (
+            b"page_field_elements".as_slice(),
+            &(id.derivation.page_field_elements() as u64).to_le_bytes(),
+        ),
+        (b"seed".as_slice(), id.seed.as_slice()),
+        (b"field".as_slice(), &field_modulus_bytes::<F>()),
+        (b"page".as_slice(), &(page_index as u64).to_le_bytes()),
+    ] {
+        absorb(&(label.len() as u64).to_le_bytes());
+        absorb(label);
+        absorb(&(data.len() as u64).to_le_bytes());
+        absorb(data);
+    }
+}
+
+#[cfg(test)]
 fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
     xof.update(&(label.len() as u64).to_le_bytes());
     xof.update(label);

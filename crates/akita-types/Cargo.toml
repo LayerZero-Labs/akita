@@ -23,9 +23,12 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-featur
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 rand_core = "0.6"
 shake = "0.1.0"
+keccak = "=0.2.2"
 tracing = "0.1"
 
 [features]
+# Diagnostic portability gate: exercise the ordinary scalar page path on any host.
+setup-force-scalar = []
 default = ["transcript-keccak"]
 test-support = ["akita-params/test-support"]
 # Prover-side grinding replay, which searches on a copy of the sponge state.

@@ -1,6 +1,6 @@
 //! Differential oracle: the unbuffered sampler from 89ceb0e1, test-only.
 use super::*;
-use jolt_field::{Fp32, Prime128Offset275, Prime64Offset59};
+use jolt_field::{Fp32, Prime128Offset275, Prime64Offset59, Zero};
 
 struct ReferencePageXof {
     reader: SetupSeedXofReader,
@@ -154,4 +154,56 @@ fn forced_rejections<F: Field + CanonicalEncoding>(modulus: u128, width: usize) 
 fn buffered_rng_keeps_p64_and_p128_rejection_boundaries() {
     forced_rejections::<Prime64Offset59>((1u128 << 64) - 59, 8);
     forced_rejections::<Prime128Offset275>(u128::MAX - 274, 16);
+}
+
+fn compare_four_page_groups<F: Field + CanonicalEncoding>() {
+    for seed in [
+        sample_akita_setup_seed(),
+        [0; 32].into(),
+        [31; 32].into(),
+        [255; 32].into(),
+    ] {
+        let mut expected = Vec::new();
+        for page in 0..9 {
+            let mut reference = ReferencePageXof::new::<F>(&seed, page);
+            expected.extend((0..4096).map(|_| F::random(&mut reference)));
+        }
+        assert!(derive_public_matrix_prefix::<F>(0, &seed)
+            .as_field_slice()
+            .is_empty());
+        for pages in 1..=9 {
+            for short_by in [0, 1, 2560, 4095] {
+                let count = pages * 4096 - short_by;
+                let actual = derive_public_matrix_prefix::<F>(count, &seed);
+                assert_eq!(
+                    actual.as_field_slice(),
+                    &expected[..count],
+                    "pages {pages}, short by {short_by}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn four_page_groups_match_unbuffered_oracle_all_remainders() {
+    compare_four_page_groups::<Prime64Offset59>();
+    compare_four_page_groups::<Prime128Offset275>();
+    // Frequent rejection also forces lanes to consume different stream lengths.
+    compare_four_page_groups::<Fp32<251>>();
+}
+
+#[test]
+fn scalar_fallback_matches_page_oracle() {
+    let seed = sample_akita_setup_seed();
+    let count = 9 * seed.derivation.page_field_elements() - 17;
+    let actual = derive_public_matrix_prefix::<Prime64Offset59>(count, &seed);
+    let mut expected = vec![Prime64Offset59::zero(); count];
+    for (index, page) in expected.chunks_mut(4096).enumerate() {
+        range::fill_page(&seed, index, 0, page);
+    }
+    assert_eq!(actual.as_field_slice(), expected);
+    // The Linux runner enables this feature with a baseline CPU target.
+    #[cfg(all(target_arch = "x86_64", feature = "setup-force-scalar"))]
+    assert!(!super::four_way::available());
 }
