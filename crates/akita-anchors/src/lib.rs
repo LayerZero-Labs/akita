@@ -21,7 +21,7 @@ pub const AKITA_ANCHOR: TrustAnchor = TrustAnchor::new(&[
 ]);
 
 /// `bundle_id` of `params/akita-v1`.
-const AKITA_V1: &str = "65e3811f631cdfb7be30a344f415e06d21595af4f3115b11289aff342def7993";
+const AKITA_V1: &str = "da55142157ea66490419edb4cc16f732cd35a6c9b007add3f2e9677697da7ceb";
 
 /// The manifest of `params/akita-v1`. Loaders still check it against the
 /// anchor before decoding it.

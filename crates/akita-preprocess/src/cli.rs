@@ -95,7 +95,7 @@ fn run(configs: &dyn ConfigRegistry, mut args: Vec<String>) -> Result<(), AkitaE
             for field in [
                 SisModulusProfileId::Q32Offset99,
                 SisModulusProfileId::Q64Offset59,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
             ] {
                 println!(
                     "{field:?} {}",

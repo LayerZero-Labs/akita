@@ -221,18 +221,18 @@ pub const fn known_answer_digest(modulus: SisModulusProfileId) -> [u8; 32] {
     match modulus {
         SisModulusProfileId::Q32Offset99 => KNOWN_ANSWER_Q32,
         SisModulusProfileId::Q64Offset59 => KNOWN_ANSWER_Q64,
-        SisModulusProfileId::Q128OffsetA7F7 => KNOWN_ANSWER_Q128,
+        SisModulusProfileId::Q128Offset6A23801F => KNOWN_ANSWER_Q128,
     }
 }
 
 const KNOWN_ANSWER_Q32: [u8; 32] = super::encoding::digest_from_hex(
-    "b9d89fbf6c8395bcde7efb35707d4206192bf8dcc542dfe7afa3fbee4bda2a2d",
+    "545dc0e33e74f5cba07b51b7ef1da22c16a3ed9a7f4f90240a5ba75920d98566",
 );
 const KNOWN_ANSWER_Q64: [u8; 32] = super::encoding::digest_from_hex(
-    "60794d92812d0ca59a490a68dc6bdf5e10bd9aecb9c3456b9f65ca68d2413a64",
+    "a9319862ae82052ee5a75668982936275a8c8f3aeab38b279af694111549d98f",
 );
 const KNOWN_ANSWER_Q128: [u8; 32] = super::encoding::digest_from_hex(
-    "1cc9063401505625c3e48c3679377156dd6f2dd5ff4c791b85ae1da33543e413",
+    "b87ace435e5bed1b2be4c895ff745da24e431150881e2d1d5c353d88985a43c1",
 );
 
 /// `SHA3-256(tag || u32(corpus_version) || test_stream_identity ||

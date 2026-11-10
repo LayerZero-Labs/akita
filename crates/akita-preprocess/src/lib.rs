@@ -130,7 +130,7 @@ macro_rules! dispatch_field {
                 type $field = akita_config::proof_optimized::fp64::Field;
                 $body
             }
-            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7 => {
+            akita_params::sis::SisModulusProfileId::Q128Offset6A23801F => {
                 type $field = akita_config::proof_optimized::fp128::Field;
                 $body
             }

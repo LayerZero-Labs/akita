@@ -3,10 +3,10 @@
 
 use super::*;
 use crate::AkitaSetupSeed;
-use jolt_field::Prime128OffsetA7F7;
+use jolt_field::Prime128Offset6A23801F;
 
 fn stream() -> StreamIdentity {
-    StreamIdentity::for_field::<Prime128OffsetA7F7>(&AkitaSetupSeed::shake256_paged_v1([7; 32]))
+    StreamIdentity::for_field::<Prime128Offset6A23801F>(&AkitaSetupSeed::shake256_paged_v1([7; 32]))
         .unwrap()
 }
 
@@ -19,7 +19,7 @@ fn record(name: &str, stream_id: StreamId) -> SetRecord {
         sis_table_digest: [1; 32],
         sis_l2_table_digest: [2; 32],
         algorithm_identity: AlgorithmIdentity::compiled(
-            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
         ),
         stream_id,
         num_chunks: 1,

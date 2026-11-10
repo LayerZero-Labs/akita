@@ -303,7 +303,7 @@ where
     // shared between sets is built once per target, and rows of one verifier
     // capacity share one setup, built in ascending capacity order and
     // dropped before the next.
-    if field == SisModulusProfileId::Q128OffsetA7F7 && !description.targets.is_empty() {
+    if field == SisModulusProfileId::Q128Offset6A23801F && !description.targets.is_empty() {
         let mut rows = BTreeMap::new();
         for plan in plans {
             for row in &plan.rows {
