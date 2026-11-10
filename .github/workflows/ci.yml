@@ -228,9 +228,10 @@ jobs:
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
-    runs-on: ubuntu-latest
-    # Cold release builds span several logging-transcript test binaries and
-    # can exceed 40 minutes before the final protocol suites finish compiling.
+    # Compiling dominates this job: logging-transcript changes akita-pcs, so
+    # every akita-pcs test target below rebuilds and monomorphizes the prover
+    # and verifier. The large runner compiles those targets in parallel.
+    runs-on: GitHubRunner-Large-Public
     timeout-minutes: 60
     strategy:
       matrix:
@@ -238,6 +239,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      # Build every akita-pcs test target that the later steps run in one Cargo
+      # invocation, so the targets compile concurrently instead of in three
+      # sequential batches. The later steps use the same profile and features
+      # and only run the prebuilt binaries.
+      - name: Build akita-pcs transcript test targets
+        run: >-
+          cargo test --release -p akita-pcs --no-run
+          --lib
+          --test transcript_hardening
+          --test transcript_hardening_proptest
+          --test embedded_transcript
+          --test protocol_soundness
+          --test fold_linf
+          --no-default-features
+          --features parallel,logging-transcript,${{ matrix.backend }}
       - name: Run semantic transcript suites
         run: >-
           cargo test --release -p akita-pcs
