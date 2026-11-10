@@ -9,15 +9,15 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, optional = true }
+jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "575dde437f0299b3d942a38cb5da7c0d407ff9c3", default-features = false, optional = true }
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "575dde437f0299b3d942a38cb5da7c0d407ff9c3", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "575dde437f0299b3d942a38cb5da7c0d407ff9c3", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-rand_core = { version = "0.6", features = ["getrandom"] }
+rand_core = "0.6"
 rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
@@ -36,7 +36,7 @@ harness = false
 [features]
 ntt-inline = ["dep:jolt-inlines-ntt"]
 default = []
-parallel = ["dep:rayon", "jolt-field/parallel"]
+parallel = ["jolt-poly/parallel", "dep:rayon", "jolt-field/parallel"]
 tensor-no-carry = []
 tensor-eq-runs = []
 [lints]

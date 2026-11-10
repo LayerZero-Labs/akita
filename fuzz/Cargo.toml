@@ -22,6 +22,7 @@ end-to-end = []
 # Rayon-parallel production paths. Build with `--no-default-features` for the
 # sequential feature graph, which CI otherwise never executes.
 parallel = [
+  "jolt-poly/parallel",
   "akita-challenges/parallel",
   "akita-cpu-backend/parallel",
   "akita-pcs/parallel",
@@ -73,11 +74,11 @@ akita-types = { path = "../crates/akita-types", default-features = false, featur
 akita-verifier = { path = "../crates/akita-verifier", default-features = false, features = [
   "transcript-keccak",
 ] }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "575dde437f0299b3d942a38cb5da7c0d407ff9c3", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false }
+jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "575dde437f0299b3d942a38cb5da7c0d407ff9c3", default-features = false }
 libfuzzer-sys = "0.4.12"
 num-bigint = "0.4"
 rayon = "1.10"
