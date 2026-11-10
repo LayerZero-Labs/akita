@@ -26,6 +26,8 @@ use akita_params::{
 mod exact;
 mod limbs;
 mod prepared_artifact;
+mod window;
+pub use window::PreparedWindow;
 
 #[cfg(test)]
 use exact::ifma52_cache_enabled;

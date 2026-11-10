@@ -12,6 +12,7 @@ pub mod digit_math;
 pub mod digit_range;
 pub mod flat_matrix;
 pub mod geometry;
+pub mod matrix_window;
 pub mod opening_layout;
 pub mod opening_point;
 pub mod params;
@@ -35,6 +36,7 @@ pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use geometry::{
     BlockGeometry, GadgetDigits, InnerRoleParams, OpenRoleParams, OuterRoleParams, RoleParams,
 };
+pub use matrix_window::{AjtaiLevelShape, MatrixWindow};
 pub use opening_layout::{OpeningClaimsLayout, PolynomialGroupLayout};
 pub use opening_point::{
     basis_weights, basis_weights_prefix, checked_opening_source_index, lagrange_weights,
