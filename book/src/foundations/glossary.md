@@ -102,6 +102,7 @@ gives one sentence and links to the chapter that explains the term.
 | **Operator norm** | The largest factor by which multiplication by a ring element can stretch the Euclidean length of a vector. L2 folds at ring dimension 64 or 128 reject fold challenges above a scheduled threshold. |
 | **Selective L2** | The per-fold security route that sizes the A matrix from a Euclidean bound on the response and adds a scheduled norm proof. The default route uses the coefficient $L_\infty$ bound. See [Configuration and planning](../how/configuration.md). |
 | **CWSS** | Coordinate-wise special soundness: the extraction property that asks, for each fold coordinate, for another accepting transcript that changes only that coordinate's challenge. See [Polynomial commitments and binding](./pcs-and-binding.md). |
+| **Weak opening** | The opening that the extractor obtains for one fold coordinate from two accepting transcripts that differ only in that coordinate's challenge. It divides the difference of the two fold responses by the difference of the two fold challenges. The result satisfies the verified relations, but it need not be the honest digit decomposition and need not be short. See [Polynomial commitments and binding](./pcs-and-binding.md#coordinate-wise-special-soundness). |
 
 ## Scalar and grouped catalog rows
 
