@@ -1,7 +1,8 @@
 //! Canonical pricing of the binary root witness, and the smoke catalog.
 
-use super::{claims, FullSize, FIELD};
-use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
+use crate::claims;
+use crate::config::BinaryRootConfig;
+use akita_config::{policy_of, TrustedScheduleCatalog};
 use akita_error::{checked, AkitaError};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, PolynomialGroupLayout, ScheduleLookupKey,
@@ -13,22 +14,22 @@ use akita_types::binary::{
     PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest,
 };
 
-pub(super) fn plan(
+pub(crate) fn plan<C: BinaryRootConfig>(
     log: usize,
     shape: &str,
     carrier: &akita_params::GroupCommitPhaseParams,
     ordinary: Option<akita_params::GroupCommitPhaseParams>,
     dimension: usize,
 ) -> Result<akita_planner::prime_planes::BinaryPrimePlanePrice, AkitaError> {
-    let descriptor = claims::descriptor(log)?;
+    let descriptor = claims::descriptor(log, C::FIELD)?;
     let manifest =
-        BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, carrier, FIELD)?;
+        BinaryCommittedGroupManifest::with_field_profile(descriptor.clone(), 0, carrier, C::FIELD)?;
     let claims = usize::from(shape != "binary-claim");
     let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
     // Only the claim count prices the planes; the canonical shape of a
     // claimed value differs between the fields.
     let coordinates = |value: u128| -> PrimeClaimValue {
-        match FIELD.extension_degree() {
+        match C::FIELD.extension_degree() {
             1 => value.into(),
             _ => [value, value].into(),
         }
@@ -42,7 +43,7 @@ pub(super) fn plan(
                 value: coordinates(0),
             }],
         }),
-        FIELD,
+        C::FIELD,
     )?;
     let price = akita_planner::prime_planes::price_binary_root_planes(
         &manifest, &prime, dimension, ordinary,
@@ -89,12 +90,12 @@ pub(super) fn plan(
     Ok(price)
 }
 
-pub(super) fn build(
+pub(crate) fn build<C: BinaryRootConfig>(
     log: usize,
     shape: &str,
-) -> Result<(TrustedScheduleCatalog<FullSize>, ScheduleLookupKey), Box<dyn std::error::Error>> {
+) -> Result<(TrustedScheduleCatalog<C>, ScheduleLookupKey), Box<dyn std::error::Error>> {
     let chunking = ChunkedWitnessCfg::default_non_chunked();
-    let policy = policy_of::<FullSize>(chunking);
+    let policy = policy_of::<C>(chunking);
     let mut direct_policy = policy;
     direct_policy.recursive_setup_planning = false;
     direct_policy.selection_policy = SelectionPolicyId::for_policy(false);
@@ -105,10 +106,10 @@ pub(super) fn build(
     let ordinary_row = if shape == "binary-and-prime-claims-plus-ordinary" {
         Some(akita_planner::find_schedule(
             &ordinary_key,
-            FullSize::committed_source_contract()?,
+            C::committed_source_contract()?,
             &[],
             &direct_policy,
-            FullSize::ring_challenge_config,
+            C::ring_challenge_config,
         )?)
     } else {
         None
@@ -122,10 +123,10 @@ pub(super) fn build(
         let producer = if ordinary_profile.is_some() {
             Some(akita_planner::find_schedule(
                 &singleton,
-                FullSize::committed_source_contract()?,
+                C::committed_source_contract()?,
                 &[],
                 &direct_policy,
-                FullSize::ring_challenge_config,
+                C::ring_challenge_config,
             )?)
         } else {
             None
@@ -142,13 +143,13 @@ pub(super) fn build(
         } else {
             singleton
         };
-        let contract = FullSize::committed_source_contract()?;
+        let contract = C::committed_source_contract()?;
         let planned = match akita_planner::find_schedule_with_root_setup_mode(
             &key,
             contract,
             &vec![contract; key.precommitteds.len()],
             &policy,
-            FullSize::ring_challenge_config,
+            C::ring_challenge_config,
             SetupContributionMode::Recursive,
             ordinary_row.as_ref().map(|r| &r.schedule.root.params),
         ) {
@@ -169,7 +170,7 @@ pub(super) fn build(
         };
         let dimension = first.params.role_dims().d_a();
         let carrier = carrier.unwrap_or(schedule.root.params.own_group().profile);
-        let price = plan(log, shape, &carrier, ordinary_profile, dimension)?;
+        let price = plan::<C>(log, shape, &carrier, ordinary_profile, dimension)?;
         let scheduled_domain = akita_params::witness_commitment_domain_len(
             schedule.root.output_witness_len,
             dimension,
@@ -218,10 +219,10 @@ pub(super) fn build(
             planned.schedule,
         ));
         let catalog = ValidatedScheduleCatalog::try_new(
-            FullSize::schedule_family_name(),
+            C::schedule_family_name(),
             rows,
             &policy,
-            FullSize::ring_challenge_config,
+            C::ring_challenge_config,
         )?;
         return Ok((TrustedScheduleCatalog::new(catalog, chunking)?, key));
     }

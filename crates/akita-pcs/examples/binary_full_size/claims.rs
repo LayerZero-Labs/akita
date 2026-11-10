@@ -1,7 +1,8 @@
 //! Deterministic benchmark inputs and independent claimed evaluations.
-use super::{E, F, FIELD};
+use crate::config::BinaryRootConfig;
 use akita_algebra::binary::BinaryField128;
 use akita_error::{checked, AkitaError};
+use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary::{
     BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
     PrimeClaimValue, PrimeGroupClaim, PrimePlaneClaim,
@@ -13,23 +14,26 @@ use serde::{Deserialize, Serialize};
 type PrimeCoordinates = (Vec<Vec<u128>>, Vec<u128>);
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(super) struct Claims {
+pub(crate) struct Claims {
     pub word_point: Vec<[u8; 16]>,
     pub word_value: [u8; 16],
     pub prime: Option<PrimeCoordinates>,
 }
 
-pub(super) fn descriptor(log_carriers: usize) -> Result<BinarySourceDescriptor, AkitaError> {
+pub(crate) fn descriptor(
+    log_carriers: usize,
+    field: BinaryFieldProfile,
+) -> Result<BinarySourceDescriptor, AkitaError> {
     let count = checked::pow2(log_carriers).ok_or(AkitaError::InvalidProof)?;
     // Smoke exercises the same kernels with a narrow matrix; benchmark rows
     // retain the specified C=256 and rank three.
     let columns = if log_carriers == 10 { 2 } else { 256 };
     let index = BinaryIndexMap::new(128, count, count, columns)?;
-    let profiles = BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, FIELD)?;
+    let profiles = BinaryCommittedGroupManifest::profiles_for_field(&index, 1, 0, field)?;
     BinarySourceDescriptor::new(index, vec![[29; 32]], profiles)
 }
 
-pub(super) fn words(count: usize) -> Vec<u128> {
+pub(crate) fn words(count: usize) -> Vec<u128> {
     (0..count)
         .map(|i| {
             // A fixed integer mixer makes the source reproducible across modes.
@@ -40,7 +44,11 @@ pub(super) fn words(count: usize) -> Vec<u128> {
         .collect()
 }
 
-pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims, AkitaError> {
+pub(crate) fn evaluate<C: BinaryRootConfig>(
+    log: usize,
+    shape: &str,
+    words: &[u128],
+) -> Result<Claims, AkitaError> {
     let point = (0..log)
         .map(|axis| (31 + axis as u128 * 17).to_le_bytes())
         .collect::<Vec<_>>();
@@ -64,36 +72,37 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
         // P64 coordinates are E64 elements with a nonzero u coordinate.
         let point = (0..arity)
             .map(|axis| {
-                E::from_base_fn(|i| F::from_u128([19 + axis as u128 * 7, 5 + axis as u128 * 3][i]))
+                C::ExtField::from_base_fn(|i| {
+                    C::Field::from_u128([19 + axis as u128 * 7, 5 + axis as u128 * 3][i])
+                })
             })
             .collect::<Vec<_>>();
-        let mut bit_weights = vec![E::one()];
+        let mut bit_weights = vec![C::ExtField::one()];
         for &r in point.get(..8).ok_or(AkitaError::InvalidProof)? {
             let size = bit_weights.len();
             bit_weights.resize(
                 checked::product([size, 2]).ok_or(AkitaError::InvalidProof)?,
-                E::zero(),
+                C::ExtField::zero(),
             );
             for i in 0..size {
                 let old = bit_weights[i];
-                bit_weights[i] = old * (E::one() - r);
+                bit_weights[i] = old * (C::ExtField::one() - r);
                 bit_weights[i + size] = old * r;
             }
         }
         let mut values = words
             .iter()
             .map(|&word| {
-                bit_weights
-                    .iter()
-                    .take(128)
-                    .enumerate()
-                    .fold(E::zero(), |sum, (bit, weight)| {
+                bit_weights.iter().take(128).enumerate().fold(
+                    C::ExtField::zero(),
+                    |sum, (bit, weight)| {
                         if (word >> bit) & 1 == 0 {
                             sum
                         } else {
                             sum + *weight
                         }
-                    })
+                    },
+                )
             })
             .collect::<Vec<_>>();
         for &r in point.get(8..).ok_or(AkitaError::InvalidProof)? {
@@ -103,15 +112,18 @@ pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims
             }
             values.truncate(half);
         }
-        let value = coordinates(values.first().ok_or(AkitaError::InvalidProof)?)?;
-        let point = point.iter().map(coordinates).collect::<Result<_, _>>()?;
+        let value = coordinates::<C>(values.first().ok_or(AkitaError::InvalidProof)?)?;
+        let point = point
+            .iter()
+            .map(coordinates::<C>)
+            .collect::<Result<_, _>>()?;
         result.prime = Some((point, value));
     }
     Ok(result)
 }
 
-fn coordinates(value: &E) -> Result<Vec<u128>, AkitaError> {
-    (0..<E as ExtField<F>>::DEGREE)
+fn coordinates<C: BinaryRootConfig>(value: &C::ExtField) -> Result<Vec<u128>, AkitaError> {
+    (0..<C::ExtField as ExtField<C::Field>>::DEGREE)
         .map(|i| {
             value
                 .base_coefficient(i)
@@ -134,7 +146,7 @@ fn host(value: u128) -> BinaryField128 {
 }
 
 impl Claims {
-    pub(super) fn word(
+    pub(crate) fn word(
         &self,
         descriptor: &BinarySourceDescriptor,
     ) -> Result<BinaryWordClaim, AkitaError> {
@@ -145,7 +157,7 @@ impl Claims {
             self.word_value,
         )
     }
-    pub(super) fn prime(&self) -> Result<Option<PrimeGroupClaim>, AkitaError> {
+    pub(crate) fn prime(&self) -> Result<Option<PrimeGroupClaim>, AkitaError> {
         self.prime
             .as_ref()
             .map(|(point, value)| {

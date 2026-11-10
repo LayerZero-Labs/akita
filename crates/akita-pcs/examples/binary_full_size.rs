@@ -1,16 +1,17 @@
 //! Experimental binary measurement inside one caller transcript.
 
-// `p128` and `p64` each compile the same driver source with their field's types.
-#![allow(clippy::duplicate_mod)]
-
+#[path = "binary_full_size/catalog.rs"]
+mod catalog;
+#[path = "binary_full_size/claims.rs"]
+mod claims;
 #[path = "binary_full_size/config.rs"]
 mod config;
 #[path = "binary_full_size/metrics.rs"]
 mod metrics;
-#[path = "binary_full_size/p128.rs"]
-mod p128;
-#[path = "binary_full_size/p64.rs"]
-mod p64;
+#[path = "binary_full_size/native_catalog.rs"]
+mod native_catalog;
+#[path = "binary_full_size/run.rs"]
+mod run;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut field = "p128".to_owned();
@@ -20,9 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             field = args.next().ok_or("missing --field value")?;
         }
     }
-    let run = match field.as_str() {
-        "p128" => p128::run::main,
-        "p64" => p64::run::main,
+    let run: fn() -> run::Result<()> = match field.as_str() {
+        "p128" => run::main::<config::p128::FullSize>,
+        "p64" => run::main::<config::p64::FullSize>,
         _ => return Err("field must be p128 or p64".into()),
     };
     std::thread::Builder::new()
