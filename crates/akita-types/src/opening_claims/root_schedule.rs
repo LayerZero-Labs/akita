@@ -30,7 +30,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                 ])
                 .ok_or(AkitaError::InvalidProof)?],
                 domain_len,
-                648,
+                crate::binary::MIXED_ROOT_MAX_NATIVE_DEGREE,
             );
         }
         let _ = schedule;

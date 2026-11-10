@@ -28,7 +28,7 @@ pub fn binary_root_grinding_plan(
     if fold_coordinates.is_empty()
         || fold_coordinates.contains(&0)
         || !domain_len.is_power_of_two()
-        || maximum_native_degree < 648
+        || maximum_native_degree < super::MIXED_ROOT_MAX_NATIVE_DEGREE
     {
         return Err(AkitaError::InvalidSetup(
             "invalid native root grinding geometry".into(),
