@@ -15,6 +15,7 @@ pub mod geometry;
 pub mod opening_layout;
 pub mod opening_point;
 pub mod params;
+pub mod prefix;
 pub mod proof_size;
 pub mod relation_address;
 pub mod relation_layout;
@@ -45,6 +46,7 @@ pub use params::{
     GroupOpeningPlan, InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningMethod,
     OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy, SisModulusProfileId,
 };
+pub use prefix::NttPrefixRequirement;
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     padded_boolean_opening_vars, sumcheck_rounds, terminal_response_max_bytes,

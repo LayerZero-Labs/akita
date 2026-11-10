@@ -25,6 +25,7 @@ mod transcript_grinding;
 mod transcript_grinding_plan;
 pub mod wire_limits;
 pub mod witness;
+pub mod zk;
 pub use commitment_slicing::{CommitmentSliceCount, CommitmentSliceGeometry};
 pub use compression::{
     compression_ring_dimensions, CommitmentPayloadGeometry, CommitmentPayloadMode,
@@ -57,8 +58,8 @@ pub use layout::{
     witness_commitment_domain_len, BasisMode, BlockGeometry, CommitmentRingDims,
     CommitmentSetupMatrixShape, CommittedGroupParams, CompressionRelationAddressGeometry,
     DigitRangePlan, FlatBooleanDomain, FlatMatrix, GadgetDigits, GroupOpenPhaseParams,
-    GroupOpeningPlan, InnerRoleParams, OpenRoleParams, OpeningClaimsLayout, OpeningMethod,
-    OuterRoleParams, PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
+    GroupOpeningPlan, InnerRoleParams, NttPrefixRequirement, OpenRoleParams, OpeningClaimsLayout,
+    OpeningMethod, OuterRoleParams, PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
     RelationAddressGeometry, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
     RelationRowGeometry, RelationWitnessGeometry, RingMatrixView, RingOpeningPoint, RingRole,
     RoleParams, SetupMatrixCapacity, SetupPrefixSlotId, SetupProjectionGeometry, Stage1StageShape,
