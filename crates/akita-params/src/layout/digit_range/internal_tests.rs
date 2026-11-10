@@ -9,7 +9,7 @@ fn compact_route_shape_matches_materialized_shapes_and_rejects_bad_norms() {
     let key = SisL2TableKey {
         policy: SisSecurityPolicyId::Quantum169BitADPS16,
         table_digest: SisL2TableDigest::CURRENT,
-        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+        modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
         ring_dimension: 64,
         collision_l2_sq: 1,
     };

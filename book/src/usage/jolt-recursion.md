@@ -104,7 +104,7 @@ matches the bundle. A bundle cannot be replayed through the entrypoint of a
 different case.
 
 The recursion workspace is separate from the main Cargo workspace. It pins
-Rust 1.95, the RISC-V targets, and one exact Jolt revision. This keeps Jolt's
+Rust 1.99.1, the RISC-V targets, and one exact Jolt revision. This keeps Jolt's
 toolchain and patched dependencies out of the main Akita dependency graph.
 
 ## Run the native artifact and guest trace

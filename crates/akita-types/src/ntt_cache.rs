@@ -14,7 +14,7 @@ use akita_algebra::{
 use akita_error::AkitaError;
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128Offset6A23801F, PseudoMersenne};
 
 use akita_params::dispatch::compression_ring_dim_supported_for_tier;
 use akita_params::{
@@ -217,7 +217,8 @@ pub fn select_compression_crt_ntt_params<F: Field + CanonicalEncoding, const D: 
 fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     let modulus = field_modulus::<F>()?;
-    let a7f7_q128_modulus = u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenne>::OFFSET - 1);
+    let q128_6a23801f_modulus =
+        u128::MAX - (<Prime128Offset6A23801F as PseudoMersenne>::OFFSET - 1);
 
     if modulus <= Q32_MODULUS as u128 {
         if D >= 64 {
@@ -231,7 +232,7 @@ fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usiz
         }
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
     }
-    if modulus == Q128_MODULUS || modulus == a7f7_q128_modulus {
+    if modulus == Q128_MODULUS || modulus == q128_6a23801f_modulus {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
         }
@@ -285,7 +286,7 @@ pub fn centered_quotient_requires_i16_tail(
         SisModulusProfileId::Q64Offset59 => {
             CrtCapacity::from_prime_moduli(Q64_PRIMES.map(|prime| prime.p as u128))
         }
-        SisModulusProfileId::Q128OffsetA7F7 => {
+        SisModulusProfileId::Q128Offset6A23801F => {
             CrtCapacity::from_prime_moduli(q128_primes().map(|prime| prime.p as u128))
         }
     };

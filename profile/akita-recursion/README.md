@@ -6,7 +6,7 @@ per-phase cycle counts (`deserialize_input`, `prepare_verifier`,
 execution and confirms Jolt accepts it.
 
 This directory is a **standalone Cargo sub-workspace** (it's excluded
-from the parent Akita workspace). It pins Rust `1.95` plus the
+from the parent Akita workspace). It pins Rust `1.99.1` plus the
 RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 `arkworks-algebra`.
 
@@ -25,7 +25,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
-crate pins, `1976ced1bb87...`). The first prove run downloads a ~30 GB
+crate pins, `a95612871547...`). The first prove run downloads a ~30 GB
 Dory PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on
 first run, instant on subsequent).
 

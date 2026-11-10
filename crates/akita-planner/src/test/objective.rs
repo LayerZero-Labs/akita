@@ -196,7 +196,7 @@ fn complete_candidate(
     let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
         .expect("production d = 64 family");
     let mut params = akita_params::CommittedGroupParams::params_only(
-        akita_params::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128Offset6A23801F,
         64,
         3,
         4,

@@ -938,7 +938,7 @@ mod tests {
                 log_commit_bound: 1,
                 log_open_bound: Some(128),
             },
-            sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            sis_modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
             sis_table_digest: akita_params::SisTableDigest::CURRENT,
             sis_l2_table_digest: akita_params::SisL2TableDigest::CURRENT,
