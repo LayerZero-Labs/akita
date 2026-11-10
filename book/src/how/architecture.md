@@ -13,9 +13,10 @@ orchestration lives in `akita-pcs`.
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges |
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
+| `jolt-transcript` (external) | Spongefish prover and verifier states, sponge selection, and grinding, used by `akita-transcript` |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
-| `akita-transcript` | Spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks |
+| `akita-transcript` | Fiat-Shamir transcript over `jolt-transcript` (Spongefish), descriptor preamble, logging checks |
 | `akita-challenges` | Fiat-Shamir challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
 | `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
@@ -44,10 +45,11 @@ Key structural facts:
   search is `Cfg`-free and is not on the verifier runtime dependency path. The
   optional `catalog-gen` feature enables `akita-config`, so artifact-emission
   binaries may name concrete `CommitmentConfig` presets.
-- `akita-verifier` depends on `akita-config`, `akita-schedules`, and
-  `akita-params`. It receives a validated trusted catalog and never reaches
-  planner search.
-- Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
+- `akita-verifier` depends on `akita-config` and `akita-params`. It receives a
+  validated trusted catalog through `akita-config` and never reaches planner
+  search.
+- Verifier-only integrations should use `akita-verifier` + `akita-types` +
+  `akita-config` + `akita-params`, not the umbrella `akita-pcs` package.
 
 ## End-to-end lifecycle
 
@@ -89,7 +91,8 @@ proving as ordinary reusable commitment handles with checked public metadata.
 A `BackendInstanceIdentity` names one backend instance. It includes the
 implementation type, so identities from different backends never compare
 equal. A `ProofContext` carries the backend identifier, the setup digest, the
-proof scope, the fold level, and the source group. It identifies an active
+proof scope, the fold level, and, when the step targets one group, the source
+group. It identifies an active
 proof step before private preparation starts, and it binds every fold level to
 the same setup. Witness assembly checks those identities before
 consuming its inputs, and checks that each accepted fold carries its original

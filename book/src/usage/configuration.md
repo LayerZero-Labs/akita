@@ -36,7 +36,7 @@ The next choice is the representation of the table.
 | Representation | Use it when | Main benefit |
 | --- | --- | --- |
 | `Dense` | Entries may be arbitrary field elements | General purpose commitment path |
-| `OneHot` | Each fixed size chunk contains one selected position | Preserves the compact source and skips work for zero entries |
+| `OneHot` | Each fixed size chunk contains at most one selected position (an all-zero chunk is allowed) | Preserves the compact source and skips work for zero entries |
 | `DenseBounded` | Every centered coefficient fits the declared signed bound | Uses fewer commitment digits than full width dense data |
 
 The direct fp128 types are `fp128::Dense` and `fp128::OneHot`.
@@ -183,7 +183,7 @@ Use these starting points:
 | Application data | Starting configuration |
 | --- | --- |
 | Arbitrary values in the fp128 field | `fp128::Dense` |
-| One selected entry in each fixed size chunk | `fp128::OneHot` |
+| At most one selected entry in each fixed size chunk | `fp128::OneHot` |
 | Values known to fit the full `u64` range | `fp128::DenseBounded` |
 | A host using a small prime field | The matching `fp32` or `fp64` family |
 | A verifier that must avoid a large direct setup scan | A supported `RecursiveCommitmentConfig<Cfg>` |

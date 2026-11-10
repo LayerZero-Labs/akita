@@ -21,7 +21,12 @@ akita-config = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit
 akita-types = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>", default-features = false }
 akita-transcript = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>", default-features = false }
 akita-serialization = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
 ```
+
+`akita-params` supplies `BasisMode` and `ChunkedWitnessCfg`. `akita-error`
+supplies `AkitaError`.
 
 The default `akita-verifier` features enable the Keccak transcript backend.
 Schedule rows are external data, not features. The host loads approved artifact

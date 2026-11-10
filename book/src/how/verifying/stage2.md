@@ -10,6 +10,9 @@ The three facts are:
 3. The opening digits encode the claimed polynomial evaluations under the
    scheduled opening method.
 
+On a fold that takes the L2 route, Stage 2 adds a fourth fact: the committed
+digits match the physical norm that Stage 1 proved.
+
 The verifier replays a degree three sumcheck over the complete relation witness
 domain.
 
@@ -23,9 +26,11 @@ at $r_1$. Let $\gamma$ be the batching challenge that the transcript samples
 after it absorbs $s_1$. Let $v_M$ be the public relation claim after row and
 ring evaluation. That chapter writes it $h_\tau$. Let $v_{open}$ be the
 weighted opening claim, which is the claimed opening value multiplied by the
-weight of its opening row. On a fold that takes the L2 route, the verifier also derives a physical norm
-claim $v_{L2}$ from the virtual evaluations that Stage 1 returns and a
-batching challenge $\eta$. On every other fold $v_{L2}=0$. The Stage 2 input claim is
+weight of its opening row. That chapter writes it
+$\beta_{\mathrm{open}}v_{\mathrm{open}}$. On a fold that takes the L2 route,
+the verifier also derives a physical norm claim $v_{L2}$ from the virtual
+evaluations that Stage 1 returns and a batching challenge $\eta$. On every
+other fold $v_{L2}=0$. The Stage 2 input claim is
 
 $$
 \gamma s_1+v_M+v_{open}+v_{L2}.
@@ -74,7 +79,12 @@ used by the protocol.
 
 Compressed layouts have additional negative binary digit spans in the F and H
 suffix. `NegativeBinarySupport` evaluates the equality polynomial only over
-those checked intervals. It does not allocate a dense support bitmap.
+those checked intervals. It does not allocate a dense support bitmap. Inside
+$C_{compression}(r_2)$ this constraint is
+$\rho\,B_{comp}(r_1,r_2)\,w(r_2)(w(r_2)+1)$. Here $B_{comp}$ is the restricted
+equality weight and $\rho$ is a separate batching challenge that the
+transcript samples before $\gamma$. The input claim of this constraint is
+zero.
 
 ## Physical norm term
 

@@ -226,8 +226,8 @@ not which witness evaluation Stage 2 passes onward.
 When the successor is terminal, its inner images
 $\{\mathbf t_b^{(i+1)}\}_b$ are the outgoing binding. The predecessor
 absorbs their canonical bytes before its ring-switch and sumcheck challenges.
-The terminal response carries those same images, the ring opening partials,
-and the folded response $\mathbf z$.
+The terminal sends no second copy of those images. It adds the ring opening
+partials and the folded response $\mathbf z$.
 The last block of the images and of the partials travels as a digest
 instead, and the terminal recomputes it; see
 [terminal verification](./verifying/terminal.md#recompute-the-last-block).

@@ -25,7 +25,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
-crate pins, `4a0d4a33265c...`). The first prove run downloads a ~30 GB
+crate pins, `1976ced1bb87...`). The first prove run downloads a ~30 GB
 Dory PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on
 first run, instant on subsequent).
 

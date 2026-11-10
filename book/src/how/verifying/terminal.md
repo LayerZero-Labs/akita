@@ -5,8 +5,8 @@ preceding fold's witness-opening claim and a binding to that witness's inner
 A images. The prover sends a small folded response and the verifier checks the
 remaining relations directly.
 
-The terminal reveals that response, the ring opening partials, and the inner
-images. It does not send the complete original application table. These are
+The terminal reveals that response and the ring opening partials. The
+predecessor already revealed the inner images. The proof does not send the complete original application table. These are
 still witness-derived values, so this path provides no zero-knowledge
 guarantee.
 
@@ -268,7 +268,7 @@ challenges and $E_{m-1}$ before the $c_b$. The digests enforce this order:
 
 The verifier computes the last block from (10), hashes its canonical
 coefficients, and compares the result with the digest it received earlier.
-The scalar opening check (7) or (8) then runs over all $E_b$, including the
+The scalar opening check (6) or (7) then runs over all $E_b$, including the
 recovered one.
 
 ### Why omitting the block is sound
@@ -365,8 +365,9 @@ sparse support, NTT capability, and matrix ranges before the hot kernels index
 prepared state. Malformed terminal bytes return `AkitaError` or
 `SerializationError`.
 
-- `crates/akita-verifier/src/fold/terminal.rs` checks the predecessor
-  binding and replays the terminal transcript.
+- `crates/akita-verifier/src/fold/terminal.rs` takes the inner images that
+  the predecessor bound, checks their shape, and replays the terminal
+  transcript.
 - `crates/akita-verifier/src/terminal/direct.rs` checks the
   decoded response norm, ring relations, and opening trace.
 - `crates/akita-verifier/src/terminal/ntt.rs` evaluates the

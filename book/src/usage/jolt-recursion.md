@@ -17,7 +17,8 @@ contains current commands, environment variables, and measured trace notes.
 
 ## The complete path
 
-The integration has four small crates.
+The integration has four main crates. The workspace also holds two
+`inline-parity` crates, which this chapter does not use.
 
 | Crate | Runs where | Responsibility |
 | --- | --- | --- |
@@ -204,8 +205,8 @@ only for the ELF it builds through the pinned Jolt SDK.
 
 ## Keep the integration current
 
-The smoke workflow compiles and tests the glue, artifact, and host against the
-current Akita APIs. It does not run the expensive Jolt trace or proof. After an
+The smoke workflow tests the glue and compiles the artifact and host against
+the current Akita APIs. It does not run the expensive Jolt trace or proof. After an
 Akita or Jolt upgrade:
 
 1. Run the recursion workspace tests and release build.

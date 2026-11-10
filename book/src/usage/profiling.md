@@ -1,8 +1,8 @@
 # Profiling a workload
 
 Akita ships one profile harness for complete PCS measurements. It runs the
-public statement preparation, setup, commitment, proof generation, encoding,
-and verification needed by a real opening proof. It also records the generated
+public statement preparation, setup, commitment, proof generation, and
+verification needed by a real opening proof. It also records the generated
 schedule and proof size breakdown.
 
 ## Run the canonical profile

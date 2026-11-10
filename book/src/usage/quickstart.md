@@ -19,7 +19,8 @@ Akita proof verified
 
 The complete source is
 [`crates/akita-pcs/examples/quickstart.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-pcs/examples/quickstart.rs).
-The normal Cargo checks compile this example with the public API. The chapter
+The normal Cargo checks compile this example. Apart from one workspace helper
+that loads the schedule artifact, it uses only the public API. The chapter
 therefore stays tied to code that works.
 
 ## The statement being proved
@@ -53,7 +54,25 @@ let evaluation = evaluate_multilinear(&evaluations, &point);
 These are the main imports for the snippets in this chapter. The later
 snippets do not repeat them, and they write a few other items with their full
 path. The checked-in example imports `load_workspace_scheme` from its own
-support module instead of `AkitaCommitmentScheme`. The helper that computes `evaluation` is independent of the Akita prover. It
+support module instead of `AkitaCommitmentScheme`. It also imports
+`jolt_field::CanonicalEncoding`, which `akita_pcs` re-exports, to build field
+elements from integers.
+
+An application outside the workspace declares the crates behind these imports
+as dependencies. Pin every crate to the same Akita revision:
+
+```toml
+[dependencies]
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-cpu-backend = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-verifier = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+```
+
+The helper that computes `evaluation` is independent of the Akita prover. It
 exists to give the verifier a concrete public value to check.
 
 ## Load schedules and build reusable setup
@@ -161,7 +180,10 @@ let proof = scheme.batched_prove(
 
 `BasisMode::Lagrange` means that the committed table contains values on the
 Boolean cube. This is the standard representation for multilinear extensions
-in proof systems.
+in proof systems. `BasisMode::Monomial` is for a table that holds the
+coefficients of the multilinear monomials instead. The commitment does not
+depend on the mode. The mode changes only the weights that the opening proof
+uses.
 
 ## Transport the proof
 

@@ -32,9 +32,9 @@ commit to polynomial groups
         ↓
 state the opening points and values
         ↓
-prove and encode
+prove
         ↓
-decode and verify
+verify the proof bytes
 ```
 
 The [first proof](./quickstart.md) chapter runs this full path with one dense
@@ -46,7 +46,7 @@ larger integrations.
 The current API commits to multilinear polynomials represented by their values
 on the Boolean cube. A polynomial with $n$ variables has $2^n$ entries. Akita
 supports arbitrary dense tables and a compact one hot representation for tables
-with one selected entry in each fixed size chunk.
+with at most one selected entry in each fixed size chunk.
 
 Applications may commit to several polynomials at once. Polynomials with the
 same number of variables and the same opening point form one commitment group.
@@ -90,10 +90,13 @@ The repository separates proving from verification on purpose.
 | `akita-verifier` | Verification without prover polynomial backends or planner search |
 | `akita-types` | Proofs, commitments, claims, schedules, and setup types shared across the boundary |
 | `akita-transcript` | The transcript that derives proof challenges from the public statement and prior messages |
+| `akita-params` | Parameter geometry and the runtime arguments `ChunkedWitnessCfg` and `BasisMode` |
+| `akita-error` | The `AkitaError` type that every fallible call returns |
+| `akita-sis-estimator` | Offline estimator that regenerates the SIS tables; an application does not depend on it |
 
 An application that proves and verifies can begin with `akita-pcs`. A small
-verifier should depend directly on `akita-verifier`, `akita-types`, and
-`akita-config`. Pin every Akita crate to the same revision because a proof and
+verifier should depend directly on `akita-verifier`, `akita-types`,
+`akita-config`, and `akita-params`. Pin every Akita crate to the same revision because a proof and
 its verifier must use the same protocol format.
 
 ## Akita chooses the proof plan
