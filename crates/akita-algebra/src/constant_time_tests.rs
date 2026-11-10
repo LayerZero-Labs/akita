@@ -2,7 +2,7 @@
 
 use crate::ring::cyclotomic::BalancedDecomposePow2Params;
 use crate::*;
-use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn check_digits<F: Field + CanonicalEncoding>() {
@@ -65,12 +65,12 @@ fn check_digits<F: Field + CanonicalEncoding>() {
 fn ct_digits_match_variable_time_random_and_boundaries() {
     check_digits::<Prime32Offset99>();
     check_digits::<Prime64Offset59>();
-    check_digits::<Prime128OffsetA7F7>();
+    check_digits::<Prime128Offset6A23801F>();
 }
 
 #[test]
 fn ct_digits_reject_public_shape_and_basis_without_writing() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     let mut output = [42];
     let params = BalancedDecomposePow2Params::<F>::new(2, 8);
     assert!(
@@ -112,7 +112,7 @@ fn check_lifts<F: Field + CanonicalEncoding>() {
 fn signed_lifts_match_variable_time_at_both_i64_extremes() {
     check_lifts::<Prime32Offset99>();
     check_lifts::<Prime64Offset59>();
-    check_lifts::<Prime128OffsetA7F7>();
+    check_lifts::<Prime128Offset6A23801F>();
 }
 
 fn check_crt<F: CrtNttConvertibleField, W: PrimeWidth, const K: usize, const D: usize>(
@@ -137,15 +137,15 @@ fn check_crt<F: CrtNttConvertibleField, W: PrimeWidth, const K: usize, const D: 
 
 #[test]
 fn ct_reconstruction_matches_all_residue_widths_and_fields() {
-    check_crt::<Prime128OffsetA7F7, _, 6, 64>(&CrtNttParamSet::new(tables::q128_primes()));
+    check_crt::<Prime128Offset6A23801F, _, 6, 64>(&CrtNttParamSet::new(tables::q128_primes()));
     check_crt::<Prime64Offset59, _, 3, 64>(&CrtNttParamSet::new(tables::Q64_PRIMES));
     check_crt::<Prime32Offset99, _, 2, 64>(&CrtNttParamSet::new(tables::Q32_PRIMES));
-    check_crt::<Prime128OffsetA7F7, _, 1, 64>(&CrtNttParamSet::new([tables::I16_TAIL_PRIME]));
+    check_crt::<Prime128Offset6A23801F, _, 1, 64>(&CrtNttParamSet::new([tables::I16_TAIL_PRIME]));
 }
 
 #[test]
 fn ct_i32_lift_matches_full_range_and_digit_boundaries() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const D: usize = 64;
     let params = CrtNttParamSet::new(tables::q128_primes());
     let mut rng = StdRng::seed_from_u64(0x000a_1132);

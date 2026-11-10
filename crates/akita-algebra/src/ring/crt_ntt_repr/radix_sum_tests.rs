@@ -3,14 +3,14 @@ use crate::{
     tables::{q128_primes, Q128_NUM_PRIMES},
     CanonicalEncoding, Ring,
 };
-use jolt_field::Prime128OffsetA7F7;
+use jolt_field::Prime128Offset6A23801F;
 
 /// `radix_sum_to_ring` against `F`'s own arithmetic: planes of products
 /// `a·b` whose integers exceed `i128` (up to about `2^177.2`, the `P/8` the transposed product reaches, below `P/4`), with
 /// both signs and the largest operands, summed at radix `2^32`.
 #[test]
 fn radix_sum_matches_field_arithmetic() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const D: usize = 64;
     let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
     let mut state = 0x243f_6a88_85a3_08d3_u128;
