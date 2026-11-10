@@ -250,7 +250,7 @@ where
         scheme: &AkitaCommitmentScheme<Self>,
         setup: &AkitaProverSetup<Self::Field>,
     ) -> Result<AkitaVerifierSetup<Self::Field>, AkitaError> {
-        unsafe { scheme.setup_verifier(setup) }
+        scheme.setup_verifier(setup)
     }
 
     fn narrowed_verifier_setup(
@@ -259,7 +259,7 @@ where
         schedule: &FoldSchedule,
         layout: &OpeningClaimsLayout,
     ) -> Result<AkitaVerifierSetup<Self::Field>, AkitaError> {
-        unsafe { scheme.setup_verifier_for_schedule(setup, schedule, layout) }
+        scheme.setup_verifier_for_schedule(setup, schedule, layout)
     }
 
     fn verifier(
