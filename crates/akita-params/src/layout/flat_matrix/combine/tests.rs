@@ -1,6 +1,6 @@
 use super::*;
 use crate::FlatMatrix;
-use jolt_field::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 use rand::{rngs::StdRng, SeedableRng};
 
 fn oracle<F: Field + WithAccumulator, const D: usize>() {
@@ -84,5 +84,5 @@ fn column_combinations_match_plain_field_sums() {
     oracle::<Prime32Offset99, 64>();
     oracle::<Prime64Offset59, 64>();
     oracle::<Prime128Offset275, 64>();
-    oracle::<Prime128OffsetA7F7, 128>();
+    oracle::<Prime128Offset6A23801F, 128>();
 }

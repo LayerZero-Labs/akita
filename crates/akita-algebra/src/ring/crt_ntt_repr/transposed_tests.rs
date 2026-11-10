@@ -2,7 +2,7 @@ use super::*;
 use crate::tables::{
     q128_primes, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES,
 };
-use jolt_field::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 use rand::{rngs::StdRng, SeedableRng};
 
 fn oracle<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
@@ -78,7 +78,7 @@ fn transposed_matches_schoolbook_for_all_field_profiles() {
     oracle::<Prime32Offset99, Q32_NUM_PRIMES, 64>(Q32_PRIMES);
     oracle::<Prime64Offset59, Q64_NUM_PRIMES, 128>(Q64_PRIMES);
     oracle::<Prime128Offset275, Q128_NUM_PRIMES, 64>(q128_primes());
-    oracle::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 256>(q128_primes());
+    oracle::<Prime128Offset6A23801F, Q128_NUM_PRIMES, 256>(q128_primes());
 }
 
 #[test]
