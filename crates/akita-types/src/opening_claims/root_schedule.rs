@@ -23,6 +23,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
             )?;
             return crate::binary::binary_root_grinding_plan(
                 &ordinary,
+                manifest.field_profile(),
                 &[akita_error::checked::product([
                     manifest.descriptor().index_map().columns(),
                     manifest.descriptor().polynomials().len(),

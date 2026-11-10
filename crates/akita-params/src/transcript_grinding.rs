@@ -947,6 +947,12 @@ impl GrindingPlan {
         self.challenge_order.nominal_capacity_bits()
     }
 
+    /// Exact challenge set every proof-of-work run in this plan is priced against.
+    #[must_use]
+    pub const fn challenge_order(&self) -> ChallengeFieldOrder {
+        self.challenge_order
+    }
+
     #[must_use]
     pub const fn total_nonce_bits(&self) -> usize {
         self.total_nonce_bits
