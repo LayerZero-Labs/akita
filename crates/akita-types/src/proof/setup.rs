@@ -377,7 +377,7 @@ pub fn validate_public_matrix_matches_seed<F: Field + CanonicalEncoding + Valid>
 }
 
 /// Concrete SHAKE256 XOF reader for one public-matrix page.
-type SetupSeedXofReader = <Shake256 as ExtendableOutput>::Reader;
+type SetupSeedXofReader = shake::Shake256Reader;
 
 // One complete SHAKE256 rate block. Read-ahead stays within this page's stream;
 // it never changes the bytes consumed by Field::random, including on rejection.
