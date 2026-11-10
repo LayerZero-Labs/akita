@@ -7,7 +7,7 @@ use akita_types::binary::{
 };
 use jolt_field::CanonicalEncoding;
 
-const WORDS: [u128; 8] = [
+pub(super) const WORDS: [u128; 8] = [
     0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
     0x8000_0000_0000_0000_0000_0000_0000_0001,
     0xaaaa_5555_aaaa_5555_aaaa_5555_aaaa_5555,
@@ -876,18 +876,15 @@ fn prime_plane_p64_extension_claims_and_extension_typed_prefix_endpoint() {
     )
     .unwrap();
     let mut channel = new_prover_channel(b"p64-prime-public-admission");
-    assert!(matches!(
-        binary_root_statement::<Base, E, _>(
-            &mut channel,
-            &manifest,
-            &word_claim,
-            &prime,
-            &vec![Base::zero(); manifest.payload_coefficients().unwrap()],
-            None
-        ),
-        Err(AkitaError::UnsupportedSchedule(_))
-    ));
-    assert!(channel.narg_string().is_empty());
+    binary_root_statement::<Base, E, _>(
+        &mut channel,
+        &manifest,
+        &word_claim,
+        &prime,
+        &vec![Base::zero(); manifest.payload_coefficients().unwrap()],
+        None,
+    )
+    .unwrap();
 }
 
 #[test]

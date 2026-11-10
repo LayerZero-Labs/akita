@@ -33,7 +33,8 @@ where
                 SourceGroupKind::Ordinary
             )
             || profile.outer.digits.log_basis != 3
-            || profile.outer.matrix.ring_dimension() != 64
+            || profile.outer.matrix.ring_dimension()
+                != akita_types::binary::MIXED_ROOT_ORDINARY_B_DIMENSION
             || !profile
                 .inner
                 .matrix

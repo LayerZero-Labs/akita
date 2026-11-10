@@ -169,6 +169,21 @@ RAYON_NUM_THREADS=2 cargo run --release -p akita-sis-estimator \
 - Certified rows: `crates/akita-sis-estimator/data/q24_commitment_prime_infinity_width.csv`
   and `q24_infinity_cells.csv`.
 
+### Binary root challenge fields
+
+The binary root opens over P128, with `P = 2^128 - 275` and base-field
+challenges, or over P64, with `p = 2^64 - 59` and challenges in
+`E64 = F_p[u]/(u^2 - 2)`. Every root proof-of-work site is ground to a
+`2^-128` per-query rate against the profile's exact challenge order:
+`|E| = P` for P128 and `|E| = p^2` for P64. Because `p^2 < 2^128`, a P64 site
+with loss one needs one grinding bit. The column-challenge work entry keeps its
+`2^136` denominator under both profiles. The P64 site table is in
+[`specs/binary-p64-root.md`](../../../specs/binary-p64-root.md#security-accounting).
+Both profiles share the column-sampler extraction premise, the fixed-witness
+premise and the q24 A instance above. The certificate prices that instance at
+three source-comparison bounds only; its certification under the production
+security allocation is open for both profiles, as the spec lists.
+
 ### Quantum policy
 
 The production rule is the ADPS16 quantum cost model with a 169-bit target. It

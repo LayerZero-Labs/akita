@@ -108,6 +108,19 @@ parameter channel; Akita itself accepts bytes or a validated catalog and does
 not choose that storage policy. The [configuration guide](./configuration.md)
 explains which family to choose.
 
+## Binary grouped opening
+
+The opt-in `binary` feature, off by default, enables the binary grouped
+opening. Its root uses one of two field profiles: P128 (`2^128 - 275`) or P64
+(`2^64 - 59` with quadratic-extension challenges). The measurement script
+selects the profile with `--field`:
+
+```bash
+scripts/binary-full-size.sh --log-carriers 10 --shape binary-claim --field p64
+```
+
+The default is `--field p128`.
+
 ## Guest inline backends
 
 These features matter only to a Jolt RISC-V guest verifier. On `riscv64` they

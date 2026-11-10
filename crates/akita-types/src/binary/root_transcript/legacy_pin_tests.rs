@@ -1,7 +1,4 @@
 //! Frozen predecessor vectors, captured before the indexed-group seam.
-//!
-//! P64 root admission is still inactive in this base. Its vector freezes the
-//! already implemented canonical atoms directly, without activating a driver.
 
 use super::*;
 use crate::binary::{
@@ -12,7 +9,7 @@ use crate::{FoldSite, ProverGrinding};
 use akita_algebra::binary::BinaryField162 as B;
 use akita_challenges::{PreviewFoldDraw, ProverFoldDraw};
 use akita_params::{binary_setup::BinaryFieldProfile, GrindingPlan, GrindingRun};
-use akita_transcript::{new_prover_channel, public_bytes, public_extensions};
+use akita_transcript::new_prover_channel;
 use jolt_field::{Ext2, Prime128Offset275, Prime64Offset59};
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
@@ -36,55 +33,8 @@ where
         .map(|i| F::from_u64(17 + i as u64))
         .collect::<Vec<_>>();
     let mut state = new_prover_channel(b"binary-root-predecessor-vector");
-    if profile == BinaryFieldProfile::P128 {
-        binary_root_statement::<F, E, _>(&mut state, &manifest, &claim, &prime, &payload, None)
-            .unwrap();
-    } else {
-        // There is no accepted P64 root stream yet. Preserve its admission
-        // rejection separately, then bind its existing canonical atom codecs.
-        let mut admission = new_prover_channel(b"binary-root-predecessor-vector");
-        assert!(matches!(
-            binary_root_statement::<F, E, _>(
-                &mut admission,
-                &manifest,
-                &claim,
-                &prime,
-                &payload,
-                None,
-            ),
-            Err(AkitaError::UnsupportedSchedule(_))
-        ));
-        for (stage, bytes) in [
-            (3, manifest.canonical_bytes()),
-            (4, claim.canonical_bytes()),
-        ] {
-            public_bytes(
-                &mut state,
-                ProtocolSiteId {
-                    family: SITE_FAMILY_ROOT_STATEMENT,
-                    stage,
-                    ..ProtocolSiteId::default()
-                },
-                &bytes,
-            )
-            .unwrap();
-        }
-        public_extensions::<F, E, _>(
-            &mut state,
-            FoldSite::RootCommitment {
-                group: 0,
-                ring_dimension: 64,
-            }
-            .id()
-            .unwrap(),
-            &payload
-                .iter()
-                .copied()
-                .map(E::lift_base)
-                .collect::<Vec<_>>(),
-        )
+    binary_root_statement::<F, E, _>(&mut state, &manifest, &claim, &prime, &payload, None)
         .unwrap();
-    }
 
     // A zero carrier source has a valid zero word claim and zero round
     // polynomials. Use the actual frontend codecs and challenge sequence.

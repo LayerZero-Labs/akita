@@ -14,7 +14,7 @@ pub const BINARY_SETUP_P: u128 = u128::MAX - 274;
 /// Characteristic of the paired p64/E64 binary profile.
 pub const BINARY_SETUP_P64: u64 = u64::MAX - 58;
 
-/// Paired base and challenge fields. Defining a profile does not admit its root.
+/// Paired base and challenge fields of a binary root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryFieldProfile {
     /// Legacy P128 base field with degree-one challenges.
@@ -60,16 +60,11 @@ impl BinaryFieldProfile {
         )
     }
 
-    /// Validate the field pair and reject unfinished roots before any protocol work.
+    /// Validate the field pair before any protocol work.
     pub fn admit_root(self, modulus: u128, degree: usize) -> Result<(), AkitaError> {
         if modulus != self.modulus() || degree != self.extension_degree() {
             return Err(AkitaError::InvalidSetup(
                 "binary root field profile mismatch".into(),
-            ));
-        }
-        if self == Self::P64 {
-            return Err(AkitaError::UnsupportedSchedule(
-                "p64/E64 binary root is not yet supported".into(),
             ));
         }
         Ok(())

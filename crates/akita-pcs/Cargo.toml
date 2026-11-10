@@ -34,6 +34,7 @@ binary-measurements = ["binary"]
 binary = [
   "akita-algebra/binary",
   "akita-challenges/binary",
+  "akita-config/binary",
   "akita-cpu-backend/binary",
   "akita-planner/binary",
   "akita-prover/binary",

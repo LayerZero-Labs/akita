@@ -293,7 +293,4 @@ fn p64_dense_batches_replay_both_coordinates_after_the_outgoing_commitment() {
     let baseline = run(0);
     let changed = run(1);
     assert!(baseline.iter().zip(changed).all(|(a, b)| *a != b));
-    assert!(BinaryFieldProfile::P64
-        .admit_root(BinaryFieldProfile::P64.modulus(), 2)
-        .is_err());
 }

@@ -15,9 +15,12 @@ pub use multigroup::{BinaryColumnGroupPlan, BinaryColumnPlan};
 /// This is an experimental execution plan, not catalog or security admission.
 /// It is selected explicitly by a native root, never by feature enablement.
 /// The resulting single cursor covers response rejection, both root sumchecks,
-/// the root Stage 3, and all subsequent folds.
+/// the root Stage 3, and all subsequent folds. Every proof-of-work run is
+/// priced against the root profile's exact challenge order, which the ordinary
+/// suffix plan must share.
 pub fn binary_root_grinding_plan(
     ordinary: &GrindingPlan,
+    field: BinaryFieldProfile,
     fold_coordinates: &[usize],
     domain_len: usize,
     maximum_native_degree: usize,
@@ -25,15 +28,18 @@ pub fn binary_root_grinding_plan(
     if fold_coordinates.is_empty()
         || fold_coordinates.contains(&0)
         || !domain_len.is_power_of_two()
-        || maximum_native_degree < 648
+        || maximum_native_degree < super::MIXED_ROOT_MAX_NATIVE_DEGREE
     {
         return Err(AkitaError::InvalidSetup(
             "invalid native root grinding geometry".into(),
         ));
     }
-    // P128 stays selected until the quotient compiler, E64 adjoints and full
-    // security ledger land. The paired profile owns the exact challenge order.
-    let order = BinaryFieldProfile::P128.challenge_order()?;
+    let order = field.challenge_order()?;
+    if ordinary.challenge_order() != order {
+        return Err(AkitaError::InvalidSetup(
+            "ordinary suffix grinding plan uses another challenge order".into(),
+        ));
+    }
     let rounds = domain_len.trailing_zeros() as usize;
     let challenges = fold_coordinates
         .iter()
@@ -137,3 +143,6 @@ pub fn binary_root_grinding_plan(
     }));
     GrindingPlan::new(runs, order)
 }
+
+#[cfg(test)]
+mod tests;

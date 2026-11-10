@@ -143,6 +143,13 @@ impl BinaryRootWitnessPlan {
             .map(|_| self.repacking.segments().len() - 1)
     }
 
+    /// The segment where a mixed root's ordinary segments start: before the P64
+    /// quotient segment, or after every segment when there is none.
+    pub fn ordinary_first_segment(&self) -> usize {
+        self.quotient_segment()
+            .unwrap_or(self.repacking.segments().len())
+    }
+
     /// Independent coefficient coordinates, or the frozen seven P128 projections.
     pub fn coefficient_batch_count(&self) -> Result<usize, AkitaError> {
         if self.quotient_segment().is_some() {
@@ -201,9 +208,7 @@ impl BinaryRootWitnessPlan {
         mut self,
         ordinary: &super::OrdinaryNativeRootPlan,
     ) -> Result<Self, AkitaError> {
-        let first = self
-            .quotient_segment()
-            .unwrap_or(self.repacking.segments().len());
+        let first = self.ordinary_first_segment();
         if ordinary
             .profile()
             .inner

@@ -1,4 +1,4 @@
-//! Fixture-sized P64 word-and-prime and mixed roots, below public schedule admission.
+//! Fixture-sized P64 word-and-prime and mixed roots driven directly through the backend.
 use crate::binary_root::{
     binary_row_partials, prime_plane_digits, BinaryEvaluationWitness, BinaryRootRelation,
 };

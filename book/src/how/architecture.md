@@ -33,7 +33,12 @@ orchestration lives in `akita-pcs`.
 CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 The native grouped binary root is the binary product. Its fold, limb
 commitment, weighted-source, and weighted integer convolution kernels live in
-`crates/akita-cpu-backend/src/kernels/binary/`. The former standalone
+`crates/akita-cpu-backend/src/kernels/binary/`. The root opens over one of two
+paired field profiles, `BinaryFieldProfile` in
+`crates/akita-params/src/binary_setup.rs`: P128 has `P = 2^128 - 275` and
+base-field challenges, and P64 has `p = 2^64 - 59` and challenges in
+`E64 = F_p[u]/(u^2 - 2)`. The commitment manifest fixes the profile. The
+`binary` feature, off by default, enables both. The former standalone
 LaBinius crates were removed, together with the F192 host path, arbitrary prime
 functionals, and the old Family64 PCS.
 

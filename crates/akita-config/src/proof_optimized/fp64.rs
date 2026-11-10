@@ -20,6 +20,24 @@ const ADAPTIVE_RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
         potential_d_dimensions: D_RING_DIMENSIONS,
     };
 
+/// Ring dimensions for an fp64 suffix below a P64 binary mixed root.
+///
+/// A stops at the largest fp64 dimension within the root's native degree. B is
+/// the 64-dimensional ordinary image the root authenticates. The planner needs
+/// the B domain to contain every suffix dimension, so later folds also use 64,
+/// as the fp128 `DenseBounded` preset does.
+#[cfg(feature = "binary")]
+pub const BINARY_MIXED_ROOT_RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule = {
+    use akita_types::binary::{MIXED_ROOT_MAX_NATIVE_DEGREE, MIXED_ROOT_ORDINARY_B_DIMENSION};
+    assert!(512 <= MIXED_ROOT_MAX_NATIVE_DEGREE && 1024 > MIXED_ROOT_MAX_NATIVE_DEGREE);
+    akita_schedules::RingDimensionSchedule {
+        potential_a_dimensions: &[64, 128, 256, 512],
+        potential_b_dimensions: &[MIXED_ROOT_ORDINARY_B_DIMENSION],
+        suffix_dimensions: &[MIXED_ROOT_ORDINARY_B_DIMENSION],
+        ..ADAPTIVE_RING_DIMENSION_SCHEDULE
+    }
+};
+
 /// Default adaptive dense preset for fp64.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Dense;

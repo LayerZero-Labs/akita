@@ -217,3 +217,24 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
         );
     }
 }
+
+#[test]
+fn p64_prime_claim_u_coordinates_bind_the_opening() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let opened = super::p64::p64_round_trip(true);
+        opened.verify(&opened.proof, opened.prime.clone());
+        let prime = opened.prime.clone().unwrap();
+        for point in [false, true] {
+            let mut changed = prime.clone();
+            let value = if point {
+                &mut changed.point[3]
+            } else {
+                &mut changed.evaluations[0].value
+            };
+            let [base, u]: [u128; 2] = value.coordinates().try_into().unwrap();
+            *value = [base, (u + 1) % BinaryFieldProfile::P64.modulus()].into();
+            let _ = opened.rejects(&opened.proof, Some(changed));
+        }
+    });
+}

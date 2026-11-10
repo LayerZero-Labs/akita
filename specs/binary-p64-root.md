@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Akita contributors |
 | Created | 2026-11-05 |
-| Status | approved |
+| Status | active |
 | PR | |
 | Supersedes | P128 root profile and exact-divisibility projection design in [binary-opening.md](binary-opening.md), upon implementation |
 | Superseded-by | |
@@ -78,24 +78,26 @@ It does not preserve binary-root proof or persisted-setup compatibility.
 
 ### Acceptance Criteria
 
-- [ ] A p64/E64 word-only, word-plus-prime and mixed opening uses the same grouped
+- [x] A p64/E64 word-only, word-plus-prime and mixed opening uses the same grouped
   PCS entry points, caller transcript and grinding cursor as its successor.
-- [ ] Geometry determines K's digit depth and addresses before commitment.
+  Word-only and mixed run in `crates/akita-pcs/tests/binary_end_to_end/p64.rs`;
+  all three run in `scripts/binary-full-size.sh --field p64`.
+- [x] Geometry determines K's digit depth and addresses before commitment.
   Admission checks `L + q B_K < p` using the full accepted digit bounds.
-- [ ] K is committed at order 5 and range-checked in Stage 1.
+- [x] K is committed at order 5 and range-checked in Stage 1.
   There are no order-six J rows, y messages or 95-bit y admission cap.
-- [ ] Order 7 draws independent E64 coefficient weights.
+- [x] Order 7 draws independent E64 coefficient weights.
   The K-digit weight is `-q * 8^j * rho_i` at its natural address.
-- [ ] Prover, verifier, reference compiler and optimized compiler agree for
+- [x] Prover, verifier, reference compiler and optimized compiler agree for
   challenges with a nonzero u coordinate.
-- [ ] Prime base coordinates use 22 digits and eight-byte canonical residues.
+- [x] Prime base coordinates use 22 digits and eight-byte canonical residues.
   Any admitted E64 prime claim accounts for both coordinate planes.
-- [ ] B/D ranks cover their actual widths under the q64 table.
+- [x] B/D ranks cover their actual widths under the q64 table.
   The outgoing witness, typed prefix and ordinary suffix are repriced.
 - [ ] The grinding plan keeps the root's column-challenge work entry and its
   `2^136` denominator. The full security ledger includes all algebraic, retry, setup and
-  binding losses.
-- [ ] The evidence script passes under `python3 -I`.
+  binding losses. The first sentence is met; the full ledger is not.
+- [x] The evidence script passes under `python3 -I`.
   Protocol mutations and malformed-input tests reject with typed errors.
 
 ### Testing Strategy
@@ -166,8 +168,8 @@ For projection-induced scheduling changes, the proof delta is
 `-84 + bytes(new selected schedule) - bytes(old selected schedule)`.
 Base-field encoding changes and B/D rank changes contribute separately.
 Prime planes shrink from 43 to 22 digits per base coordinate.
-There is no exact complete-proof size until a p64 catalog selects the domains
-and successor schedule.
+Complete proof sizes from the full-size example are in the measurement table
+below.
 
 The prover reuses the accepted integer residual.
 It replaces seven projections and their J-to-rho combination with `a` exact
@@ -182,10 +184,34 @@ The verifier draws `a` E64 weights and evaluates K's digit weights.
 A direct compiler uses `O(a)` challenge work and `O(a*d)` digit-weight work.
 The existing rank-many A/image adjoints avoid an online scan over m A rows.
 Stream weights at large owner counts where the compiler permits it.
-Benchmark tiny, `2^22` and `2^23` word, prime and mixed shapes with
-`crates/akita-pcs/examples/binary_full_size.rs` and its catalog module.
-Report complete bytes, selected domains, prefix size, time and peak memory.
-Measure the two-coordinate A adjoint separately.
+The two-coordinate A adjoint has not been measured separately.
+
+The table below compares the two roots with
+`scripts/binary-full-size.sh --field p128|p64` at commit `8046b4cd2`.
+It was run once per row on an M4 Max shared with other jobs (one-minute load
+7.7 to 13.9), so times are indicative only; bytes are exact.
+"Carriers" is the number of committed binary carriers; the shapes are the
+example's `binary-claim`, `binary-and-prime-claims` and
+`binary-and-prime-claims-plus-ordinary` ("plus-ordinary").
+
+| Carriers | Shape | Root | Proof bytes | Commit ms | Prove ms | Verify ms | Prover RSS GB | Verifier RSS MB |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2^22 | binary-claim | P128 | 82,764 | 174 | 648 | 8.5 | 2.70 | 73 |
+| 2^22 | binary-claim | P64 | 79,236 | 207 | 1,045 | 11.0 | 2.27 | 66 |
+| 2^22 | binary-and-prime-claims | P128 | 84,437 | 212 | 1,145 | 11.9 | 3.97 | 154 |
+| 2^22 | binary-and-prime-claims | P64 | 83,536 | 162 | 907 | 9.3 | 2.68 | 82 |
+| 2^22 | plus-ordinary | P128 | 84,396 | 297 | 1,647 | 19.8 | 4.30 | 166 |
+| 2^22 | plus-ordinary | P64 | 83,531 | 185 | 1,103 | 15.9 | 3.15 | 105 |
+| 2^23 | binary-claim | P128 | 84,590 | 296 | 922 | 9.5 | 4.85 | 156 |
+| 2^23 | binary-claim | P64 | 83,684 | 296 | 1,072 | 10.4 | 3.81 | 83 |
+| 2^23 | binary-and-prime-claims | P128 | 84,604 | 294 | 993 | 9.6 | 4.97 | 155 |
+| 2^23 | binary-and-prime-claims | P64 | 83,586 | 293 | 1,132 | 10.8 | 3.93 | 83 |
+| 2^23 | plus-ordinary | P128 | 84,613 | 295 | 1,049 | 13.1 | 5.17 | 174 |
+| 2^23 | plus-ordinary | P64 | 83,671 | 296 | 1,249 | 16.7 | 4.33 | 112 |
+
+P64 proofs are 1.0 to 4.3 percent smaller, and P64 peak memory is 16 to 32
+percent lower on the prover and 10 to 47 percent lower on the verifier.
+At this load, the timing differences are within run-to-run noise.
 
 ## Design
 
@@ -697,6 +723,31 @@ Use the complete Fiat–Shamir/grinding analysis with the new challenge order
 and query sites. Include retry, hash, binding, setup and ordinary-suffix losses.
 Do not divide interactive error by grinding work without the corresponding
 security theorem.
+
+Allocation: every root site is ground to a `2^-128` per-query rate against
+`|E| = p^2`, as the P128 root is against `|E| = P`. Each site takes the least
+`g` with `L * 2^128 <= p^2 * 2^g`. Because `p^2 < 2^128`, loss one needs one
+bit. The column-challenge entry keeps its `2^136` denominator (see below).
+The table is the level-0 plan that `binary_root_grinding_plan` returns for
+the `binary-and-prime-claims` fixture
+(`scripts/binary-full-size.sh --plan-only --field p64`):
+
+| Site | Loss L | g at 2^10 | g at 2^22 |
+| --- | ---: | ---: | ---: |
+| Fold response | 0 | 0 | 0 |
+| Column-challenge work (`2^136` denominator) | 2 at 2^10, 256 at 2^22 | 0 | 0 |
+| Fold challenge group | 0 | 0 | 0 |
+| Ring-switch alpha | 648 | 10 | 10 |
+| Tau0 point | 21 at 2^10, 25 at 2^22 | 5 | 5 |
+| Tau1 point | 1 | 1 | 1 |
+| Stage 1 round (21 at 2^10, 25 at 2^22) | 5 | 3 | 3 |
+| Stage 2 batch | 1 | 1 | 1 |
+| Stage 2 round (21 at 2^10, 25 at 2^22) | 3 | 2 | 2 |
+| Stage 3 round (19 at 2^10, 25 at 2^22) | 2 | 2 | 2 |
+
+The ordinary suffix is planned under the same order; a suffix planned under
+another order is rejected (`binary_root_grinding_plan` in
+`crates/akita-types/src/binary/grinding.rs`).
 Two independent coefficient tests on the same fixed witness would give
 `1/e^2 < 2^-255` for that step if both are authenticated.
 Batching their results back to one scalar would restore a `1/e` bottleneck.
@@ -864,24 +915,33 @@ The stages below describe future changes; this spec commit changes no Rust.
 
 ### Open questions
 
-- Which p64 catalog and successor schedules cover the intended word, prime and
-  mixed shapes? Complete proof bytes, time and memory remain unmeasured.
-- What complete security allocation will production admit? The q24, B/D,
-  suffix and setup instances need certification under that allocation.
+Closed in stage 6:
+
+- Catalog and schedules: the fixture catalogs come from
+  `crates/akita-pcs/examples/binary_full_size/` with `--field p64` and from
+  `crates/akita-pcs/tests/binary_end_to_end/p64.rs`, which open the word and
+  mixed shapes through the public grouped entry points.
+- Security allocation: every root site is ground to `2^-128` against
+  `|E| = p^2`, as for P128 (`binary_root_grinding_plan` in
+  `crates/akita-types/src/binary/grinding.rs`); see "Security accounting".
+- B and D ranks: they are separate, each the least q64 rank for its own width
+  (`BinaryFieldProfile::digit_commitment_rank` in
+  `crates/akita-params/src/binary_setup.rs`).
+- Ordinary profile: the mixed root uses `Q64Offset59`
+  (`OrdinaryNativeRootPlan::new` in `crates/akita-types/src/binary/ordinary_root.rs`).
+
+Open, shared with the P128 root and unchanged by this migration:
+
 - Which extraction argument covers the seed-plus-indexed-SHAKE column sampler?
   The indexed stage of the checkpoint argument replaces one coordinate at a
   time. It needs each indexed stream modeled as an independently programmable
   oracle with its queries counted, or a sampler whose coordinates are encoded
-  independently in the transcript. This question applies equally to the
-  current root.
-- Will B and D keep a shared rank or expose separate ranks?
-  Either choice must meet the per-role minima above.
-- Which p64 ordinary profile supplies the mixed root's compression and norm
-  contract?
+  independently in the transcript.
 - Does the generalized checkpoint comparison establish the required fixed
   witness for the extension compiler and shared setup/suffix claim?
   Validate that premise alongside negative carries, quotient mutations and
   genuine non-base challenges.
+- Certification of the q24 A instance under the production security allocation.
 
 ## References
 

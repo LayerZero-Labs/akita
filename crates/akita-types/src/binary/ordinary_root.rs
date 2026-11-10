@@ -20,6 +20,14 @@ use crate::native_root_relation::{
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
 
+/// Largest native ring degree of a mixed root. The root's shared ring-switch
+/// challenge and its grinding plan are priced for the `X^648` trinomial, so
+/// every ordinary A, B and compression ring degree must be at most this.
+pub const MIXED_ROOT_MAX_NATIVE_DEGREE: usize = 648;
+
+/// Ring dimension of the ordinary B image that a mixed root authenticates.
+pub const MIXED_ROOT_ORDINARY_B_DIMENSION: usize = 64;
+
 /// Ordinary preimage families sharing the native root's outgoing table.
 ///
 /// S is the original small coefficient table; T is the ordinary A image in
@@ -88,8 +96,8 @@ impl OrdinaryNativeRootPlan {
                 "mixed root compression geometry is unsupported".into(),
             ));
         }
-        // The selected root grinding plan budgets a maximum native degree of
-        // 648 for its shared ring-switch challenge.
+        // The selected root grinding plan budgets this maximum native degree
+        // for its shared ring-switch challenge.
         if [
             a_degree,
             b_degree,
@@ -97,7 +105,7 @@ impl OrdinaryNativeRootPlan {
             second.ring_dimension(),
         ]
         .into_iter()
-        .any(|degree| degree > 648)
+        .any(|degree| degree > MIXED_ROOT_MAX_NATIVE_DEGREE)
         {
             return Err(AkitaError::InvalidSetup(
                 "mixed root native degree exceeds the root grinding budget".into(),

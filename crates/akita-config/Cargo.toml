@@ -26,6 +26,8 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
 ]
 test-support = []
+# Presets for an ordinary suffix below a binary mixed root.
+binary = ["akita-types/binary"]
 dev-protocol = ["akita-params/dev-protocol"]
 
 [dependencies]

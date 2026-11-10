@@ -63,11 +63,7 @@ pub fn price_binary_root_planes(
         prime.planes().len(),
     )?;
     if let Some(profile) = ordinary {
-        let ordinary = OrdinaryNativeRootPlan::new(
-            profile,
-            plan.quotient_segment()
-                .unwrap_or(plan.repacking().segments().len()),
-        )?;
+        let ordinary = OrdinaryNativeRootPlan::new(profile, plan.ordinary_first_segment())?;
         plan = plan.with_ordinary(&ordinary)?;
     }
     let repacking = plan.repacking();

@@ -23,13 +23,14 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
             )?;
             return crate::binary::binary_root_grinding_plan(
                 &ordinary,
+                manifest.field_profile(),
                 &[akita_error::checked::product([
                     manifest.descriptor().index_map().columns(),
                     manifest.descriptor().polynomials().len(),
                 ])
                 .ok_or(AkitaError::InvalidProof)?],
                 domain_len,
-                648,
+                crate::binary::MIXED_ROOT_MAX_NATIVE_DEGREE,
             );
         }
         let _ = schedule;
