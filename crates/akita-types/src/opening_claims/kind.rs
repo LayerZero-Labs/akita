@@ -7,13 +7,13 @@
 pub enum GroupClaimKind {
     /// The ordinary negacyclic-ring opening relation.
     Ordinary,
-    /// A binary word claim supplied by the caller.
+    /// A binary word claim supplied by the caller, with optional prime claims.
     #[cfg(feature = "binary")]
     Binary {
         /// Frozen binary A/B contract, retained when mapping commitment payloads.
         manifest: Box<crate::binary::BinaryCommittedGroupManifest>,
         /// The caller's logical word MLE evaluation over GF(2^128).
-        claim: Option<crate::binary::BinaryWordClaim>,
+        claim: crate::binary::BinaryWordClaim,
         /// Checked single-point prime claim, in polynomial order.
         prime: crate::binary::PrimePlaneManifest,
     },
@@ -46,17 +46,9 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                         "prime plane profile mismatch".into(),
                     ));
                 }
-                let Some(claim) = claim else {
-                    if prime.planes().is_empty() {
-                        return Err(akita_error::AkitaError::InvalidInput(
-                            "binary group has no claims".into(),
-                        ));
-                    }
-                    continue;
-                };
                 claim.validate(manifest.descriptor())?;
                 if groups.iter().take(position).any(|previous| {
-                    matches!(&previous.kind, GroupClaimKind::Binary { claim: Some(earlier), .. }
+                    matches!(&previous.kind, GroupClaimKind::Binary { claim: earlier, .. }
                         if earlier.polynomial() == claim.polynomial())
                 }) {
                     return Err(akita_error::AkitaError::InvalidInput(

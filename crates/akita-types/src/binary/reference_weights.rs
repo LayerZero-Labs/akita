@@ -604,7 +604,7 @@ pub(crate) fn digit_authentication_weights<E: Field>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_weights<E: Field>(
     plan: &BinaryRootWitnessPlan,
-    claim: Option<&BinaryTerminalClaim>,
+    claim: &BinaryTerminalClaim,
     matrix: Option<&[Vec<[i128; 648]>]>,
     challenges: &Challenges,
     alpha: E,
@@ -612,12 +612,6 @@ pub(crate) fn plan_weights<E: Field>(
     terminal_batches: impl AsRef<[E]>,
 ) -> Result<NativeRootWeights<E>, AkitaError> {
     let a = direct_a_weights(plan, matrix, challenges, rho)?;
-    let Some(claim) = claim else {
-        if !terminal_batches.as_ref().is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-        return Ok(a);
-    };
     let terminal = terminal_weights(
         claim,
         plan.descriptor(),
@@ -659,19 +653,13 @@ pub(crate) fn root_relation<F: Field, E: ExtField<F>>(
         });
     }
     let (rho, projection_claim) = public.coefficient_inputs(batches, rho, projected_values)?;
-    let terminal = checked::range(
-        public.plan.coefficient_batch_count()?,
-        if public.claim.is_some() { 2 } else { 0 },
-    )
-    .ok_or(AkitaError::InvalidProof)?;
+    let terminal = checked::range(public.plan.coefficient_batch_count()?, 2)
+        .ok_or(AkitaError::InvalidProof)?;
     let b =
         checked::range(terminal.end, public.manifest.b_rows()).ok_or(AkitaError::InvalidProof)?;
     let d = checked::range(
         b.end,
-        public
-            .manifest
-            .d_label(public.claim.is_some(), public.prime.planes().len())?
-            .rank as usize,
+        public.manifest.d_label(public.prime.planes().len())?.rank as usize,
     )
     .ok_or(AkitaError::InvalidProof)?;
     let ordinary_rows = checked::range(
@@ -698,7 +686,7 @@ pub(crate) fn root_relation<F: Field, E: ExtField<F>>(
     .ok_or(AkitaError::InvalidProof)?;
     let algebra = plan_weights(
         &public.plan,
-        public.claim.as_ref(),
+        &public.claim,
         matrix,
         challenges,
         alpha,
@@ -732,9 +720,7 @@ pub(crate) fn root_relation<F: Field, E: ExtField<F>>(
         &public.plan,
         &public.plan.opening_segments(),
         &public.setup.setup_seed.seed,
-        public
-            .manifest
-            .d_label(public.claim.is_some(), public.prime.planes().len())?,
+        public.manifest.d_label(public.prime.planes().len())?,
         d_payload,
         alpha,
         batches.get(d).ok_or(AkitaError::InvalidProof)?,

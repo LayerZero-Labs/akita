@@ -100,12 +100,9 @@ jobs:
         run: cargo test -p akita-types --lib --no-default-features --features binary,transcript-keccak
       - name: Test trinomial quotient kernel
         run: cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak -- kernels::trinomial_relation
-      - name: Test compact imports and signed ordinary seams
-        run: |
-          cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak opaque::binary
-          cargo test -p akita-params --lib --no-default-features --features binary,transcript-keccak ordinary_source
-          cargo test -p akita-planner --lib --no-default-features --features binary,transcript-keccak ordinary_source
-      - name: Clippy trinomial bridge and ordinary seams
+      - name: Test compact imports and ordinary preimages
+        run: cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak opaque::binary
+      - name: Clippy trinomial bridge and ordinary preimages
         run: cargo clippy -p akita-types -p akita-cpu-backend -p akita-params -p akita-planner --all-targets --no-default-features --features binary,transcript-keccak -- -D warnings
       - name: Test owned binary source kernels
         run: |

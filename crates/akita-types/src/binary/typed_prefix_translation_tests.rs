@@ -98,28 +98,22 @@ fn dense_weight(
 #[test]
 fn translated_two_and_four_setup_weights_match_dense_e64() {
     let mut rng = StdRng::seed_from_u64(0x4a_0004);
-    let shapes = [
-        (1, 1, 1, true, 0),
-        (2, 2, 2, true, 1),
-        (4, 1, 3, false, 3),
-        (1, 4, 1, true, 1),
-    ];
+    let shapes = [(1, 1, 1, 0), (2, 2, 2, 1), (4, 1, 3, 3), (1, 4, 1, 1)];
     for groups in [2, 4] {
         let manifests = shapes[..groups]
             .iter()
             .enumerate()
-            .map(|(i, &(r, c, o, _, _))| manifest(r, c, o, i as u64))
+            .map(|(i, &(r, c, o, _))| manifest(r, c, o, i as u64))
             .collect::<Vec<_>>();
         let plans = manifests
             .iter()
             .zip(&shapes)
-            .map(|(m, &(_, _, _, w, claims))| {
+            .map(|(m, &(_, _, _, claims))| {
                 BinaryRootWitnessPlan::for_profile(
                     m.descriptor(),
                     3,
                     64,
                     BinaryFieldProfile::P64,
-                    w,
                     claims * BinaryFieldProfile::P64.extension_degree(),
                 )
                 .unwrap()
@@ -179,7 +173,7 @@ fn translated_two_and_four_setup_weights_match_dense_e64() {
         identity_maps[0].insert(0, 0);
         let owners = shapes[..groups]
             .iter()
-            .map(|&(_, _, _, _, p)| (0..p).collect::<Vec<_>>())
+            .map(|&(_, _, _, p)| (0..p).collect::<Vec<_>>())
             .collect::<Vec<_>>();
         let root_identity = composite_prefix_root_identity(
             &root,
@@ -399,7 +393,7 @@ fn offset_equality_carries_match_dense_nonbase_points() {
 fn zero_translation_preserves_all_local_weights_and_rejects_bad_maps() {
     let m = manifest(2, 2, 2, 0);
     let plan =
-        BinaryRootWitnessPlan::for_profile(m.descriptor(), 3, 64, BinaryFieldProfile::P64, true, 2)
+        BinaryRootWitnessPlan::for_profile(m.descriptor(), 3, 64, BinaryFieldProfile::P64, 2)
             .unwrap();
     let typed = BinaryTypedPrefix::from_plan(&m, &plan).unwrap();
     let indices = (0..plan.repacking().segments().len()).collect::<Vec<_>>();

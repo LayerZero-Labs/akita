@@ -20,13 +20,14 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         commitment: CommittedGroup<F>,
         claim: BinaryWordClaim,
     ) -> Result<Self, AkitaError> {
-        Self::new_binary_planes(commitment, Some(claim), None)
+        Self::new_binary_planes(commitment, claim, None)
     }
 
-    /// Select optional word and single-point prime claims in one grouped opening.
+    /// Select the word claim and optional single-point prime claims in one
+    /// grouped opening. A binary group always opens its word claim.
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
-        claim: Option<BinaryWordClaim>,
+        claim: BinaryWordClaim,
         primes: Option<crate::binary::PrimeGroupClaim>,
     ) -> Result<Self, AkitaError> {
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
@@ -34,19 +35,12 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
                 "binary claim requires a binary commitment".into(),
             ));
         };
-        if let Some(claim) = &claim {
-            claim.validate(manifest.descriptor())?;
-        }
+        claim.validate(manifest.descriptor())?;
         let prime = crate::binary::PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
             primes,
             manifest.field_profile(),
         )?;
-        if claim.is_none() && prime.planes().is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "binary group has no claims".into(),
-            ));
-        }
         commitment
             .profile()
             .validate_frozen_precommit(F::MODULUS_BITS)?;

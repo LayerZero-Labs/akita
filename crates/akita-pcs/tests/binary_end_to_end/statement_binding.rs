@@ -54,7 +54,7 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
         binary_root_statement::<F, F, _>(
             &mut prover,
             manifest,
-            Some(claim),
+            claim,
             &akita_types::binary::PrimePlaneManifest::with_field_profile(
                 manifest.descriptor(),
                 None,
@@ -68,7 +68,7 @@ fn field_switch_every_order_zero_field_changes_the_first_challenge_on_both_sides
         binary_root_statement::<F, F, _>(
             &mut verifier,
             manifest,
-            Some(claim),
+            claim,
             &akita_types::binary::PrimePlaneManifest::with_field_profile(
                 manifest.descriptor(),
                 None,

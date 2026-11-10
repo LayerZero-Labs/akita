@@ -10,7 +10,7 @@ use akita_params::GroupCommitPhaseParams;
 /// It does not introduce another opening or transcript.
 pub struct BinaryRootWitnessRequest<H> {
     pub manifest: BinaryCommittedGroupManifest,
-    pub claim: Option<BinaryTerminalClaim>,
+    pub claim: BinaryTerminalClaim,
     pub prime: super::PrimePlaneManifest,
     pub plan: BinaryRootWitnessPlan,
     pub ordinary: Option<(GroupCommitPhaseParams, H)>,

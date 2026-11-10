@@ -39,7 +39,6 @@ fn occurrence(
     columns: usize,
     owners: usize,
     field: BinaryFieldProfile,
-    word: bool,
     planes: usize,
 ) -> BinaryRootGroupOccurrence {
     let carriers = 4 * m * columns;
@@ -60,7 +59,6 @@ fn occurrence(
             field,
         )
         .unwrap(),
-        word,
         prime_coordinate_planes: planes,
         registered_commitment: None,
     }
@@ -109,7 +107,6 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                         1 << (group % 3),
                         group + 1,
                         BinaryFieldProfile::P64,
-                        !mixed_views || group % 3 != 1,
                         if mixed_views && group % 3 == 2 {
                             0
                         } else {
@@ -209,7 +206,7 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                 // checked against the physical segment sum below.
                 let length = 4096 * group.owners * group.ring_rows
                     + 24576 * group.owners * group.columns
-                    + usize::from(group.word) * 256 * group.owners * (group.columns + 9 + 6)
+                    + 256 * group.owners * (group.columns + 9 + 6)
                     + 5632 * group.prime_coordinate_planes * group.columns
                     + 3072 * group.owners * depth;
                 assert_eq!(group.physical_len, length);
@@ -243,13 +240,13 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
                 assert_eq!(group.quotient_segment, Some(next_segment));
                 next_segment += 1;
                 for (range, count) in [
-                    (&group.rows.word, 2 * usize::from(group.word)),
+                    (&group.rows.word, 2),
                     (&group.rows.b, binary[group.global_index].manifest.b_rows()),
                     (
                         &group.rows.d,
                         binary[group.global_index]
                             .manifest
-                            .d_label(group.word, group.prime_coordinate_planes)
+                            .d_label(group.prime_coordinate_planes)
                             .unwrap()
                             .rank as usize,
                     ),
@@ -303,10 +300,10 @@ fn ordered_rosters_share_one_contiguous_layout_and_one_row_vector() {
 #[test]
 fn translations_cross_boundaries_with_unaligned_group_and_quotient_starts() {
     let binary = [
-        occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, true, 2),
-        occurrence(1, 4, 1, 2, BinaryFieldProfile::P64, false, 2),
+        occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, 2),
+        occurrence(1, 4, 1, 2, BinaryFieldProfile::P64, 2),
         // Keep the quotient bank nonaligned with two coordinate planes per claim.
-        occurrence(2, 2, 2, 1, BinaryFieldProfile::P64, true, 0),
+        occurrence(2, 2, 2, 1, BinaryFieldProfile::P64, 0),
     ];
     let plan =
         BinaryRootGroupPlan::new(&binary, &[ordinary(3, BinaryFieldProfile::P64)], 256).unwrap();
@@ -401,16 +398,15 @@ fn translations_cross_boundaries_with_unaligned_group_and_quotient_starts() {
 fn singleton_layout_and_batch_accounting_equal_the_predecessor_in_both_fields() {
     for field in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
         for (m, columns, owners) in [(1, 1, 1), (1, 2, 2), (4, 8, 3), (128, 32, 1)] {
-            for (word, claims) in [(true, 0), (false, 1), (true, 1)] {
+            for claims in [0, 1] {
                 let planes = claims * field.extension_degree();
-                let input = occurrence(0, m, columns, owners, field, word, planes);
+                let input = occurrence(0, m, columns, owners, field, planes);
                 for mixed in [false, true] {
                     let mut predecessor = BinaryRootWitnessPlan::for_profile(
                         input.manifest.descriptor(),
                         input.manifest.a_rank(),
                         256,
                         field,
-                        word,
                         planes,
                     )
                     .unwrap();
@@ -446,9 +442,9 @@ fn singleton_layout_and_batch_accounting_equal_the_predecessor_in_both_fields() 
                         group.binary()[0].rows.coefficients.len(),
                         predecessor.coefficient_batch_count().unwrap()
                     );
-                    let d = input.manifest.d_label(word, planes).unwrap().rank as usize;
+                    let d = input.manifest.d_label(planes).unwrap().rank as usize;
                     let mut expected = predecessor.coefficient_batch_count().unwrap()
-                        + 2 * usize::from(word)
+                        + 2
                         + input.manifest.b_rows()
                         + d
                         + 2 * claims;
@@ -521,13 +517,13 @@ fn aggregate_caps_accept_each_boundary_and_reject_its_successor() {
     }
     let field = BinaryFieldProfile::P64;
     let binary = (0..65)
-        .map(|group| occurrence(group, 1, 1, 1, field, true, 2))
+        .map(|group| occurrence(group, 1, 1, 1, field, 2))
         .collect::<Vec<_>>();
     let maximum = BinaryRootGroupPlan::new(&binary[..64], &[], 256).unwrap();
     assert_eq!(maximum.repacking().segments().len(), 448);
     assert_eq!(maximum.totals().segment_cap, 448);
     assert!(BinaryRootGroupPlan::new(&binary, &[], 256).is_err());
-    let maximum = occurrence(0, 1, 1, 4096, field, true, 8192);
+    let maximum = occurrence(0, 1, 1, 4096, field, 8192);
     let maximum = BinaryRootGroupPlan::new(&[maximum], &[], 256).unwrap();
     assert_eq!(maximum.totals().owners, 4096);
     assert_eq!(maximum.totals().prime_claims, 4096);
@@ -539,33 +535,21 @@ fn aggregate_caps_accept_each_boundary_and_reject_its_successor() {
 #[test]
 fn malformed_presence_counts_dimensions_and_domains_reject() {
     let field = BinaryFieldProfile::P64;
-    let valid = occurrence(0, 1, 2, 1, field, true, 0);
+    let valid = occurrence(0, 1, 2, 1, field, 0);
     assert!(BinaryRootGroupPlan::new(&[], &[], 256).is_err());
     assert!(BinaryRootGroupPlan::new(&[], &[ordinary(1, field)], 256).is_err());
-    for (word, planes) in [
-        (false, 0),
-        (false, 1),
-        (true, 1),
-        (false, 4),
-        (true, 4),
-        (true, usize::MAX),
-    ] {
+    for planes in [1, 4, usize::MAX] {
         let mut invalid = valid.clone();
-        invalid.word = word;
         invalid.prime_coordinate_planes = planes;
         assert!(BinaryRootGroupPlan::new(&[invalid], &[], 256).is_err());
     }
     for (m, columns) in [(8192, 256), (1, 256)] {
-        BinaryRootGroupPlan::new(&[occurrence(0, m, columns, 1, field, true, 0)], &[], 256)
-            .unwrap();
+        BinaryRootGroupPlan::new(&[occurrence(0, m, columns, 1, field, 0)], &[], 256).unwrap();
     }
     for (m, columns) in [(16384, 256), (1, 512)] {
-        assert!(BinaryRootGroupPlan::new(
-            &[occurrence(0, m, columns, 1, field, true, 0)],
-            &[],
-            256
-        )
-        .is_err());
+        assert!(
+            BinaryRootGroupPlan::new(&[occurrence(0, m, columns, 1, field, 0)], &[], 256).is_err()
+        );
     }
     for destination in [0, 3, usize::MAX] {
         assert!(BinaryRootGroupPlan::new(std::slice::from_ref(&valid), &[], destination).is_err());
@@ -587,10 +571,7 @@ fn malformed_presence_counts_dimensions_and_domains_reject() {
     )
     .is_err());
     assert!(BinaryRootGroupPlan::new(
-        &[
-            valid,
-            occurrence(1, 1, 2, 1, BinaryFieldProfile::P128, true, 0)
-        ],
+        &[valid, occurrence(1, 1, 2, 1, BinaryFieldProfile::P128, 0)],
         &[],
         256
     )
@@ -600,14 +581,14 @@ fn malformed_presence_counts_dimensions_and_domains_reject() {
 #[test]
 fn repeated_owner_names_require_the_identical_registered_commitment_occurrence() {
     let field = BinaryFieldProfile::P64;
-    let mut first = occurrence(0, 1, 2, 1, field, true, 0);
+    let mut first = occurrence(0, 1, 2, 1, field, 0);
     assert!(BinaryRootGroupPlan::new(&[first.clone(), first.clone()], &[], 256).is_err());
     first.registered_commitment = Some([31; 32]);
     BinaryRootGroupPlan::new(&[first.clone(), first.clone()], &[], 256).unwrap();
     let mut other = first.clone();
     other.registered_commitment = Some([32; 32]);
     assert!(BinaryRootGroupPlan::new(&[first.clone(), other], &[], 256).is_err());
-    let mut changed = occurrence(0, 2, 2, 1, field, true, 0);
+    let mut changed = occurrence(0, 2, 2, 1, field, 0);
     changed.registered_commitment = first.registered_commitment;
     assert!(BinaryRootGroupPlan::new(&[first.clone(), changed], &[], 256).is_err());
     let mut other = ordinary(1, field);
@@ -627,7 +608,7 @@ fn repeated_owner_names_require_the_identical_registered_commitment_occurrence()
 
 #[test]
 fn overflowing_physical_lengths_and_row_sums_return_typed_errors() {
-    let input = occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, true, 0);
+    let input = occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, 0);
     let plan = BinaryRootGroupPlan::new(&[input], &[], 256).unwrap();
     let mut segment = plan.repacking().segments()[0];
     segment.elements = usize::MAX;
@@ -646,7 +627,7 @@ fn overflowing_physical_lengths_and_row_sums_return_typed_errors() {
 
 #[test]
 fn row_counts_reject_inexact_coordinate_plane_division() {
-    let input = occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, true, 0);
+    let input = occurrence(0, 1, 2, 1, BinaryFieldProfile::P64, 0);
     let group = BinaryRootGroupPlan::new(&[input], &[], 256).unwrap();
     let mut plan = group.binary()[0].local_plan.clone();
     // Corrupt the internal count to exercise the shared row boundary directly.
@@ -672,21 +653,19 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
         setup_seed: [41; 32].into(),
     };
     for field in [BinaryFieldProfile::P128, BinaryFieldProfile::P64] {
-        for (word, claims) in [(true, 0), (false, 1), (true, 1), (false, 2), (true, 2)] {
+        for claims in [0, 1, 2] {
             let planes = claims * field.extension_degree();
             let owners = claims.max(1);
-            let input = occurrence(0, 1, 2, owners, field, word, planes);
+            let input = occurrence(0, 1, 2, owners, field, planes);
             let descriptor = input.manifest.descriptor();
-            let terminal = word.then(|| {
-                BinaryTerminalClaim::new(
-                    descriptor,
-                    descriptor.polynomials()[0],
-                    vec![[0; 21]; 2],
-                    vec![[0; 21]],
-                    [0; 21],
-                )
-                .unwrap()
-            });
+            let terminal = BinaryTerminalClaim::new(
+                descriptor,
+                descriptor.polynomials()[0],
+                vec![[0; 21]; 2],
+                vec![[0; 21]],
+                [0; 21],
+            )
+            .unwrap();
             let element = match field {
                 BinaryFieldProfile::P128 => PrimeClaimValue::Base(0),
                 BinaryFieldProfile::P64 => PrimeClaimValue::Extension([0, 1]),
@@ -709,7 +688,7 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
                 let ordinary = mixed.then(|| ordinary(1, field));
                 let public = BinaryRootPublic::new(
                     &input.manifest,
-                    terminal.as_ref(),
+                    &terminal,
                     &prime,
                     &setup,
                     1 << 22,
@@ -730,9 +709,9 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
                     BinaryFieldProfile::P128 => 7,
                     BinaryFieldProfile::P64 => 1944 * owners,
                 };
-                let word_end = coefficients + 2 * usize::from(word);
+                let word_end = coefficients + 2;
                 let b_end = word_end + input.manifest.b_rows();
-                let d_end = b_end + input.manifest.d_label(word, planes).unwrap().rank as usize;
+                let d_end = b_end + input.manifest.d_label(planes).unwrap().rank as usize;
                 let ordinary_end =
                     d_end + ordinary.as_ref().map_or(0, |g| g.plan.linear_batch_count());
                 let negative_end = ordinary_end
@@ -763,7 +742,7 @@ fn singleton_batch_count_matches_the_existing_public_compiler() {
 #[test]
 fn ordinary_exponent_and_mixed_group_boundaries_are_admitted_before_allocation() {
     let field = BinaryFieldProfile::P64;
-    let binary = occurrence(0, 1, 2, 1, field, true, 0);
+    let binary = occurrence(0, 1, 2, 1, field, 0);
     for variables in [25, 26] {
         let source = OrdinaryRootGroupOccurrence {
             plan: OrdinaryNativeRootPlan::new(ordinary_profile(field, variables, 1), 0).unwrap(),
@@ -787,54 +766,8 @@ fn ordinary_exponent_and_mixed_group_boundaries_are_admitted_before_allocation()
     assert!(BinaryRootGroupPlan::new(std::slice::from_ref(&binary), &ordinary, 256).is_err());
     assert!(BinaryRootGroupPlan::new(std::slice::from_ref(&binary), &[], 1 << 33).is_err());
     // I itself meets its cap, but its T digits exceed the independent table cap.
-    let maximum_i = occurrence(0, 1, 256, 4096, field, true, 0);
+    let maximum_i = occurrence(0, 1, 256, 4096, field, 0);
     assert!(BinaryRootGroupPlan::new(&[maximum_i], &[], 256).is_err());
-}
-
-#[test]
-fn signed_ordinary_owners_keep_their_order_and_reject_duplicate_ids() {
-    use akita_params::ordinary_source::OrdinarySourceWidth;
-    let field = BinaryFieldProfile::P128;
-    let binary = occurrence(0, 1, 2, 1, field, true, 0);
-    let profile = ordinary_profile(field, 10, 3);
-    let source = OrdinaryRootGroupOccurrence {
-        plan: OrdinaryNativeRootPlan::new_signed(profile, 0, OrdinarySourceWidth::new(2).unwrap())
-            .unwrap(),
-        polynomials: vec![owner_id(1, 2), owner_id(1, 0), owner_id(1, 1)],
-        registered_commitment: None,
-    };
-    let group = BinaryRootGroupPlan::new(
-        std::slice::from_ref(&binary),
-        std::slice::from_ref(&source),
-        256,
-    )
-    .unwrap();
-    assert_eq!(group.ordinary()[0].polynomials, source.polynomials);
-    assert_eq!(group.ordinary()[0].segments.len(), 5);
-    assert_eq!(group.totals().owners, 4);
-    let p = group.ordinary()[0].plan.profile();
-    let compression = p.outer_compression_plan().unwrap();
-    let maps = compression.maps();
-    let length = 3
-        * p.blocks.live_blocks
-        * p.blocks.positions_per_block
-        * p.inner.digits.num_digits
-        * p.inner.matrix.ring_dimension()
-        + 3 * p.blocks.live_blocks
-            * p.inner.matrix.output_rank()
-            * (p.inner.matrix.ring_dimension() / p.outer.matrix.ring_dimension())
-            * p.outer.digits.num_digits
-            * p.outer.matrix.ring_dimension()
-        + maps[0].input_width() * maps[0].ring_dimension()
-        + maps[1].input_width() * maps[1].ring_dimension()
-        + 3 * p.blocks.live_blocks
-            * p.blocks.positions_per_block
-            * 2
-            * p.inner.matrix.ring_dimension();
-    assert_eq!(group.ordinary()[0].physical_len, length);
-    let mut duplicate = source;
-    duplicate.polynomials[2] = duplicate.polynomials[0];
-    assert!(BinaryRootGroupPlan::new(&[binary], &[duplicate], 256).is_err());
 }
 
 #[test]
@@ -854,7 +787,6 @@ fn input_word_capacity_and_width_are_validated_before_roster_construction() {
                     descriptor, 0, &carrier, field,
                 )
                 .unwrap(),
-                word: true,
                 prime_coordinate_planes: 0,
                 registered_commitment: None,
             };

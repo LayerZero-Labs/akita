@@ -17,7 +17,8 @@
 > citations are at commit `8f69246`. The padding-point rule was not
 > implemented. The shape and measurement rows also predate the single-point
 > prime statement: current groups have one shared point and one plane per
-> claimed polynomial. Those historical rows retain their original values.
+> claimed polynomial. Every binary group now carries its word claim, with prime
+> claims optional on top. Those historical rows retain their original values.
 
 ## Summary
 
@@ -696,8 +697,8 @@ script outside the repository:
   (256 mod 512) and has no padding.
 - **Factored evaluator.** The evaluator in Section 4 equals the brute-force
   `sum_(a in Pad) eq(tau,a) eq(r,a)` on 24 cases. These cover six small
-  layouts (word-only, word plus prime, prime-only with two planes, 16 and 32
-  carriers, two owners, mixed native segments) with successor degree 64 and
+  layouts (word-only, word plus prime, two prime planes without a word claim,
+  which binary groups no longer admit, 16 and 32 carriers, two owners, mixed native segments) with successor degree 64 and
   512, using random points and points with coordinates 0 and 1.
 - **Batch counts and grinding.** The `K` values, the error exponents and the
   grinding bits follow from the formulas above. All eight rows of the

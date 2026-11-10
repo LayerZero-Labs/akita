@@ -41,7 +41,7 @@ where
     ) -> Result<
         (
             PendingEof,
-            BinaryOpening<Option<BinaryWordClaim>, Option<PrimeGroupClaim>>,
+            BinaryOpening<BinaryWordClaim, Option<PrimeGroupClaim>>,
         ),
         AkitaError,
     > {

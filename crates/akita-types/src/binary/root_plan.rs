@@ -34,7 +34,6 @@ pub struct BinaryRootWitnessPlan {
     pub(super) repacking: RootCoefficientRepacking,
     projection_bounds: BinaryResidualBounds,
     field_profile: BinaryFieldProfile,
-    pub(super) word: bool,
     pub(super) prime_planes: usize,
 }
 
@@ -46,7 +45,6 @@ impl BinaryRootWitnessPlan {
         rank: usize,
         destination_ring_dimension: usize,
         field_profile: BinaryFieldProfile,
-        word: bool,
         prime_planes: usize,
     ) -> Result<Self, AkitaError> {
         if rank == 0 {
@@ -61,7 +59,6 @@ impl BinaryRootWitnessPlan {
             ])
             .ok_or(AkitaError::InvalidProof)?
             || !prime_planes.is_multiple_of(field_profile.extension_degree())
-            || (!word && prime_planes == 0)
         {
             return Err(AkitaError::InvalidInput(
                 "invalid binary plane selection".into(),
@@ -94,26 +91,23 @@ impl BinaryRootWitnessPlan {
                 digits: 8,
             },
         ];
-        if word {
-            segments.extend([
-                RootRepackingSegment {
-                    geometry: scalar,
-                    elements: checked::product([owners, columns])
-                        .ok_or(AkitaError::InvalidProof)?,
-                    digits: 1,
-                },
-                RootRepackingSegment {
-                    geometry: scalar,
-                    elements: owners,
-                    digits: BINARY_PARITY_CARRY_DIGITS,
-                },
-                RootRepackingSegment {
-                    geometry: scalar,
-                    elements: owners,
-                    digits: BINARY_VALUE_CARRY_DIGITS,
-                },
-            ]);
-        }
+        segments.extend([
+            RootRepackingSegment {
+                geometry: scalar,
+                elements: checked::product([owners, columns]).ok_or(AkitaError::InvalidProof)?,
+                digits: 1,
+            },
+            RootRepackingSegment {
+                geometry: scalar,
+                elements: owners,
+                digits: BINARY_PARITY_CARRY_DIGITS,
+            },
+            RootRepackingSegment {
+                geometry: scalar,
+                elements: owners,
+                digits: BINARY_VALUE_CARRY_DIGITS,
+            },
+        ]);
         if prime_planes > 0 {
             segments.push(RootRepackingSegment {
                 geometry: scalar,
@@ -134,7 +128,6 @@ impl BinaryRootWitnessPlan {
             rank,
             projection_bounds,
             field_profile,
-            word,
             prime_planes,
             repacking: RootCoefficientRepacking::new(segments, destination_ring_dimension)?,
         })
@@ -174,7 +167,7 @@ impl BinaryRootWitnessPlan {
         }
         Ok(super::BinaryRootRowCounts {
             coefficients: self.coefficient_batch_count()?,
-            word: if self.word { 2 } else { 0 },
+            word: 2,
             prime: checked::exact_div(self.prime_planes, self.field_profile.extension_degree())
                 .and_then(|claims| checked::product([2, claims]))
                 .ok_or(AkitaError::InvalidProof)?,
@@ -243,7 +236,7 @@ impl BinaryRootWitnessPlan {
     #[allow(clippy::too_many_arguments)]
     pub fn relation_weights<E: Field>(
         &self,
-        claim: Option<&BinaryTerminalClaim>,
+        claim: &BinaryTerminalClaim,
         matrix: Option<BinaryAOperand<'_, E>>,
         challenges: &impl BinaryScalarChallengeSource,
         alpha: E,
@@ -252,12 +245,6 @@ impl BinaryRootWitnessPlan {
     ) -> Result<NativeRootWeights<E>, AkitaError> {
         let challenges = challenges.prepare(&self.descriptor)?;
         let a = binary_direct_a_weights(self, matrix, challenges.as_ref(), rho)?;
-        let Some(claim) = claim else {
-            if !terminal_batches.as_ref().is_empty() {
-                return Err(AkitaError::InvalidProof);
-            }
-            return Ok(a);
-        };
         let terminal = claim.relation_weights(
             &self.descriptor,
             &self.repacking,

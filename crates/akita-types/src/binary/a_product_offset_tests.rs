@@ -16,8 +16,7 @@ fn fixture(rows: usize, rank: usize, owners: usize) -> BinaryRootWitnessPlan {
         },
     )
     .unwrap();
-    BinaryRootWitnessPlan::for_profile(&descriptor, rank, 64, BinaryFieldProfile::P64, true, 0)
-        .unwrap()
+    BinaryRootWitnessPlan::for_profile(&descriptor, rank, 64, BinaryFieldProfile::P64, 0).unwrap()
 }
 
 fn extension(rng: &mut StdRng) -> E {

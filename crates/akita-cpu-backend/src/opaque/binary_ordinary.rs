@@ -15,9 +15,9 @@ where
 {
     /// Materialize the selected ordinary plan from the actual committed handle.
     ///
-    /// Includes every source digit, A image, both compression preimages, and
-    /// (for an explicitly signed plan) the negative offset bits. The caller
-    /// must authenticate all segments through the shared root relation.
+    /// Includes every source digit, the A image and both compression
+    /// preimages. The caller must authenticate all segments through the
+    /// shared root relation.
     pub(crate) fn ordinary_root_preimage(
         &self,
         handle: &CommitmentHandle<F, E>,
@@ -60,13 +60,6 @@ where
                 "ordinary source length differs from its frozen profile".into(),
             ));
         }
-        if let Some(width) = plan.source_width() {
-            if handle.committed.producer_contract != width.producer_contract()? {
-                return Err(AkitaError::InvalidInput(
-                    "ordinary source width differs from its producer contract".into(),
-                ));
-            }
-        }
         let polynomials = handle.committed.source.dense_polynomials()?;
         let retained = handle.committed.ordinary_retained()?;
         let inner_rows = retained.inner_rows()?;
@@ -77,20 +70,16 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let mut source = Vec::new();
-        let mut bits = Vec::new();
         for polynomial in &polynomials {
             let coefficients = polynomial
                 .field_coeffs()
                 .get(..source_len)
                 .ok_or(AkitaError::InvalidProof)?;
-            let (digits, offset_bits) = source_digits(plan, coefficients)?;
+            let digits = source_digits(plan, coefficients)?;
             source
                 .try_reserve_exact(digits.len())
                 .map_err(|_| AkitaError::InvalidProof)?;
-            bits.try_reserve_exact(offset_bits.len())
-                .map_err(|_| AkitaError::InvalidProof)?;
             source.extend(digits);
-            bits.extend(offset_bits);
         }
         let image_elements = checked::product([
             profile.blocks.live_blocks,
@@ -177,66 +166,42 @@ where
         {
             return Err(AkitaError::InvalidProof);
         }
-        let mut segments = vec![source, t, f, h];
-        if plan.source_width().is_some() {
-            segments.push(bits);
-        }
-        Ok(segments)
+        Ok(vec![source, t, f, h])
     }
 }
 
+/// Balanced base-eight source digits. The plan admits one digit per
+/// coefficient, so every value must lie in `[-4, 3]`.
 fn source_digits<F: Field + CanonicalEncoding>(
     plan: &OrdinaryNativeRootPlan,
     coefficients: &[F],
-) -> Result<(Vec<i8>, Vec<i8>), AkitaError> {
+) -> Result<Vec<i8>, AkitaError> {
     use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
     let profile = plan.profile();
     let degree = profile.inner.matrix.ring_dimension();
     let digits = profile.inner.digits.num_digits;
     let digit_count =
         checked::product([coefficients.len(), digits]).ok_or(AkitaError::InvalidProof)?;
-    let bit_count = checked::product([
-        coefficients.len(),
-        plan.source_width().map_or(0, |width| width.bits() as usize),
-    ])
-    .ok_or(AkitaError::InvalidProof)?;
     if !coefficients.len().is_multiple_of(degree) {
         return Err(AkitaError::InvalidProof);
     }
     let mut source = Vec::new();
-    let mut bits = Vec::new();
     source
         .try_reserve_exact(digit_count)
         .map_err(|_| AkitaError::InvalidProof)?;
-    bits.try_reserve_exact(bit_count)
-        .map_err(|_| AkitaError::InvalidProof)?;
     let modulus = akita_params::field_modulus::<F>()?;
-    let offset = plan.source_width().map_or(4, |width| width.offset());
     let params = BalancedDecomposePow2Params::<F>::new(digits, 3);
     let ring_digits = checked::product([degree, digits]).ok_or(AkitaError::InvalidProof)?;
     for ring in coefficients.chunks_exact(degree) {
-        let mut shifted = Vec::new();
-        shifted
-            .try_reserve_exact(degree)
-            .map_err(|_| AkitaError::InvalidProof)?;
         for coefficient in ring {
             let value = coefficient
                 .to_u128_checked()
                 .ok_or(AkitaError::InvalidProof)?;
-            let encoded = if value < offset {
-                offset + value
-            } else {
-                let magnitude = modulus
-                    .checked_sub(value)
-                    .filter(|&x| x <= offset)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "ordinary coefficient exceeds its signed width".into(),
-                        )
-                    })?;
-                offset - magnitude
-            };
-            shifted.push(encoded);
+            if value >= 4 && modulus.checked_sub(value).is_none_or(|x| x > 4) {
+                return Err(AkitaError::InvalidInput(
+                    "ordinary coefficient exceeds one balanced digit".into(),
+                ));
+            }
         }
         let start = source.len();
         let end = checked::sum([start, ring_digits]).ok_or(AkitaError::InvalidProof)?;
@@ -246,18 +211,9 @@ fn source_digits<F: Field + CanonicalEncoding>(
             source.get_mut(start..end).ok_or(AkitaError::InvalidProof)?,
             &params,
         );
-        if let Some(width) = plan.source_width() {
-            for bit in 0..width.bits() {
-                bits.extend(shifted.iter().map(|value| -(((value >> bit) & 1) as i8)));
-            }
-        }
     }
-    Ok((source, bits))
+    Ok(source)
 }
-
-#[cfg(test)]
-#[path = "binary_ordinary_tests.rs"]
-mod tests;
 
 #[cfg(test)]
 #[path = "binary_ordinary_slice_tests.rs"]

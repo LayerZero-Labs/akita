@@ -29,7 +29,7 @@ fn typed_prefix_identity_encodes_tail_as_little_endian_u64s() {
         BinaryFieldProfile::P128,
     )
     .unwrap();
-    let typed = BinaryTypedPrefix::new(&manifest, true, 0, next.d_a()).unwrap();
+    let typed = BinaryTypedPrefix::new(&manifest, 0, next.d_a()).unwrap();
     let identity = typed.identity(&manifest, &slot).unwrap();
     let tail = [64u64, 0, u64::MAX].map(u64::to_le_bytes).concat();
     assert!(identity.windows(tail.len()).any(|word| word == tail));

@@ -21,9 +21,8 @@ fn descriptor() -> BinarySourceDescriptor {
 #[test]
 fn five_segments_share_addresses_when_scheduled_domain_grows() {
     let descriptor = descriptor();
-    let plan =
-        BinaryRootWitnessPlan::for_profile(&descriptor, 2, 256, BinaryFieldProfile::P128, true, 0)
-            .unwrap();
+    let plan = BinaryRootWitnessPlan::for_profile(&descriptor, 2, 256, BinaryFieldProfile::P128, 0)
+        .unwrap();
     let index = descriptor.index_map();
     let rows = index.padded_carriers() / index.columns() / 4;
     assert_eq!(
@@ -60,25 +59,19 @@ fn five_segments_share_addresses_when_scheduled_domain_grows() {
     assert!(larger.repacking().is_padding_address(131071).unwrap());
     assert!(plan.clone().with_domain_len(32768).is_err());
     assert!(plan.with_domain_len(65537).is_err());
-    assert!(BinaryRootWitnessPlan::for_profile(
-        &descriptor,
-        0,
-        256,
-        BinaryFieldProfile::P128,
-        true,
-        0
-    )
-    .is_err());
+    assert!(
+        BinaryRootWitnessPlan::for_profile(&descriptor, 0, 256, BinaryFieldProfile::P128, 0)
+            .is_err()
+    );
 }
 
 #[test]
 fn direct_weights_join_a_and_terminal_carries_but_not_extended_padding() {
     let descriptor = descriptor();
-    let plan =
-        BinaryRootWitnessPlan::for_profile(&descriptor, 2, 256, BinaryFieldProfile::P128, true, 0)
-            .unwrap()
-            .with_domain_len(131072)
-            .unwrap();
+    let plan = BinaryRootWitnessPlan::for_profile(&descriptor, 2, 256, BinaryFieldProfile::P128, 0)
+        .unwrap()
+        .with_domain_len(131072)
+        .unwrap();
     let claim = BinaryTerminalClaim::new(
         &descriptor,
         [1; 32],
@@ -102,7 +95,7 @@ fn direct_weights_join_a_and_terminal_carries_but_not_extended_padding() {
     let matrix = vec![vec![[0i128; 648]]; 2];
     let weights = plan
         .relation_weights(
-            Some(&claim),
+            &claim,
             Some(BinaryAOperand::new::<F>(&matrix)),
             &challenges,
             F::from_u64(17),
@@ -219,24 +212,23 @@ fn p64_quotients_are_last_and_preserve_existing_natural_addresses() {
             .unwrap() as usize;
         for owners in [1, 2, 4096] {
             let descriptor = descriptor_geometry(m, columns, owners);
-            for (word, planes) in [(true, 0), (false, 2), (true, 2)] {
+            for planes in [0, 2] {
                 let plan = BinaryRootWitnessPlan::for_profile(
                     &descriptor,
                     3,
                     256,
                     BinaryFieldProfile::P64,
-                    word,
                     planes,
                 )
                 .unwrap();
                 let segment = plan.quotient_segment().unwrap();
-                assert_eq!(segment, if word { 5 } else { 2 } + usize::from(planes > 0));
+                assert_eq!(segment, 5 + usize::from(planes > 0));
                 let shape = plan.repacking().segments()[segment];
                 assert_eq!((shape.elements, shape.digits), (3 * owners, depth));
                 assert_eq!(shape.geometry.polynomial_modulus_dimension(), 648);
                 assert_eq!(shape.geometry.physical_coefficient_width(), 1024);
                 let range = plan.repacking().segment_range(segment).unwrap();
-                if word && planes == 0 {
+                if planes == 0 {
                     let response = m * 4 * 1024;
                     let image = columns * 3 * 8 * 1024;
                     let word = columns * 256;
@@ -280,15 +272,9 @@ fn p64_quotients_are_last_and_preserve_existing_natural_addresses() {
             }
         }
     }
-    let legacy = BinaryRootWitnessPlan::for_profile(
-        &descriptor(),
-        3,
-        256,
-        BinaryFieldProfile::P128,
-        true,
-        0,
-    )
-    .unwrap();
+    let legacy =
+        BinaryRootWitnessPlan::for_profile(&descriptor(), 3, 256, BinaryFieldProfile::P128, 0)
+            .unwrap();
     assert_eq!(legacy.field_profile(), BinaryFieldProfile::P128);
     assert_eq!(legacy.quotient_segment(), None);
     assert_eq!(
@@ -358,23 +344,21 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
             2
         };
         assert!(BinaryCommittedGroupManifest::from_bytes(&wrong_version).is_err());
-        for (word, planes, mixed) in [(true, 0, false), (false, 1, false), (true, 1, true)] {
+        for (planes, mixed) in [(0, false), (1, false), (1, true)] {
             let planes = planes * field_profile.extension_degree();
             let zero = if field_profile == BinaryFieldProfile::P64 {
                 crate::binary::PrimeClaimValue::from([0, 0])
             } else {
                 0.into()
             };
-            let claim = word.then(|| {
-                BinaryTerminalClaim::new(
-                    &descriptor,
-                    [1; 32],
-                    vec![[0; 21]; 2],
-                    vec![[0; 21]],
-                    [0; 21],
-                )
-                .unwrap()
-            });
+            let claim = BinaryTerminalClaim::new(
+                &descriptor,
+                [1; 32],
+                vec![[0; 21]; 2],
+                vec![[0; 21]],
+                [0; 21],
+            )
+            .unwrap();
             let prime = PrimePlaneManifest::with_field_profile(
                 &descriptor,
                 (planes > 0).then(|| PrimeGroupClaim {
@@ -389,7 +373,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
             .unwrap();
             let public = BinaryRootPublic::new(
                 &manifest,
-                claim.as_ref(),
+                &claim,
                 &prime,
                 &setup,
                 1 << 22,
@@ -404,15 +388,11 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                 7
             };
             let ordinary = mixed.then(|| {
-                OrdinaryNativeRootPlan::new(
-                    ordinary_carrier,
-                    if word { 5 } else { 2 } + usize::from(planes > 0),
-                )
-                .unwrap()
+                OrdinaryNativeRootPlan::new(ordinary_carrier, 5 + usize::from(planes > 0)).unwrap()
             });
-            let other = 2 * usize::from(word)
+            let other = 2
                 + manifest.b_rows()
-                + manifest.d_label(word, planes).unwrap().rank as usize
+                + manifest.d_label(planes).unwrap().rank as usize
                 + 2 * prime.claim().map_or(0, |claim| claim.evaluations.len())
                 + ordinary
                     .as_ref()
@@ -430,16 +410,12 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
             let batches = vec![E::one(); public.batch_count()];
             let [b, d] = public.authentication_batches(&batches).unwrap();
             assert_eq!(b.len(), manifest.b_rows());
-            assert_eq!(
-                d.len(),
-                manifest.d_label(word, planes).unwrap().rank as usize
-            );
+            assert_eq!(d.len(), manifest.d_label(planes).unwrap().rank as usize);
             if field_profile == BinaryFieldProfile::P64 {
                 let segment = plan.quotient_segment().unwrap();
                 assert_eq!(
                     segment,
-                    if word { 5 } else { 2 }
-                        + usize::from(planes > 0)
+                    5 + usize::from(planes > 0)
                         + ordinary
                             .as_ref()
                             .map_or(0, |ordinary| ordinary.segments().len())
@@ -456,7 +432,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                         *ordinary.segments().last().unwrap()
                     );
                 }
-                if word && planes == 0 && !mixed {
+                if planes == 0 && !mixed {
                     let challenges = Challenges::from_sparse(
                         vec![
                             SparseChallenge {
@@ -478,8 +454,7 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                         );
                     }
                     let b = vec![E::zero(); manifest.payload_coefficients().unwrap()];
-                    let d =
-                        vec![E::zero(); manifest.d_label(word, planes).unwrap().rank as usize * 64];
+                    let d = vec![E::zero(); manifest.d_label(planes).unwrap().rank as usize * 64];
                     let (weights, negative) = public
                         .relation(&challenges, alpha, &batches, &[], &[], &b, &d, None, None)
                         .unwrap();

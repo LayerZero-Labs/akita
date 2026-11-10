@@ -210,7 +210,6 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         .ok_or("missing typed prefix")?;
     let typed = BinaryTypedPrefix::new(
         &manifest,
-        claims.word(&descriptor)?.is_some(),
         claims
             .prime()
             .as_ref()
@@ -301,7 +300,7 @@ fn prove(log: usize, shape: &str, directory: &Path) -> Result<()> {
         )?;
     }
     akita_transcript::finish_proof_ranges(&prover);
-    metrics::proof(prover.narg_string(), log, true)?;
+    metrics::proof(prover.narg_string(), log)?;
     std::fs::write(directory.join("proof.bin"), prover.narg_string())?;
     prover.public_message(&BytesMsg(b"application-suffix"));
     let fixture = Fixture {

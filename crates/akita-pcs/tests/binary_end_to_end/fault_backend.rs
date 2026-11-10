@@ -85,7 +85,7 @@ impl Fault {
 struct FaultPreparation {
     native: Box<dyn Any + Send + Sync>,
     manifest: BinaryCommittedGroupManifest,
-    claim: Option<BinaryTerminalClaim>,
+    claim: BinaryTerminalClaim,
     prime: PrimePlaneManifest,
     plan: BinaryRootWitnessPlan,
 }
@@ -160,7 +160,7 @@ impl FaultBackend {
         if matches!(self.fault, Fault::ForeignPartials) {
             let foreign = fault_witness::foreign_partial_payload(
                 &request.manifest,
-                request.claim.as_ref().unwrap(),
+                &request.claim,
                 &self.words,
                 &self.seed,
             )?;
@@ -212,7 +212,7 @@ impl FaultBackend {
         }
         let mut digits = fault_witness::reconstruct(
             &preparation.manifest,
-            preparation.claim.as_ref(),
+            &preparation.claim,
             &preparation.prime,
             &preparation.plan,
             &self.seed,
@@ -304,12 +304,11 @@ pub(super) fn authenticate_terminal(
         manifest.a_rank(),
         256,
         BinaryFieldProfile::P128,
-        true,
         0,
     )?;
     fault_witness::reconstruct(
         manifest,
-        Some(claim),
+        claim,
         &PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
             None,
@@ -337,12 +336,11 @@ pub(super) fn authenticate_terminal_relation(
         manifest.a_rank(),
         256,
         BinaryFieldProfile::P128,
-        true,
         0,
     )?;
     let digits = fault_witness::reconstruct(
         manifest,
-        Some(honest),
+        honest,
         &PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
             None,

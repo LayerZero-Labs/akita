@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Claims {
-    pub word_point: Option<Vec<[u8; 16]>>,
+    pub word_point: Vec<[u8; 16]>,
     pub word_value: [u8; 16],
     pub prime: Option<(Vec<u128>, u128)>,
 }
@@ -40,28 +40,24 @@ pub(super) fn words(count: usize) -> Vec<u128> {
 }
 
 pub(super) fn evaluate(log: usize, shape: &str, words: &[u128]) -> Result<Claims, AkitaError> {
+    let point = (0..log)
+        .map(|axis| (31 + axis as u128 * 17).to_le_bytes())
+        .collect::<Vec<_>>();
+    let mut values = words.iter().map(|&w| host(w)).collect::<Vec<_>>();
+    for coordinate in &point {
+        let r = host(u128::from_le_bytes(*coordinate));
+        let half = values.len() / 2;
+        for i in 0..half {
+            values[i] = values[2 * i] + r * (values[2 * i] + values[2 * i + 1]);
+        }
+        values.truncate(half);
+    }
+    let [low, high] = values.first().ok_or(AkitaError::InvalidProof)?.to_words();
     let mut result = Claims {
-        word_point: None,
-        word_value: [0; 16],
+        word_point: point,
+        word_value: (u128::from(low) | (u128::from(high) << 64)).to_le_bytes(),
         prime: None,
     };
-    {
-        let point = (0..log)
-            .map(|axis| (31 + axis as u128 * 17).to_le_bytes())
-            .collect::<Vec<_>>();
-        let mut values = words.iter().map(|&w| host(w)).collect::<Vec<_>>();
-        for coordinate in &point {
-            let r = host(u128::from_le_bytes(*coordinate));
-            let half = values.len() / 2;
-            for i in 0..half {
-                values[i] = values[2 * i] + r * (values[2 * i] + values[2 * i + 1]);
-            }
-            values.truncate(half);
-        }
-        let [low, high] = values.first().ok_or(AkitaError::InvalidProof)?.to_words();
-        result.word_value = (u128::from(low) | (u128::from(high) << 64)).to_le_bytes();
-        result.word_point = Some(point);
-    }
     if shape != "binary-claim" {
         let arity = checked::sum([8, log]).ok_or(AkitaError::InvalidProof)?;
         let point = (0..arity)
@@ -123,11 +119,13 @@ impl Claims {
     pub(super) fn word(
         &self,
         descriptor: &BinarySourceDescriptor,
-    ) -> Result<Option<BinaryWordClaim>, AkitaError> {
-        self.word_point
-            .as_ref()
-            .map(|point| BinaryWordClaim::new(descriptor, [29; 32], point.clone(), self.word_value))
-            .transpose()
+    ) -> Result<BinaryWordClaim, AkitaError> {
+        BinaryWordClaim::new(
+            descriptor,
+            [29; 32],
+            self.word_point.clone(),
+            self.word_value,
+        )
     }
     pub(super) fn prime(&self) -> Option<PrimeGroupClaim> {
         self.prime.as_ref().map(|(point, value)| PrimeGroupClaim {

@@ -213,13 +213,12 @@ pub struct BinaryTypedPrefix {
 }
 
 impl BinaryTypedPrefix {
-    /// Lay out the typed prefix of one root: the manifest, whether the word
-    /// view is opened, the number of prime planes and the successor's ring
-    /// dimension fix every B/D segment. Ordinary segments follow them in the
-    /// root plan and do not enter the layout.
+    /// Lay out the typed prefix of one root: the manifest, the number of prime
+    /// planes opened beside the word claim and the successor's ring dimension
+    /// fix every B/D segment. Ordinary segments follow them in the root plan
+    /// and do not enter the layout.
     pub fn new(
         manifest: &BinaryCommittedGroupManifest,
-        word: bool,
         planes: usize,
         destination_ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
@@ -228,7 +227,6 @@ impl BinaryTypedPrefix {
             manifest.a_rank(),
             destination_ring_dimension,
             manifest.field_profile(),
-            word,
             planes,
         )?;
         Self::from_plan(manifest, &plan)
@@ -249,10 +247,7 @@ impl BinaryTypedPrefix {
             ));
         }
         let a = BinaryAPrefixLen::new(manifest.descriptor().index_map(), manifest.a_rank())?;
-        let labels = [
-            manifest.b_label(),
-            manifest.d_label(plan.word, plan.prime_planes)?,
-        ];
+        let labels = [manifest.b_label(), manifest.d_label(plan.prime_planes)?];
         let rows = labels.map(|label| label.rank as usize);
         let mut segments = Vec::new();
         let mut role_columns = [0; 2];

@@ -330,7 +330,8 @@ As in an ordinary grouped opening, a binary group has one prime-field point,
 at most one claimed value per committed polynomial, and one prime evaluation
 plane per claimed polynomial. The manifest MUST bind the point once followed
 by `(polynomial, value)` pairs in polynomial order before the first challenge.
-A group MUST select a word claim or a prime claim.
+Every binary group MUST carry its word claim; prime claims are optional on
+top, and prime-field data without a word claim belongs in an ordinary group.
 
 The point has `n + 8` canonical base-field coordinates in coefficient, column,
 then row order. Prime admission MUST reject empty value lists, repeated
@@ -419,8 +420,8 @@ checkpoint does not instantiate that theorem.
 
 K_val is committed at order 5 even if available earlier. Projection seed J is
 fresh after response fixation and MUST NOT be reused across nonce trials.
-Binary-only openings omit EP; prime-only openings omit the binary frontend,
-U, K and K_val. Subsequent levels use ordinary rings and challenge families.
+Word-only openings omit EP. Subsequent levels use ordinary rings and challenge
+families.
 No unconsumed setup prefix claim may remain at the terminal.
 
 ### 8. Verifier work

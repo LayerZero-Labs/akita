@@ -19,8 +19,7 @@ fn group_plan(rows: usize, rank: usize, owners: usize) -> BinaryRootWitnessPlan 
         },
     )
     .unwrap();
-    BinaryRootWitnessPlan::for_profile(&descriptor, rank, 64, BinaryFieldProfile::P128, true, 0)
-        .unwrap()
+    BinaryRootWitnessPlan::for_profile(&descriptor, rank, 64, BinaryFieldProfile::P128, 0).unwrap()
 }
 
 fn random_scalar(rng: &mut StdRng) -> F {
@@ -354,15 +353,9 @@ fn full_size_typed_prefix_requires_padded_rank_and_coefficient_axes() {
                 domain_len: domain,
             }
         );
-        let plan = BinaryRootWitnessPlan::for_profile(
-            &descriptor,
-            rank,
-            64,
-            BinaryFieldProfile::P128,
-            true,
-            1,
-        )
-        .unwrap();
+        let plan =
+            BinaryRootWitnessPlan::for_profile(&descriptor, rank, 64, BinaryFieldProfile::P128, 1)
+                .unwrap();
         let point = vec![F::zero(); plan.repacking().domain_len().trailing_zeros() as usize];
         let rho = vec![[F::zero(); 648]; rank];
         // Rounding rank*m*648 as a flat array loses the padding on both
@@ -390,8 +383,7 @@ fn p64_coordinate_integer_adjoint_and_typed_a_match_independent_long_division() 
     type E = Ext2<Base>;
     let descriptor = group_plan(2, 3, 2).descriptor().clone();
     let plan =
-        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
-            .unwrap();
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, 0).unwrap();
     let mut rng = StdRng::seed_from_u64(59);
     let matrix = (0..3)
         .map(|_| {

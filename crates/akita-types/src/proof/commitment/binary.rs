@@ -159,7 +159,6 @@ mod binary_source_tests {
                 manifest.a_rank(),
                 64,
                 field,
-                true,
                 planes,
             )
             .unwrap();
@@ -181,10 +180,9 @@ mod binary_source_tests {
                 d_width
             );
             assert_digit_rank::<Outer>(manifest.b_label(), b_width);
-            assert_digit_rank::<Open>(manifest.d_label(true, planes).unwrap(), d_width);
-            assert!(manifest.d_label(false, 0).is_err());
-            assert!(manifest.d_label(true, 2 * owners + 2).is_err());
-            assert!(manifest.d_label(true, 2 * owners - 1).is_err());
+            assert_digit_rank::<Open>(manifest.d_label(planes).unwrap(), d_width);
+            assert!(manifest.d_label(2 * owners + 2).is_err());
+            assert!(manifest.d_label(2 * owners - 1).is_err());
         }
     }
 
@@ -293,13 +291,21 @@ mod binary_source_tests {
             BinaryFieldProfile::P128,
         )
         .unwrap();
+        let split = manifest.descriptor().index_map().claim_variable_split();
+        let claim = crate::binary::BinaryWordClaim::new(
+            manifest.descriptor(),
+            manifest.descriptor().polynomials()[0],
+            vec![[0; 16]; split.intra_carrier + split.carrier_address],
+            [0; 16],
+        )
+        .unwrap();
         let payload = vec![F::zero(); manifest.payload_coefficients().unwrap()];
         let mut prover = new_prover_channel(b"p64-admission");
         let mut verifier = new_verifier_channel(b"p64-admission", &[]);
         let prove = crate::binary::binary_root_statement::<F, E, _>(
             &mut prover,
             &manifest,
-            None,
+            &claim,
             &prime,
             &payload,
             None,
@@ -307,7 +313,7 @@ mod binary_source_tests {
         let verify = crate::binary::binary_root_statement::<F, E, _>(
             &mut verifier,
             &manifest,
-            None,
+            &claim,
             &prime,
             &payload,
             None,

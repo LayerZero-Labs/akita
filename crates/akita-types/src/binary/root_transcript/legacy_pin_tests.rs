@@ -37,15 +37,8 @@ where
         .collect::<Vec<_>>();
     let mut state = new_prover_channel(b"binary-root-predecessor-vector");
     if profile == BinaryFieldProfile::P128 {
-        binary_root_statement::<F, E, _>(
-            &mut state,
-            &manifest,
-            Some(&claim),
-            &prime,
-            &payload,
-            None,
-        )
-        .unwrap();
+        binary_root_statement::<F, E, _>(&mut state, &manifest, &claim, &prime, &payload, None)
+            .unwrap();
     } else {
         // There is no accepted P64 root stream yet. Preserve its admission
         // rejection separately, then bind its existing canonical atom codecs.
@@ -54,7 +47,7 @@ where
             binary_root_statement::<F, E, _>(
                 &mut admission,
                 &manifest,
-                Some(&claim),
+                &claim,
                 &prime,
                 &payload,
                 None,
@@ -114,7 +107,7 @@ where
         B::ZERO,
     )
     .unwrap();
-    let d = (0..64 * manifest.d_label(true, 0).unwrap().rank as usize)
+    let d = (0..64 * manifest.d_label(0).unwrap().rank as usize)
         .map(|i| F::from_u64(201 + i as u64))
         .collect::<Vec<_>>();
     akita_transcript::send_field_group(

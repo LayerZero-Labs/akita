@@ -24,7 +24,7 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 pub fn binary_root_statement<F, E, S>(
     state: &mut S,
     manifest: &BinaryCommittedGroupManifest,
-    claim: Option<&BinaryWordClaim>,
+    claim: &BinaryWordClaim,
     prime: &super::PrimePlaneManifest,
     binary_commitment: &[F],
     ordinary: Option<(usize, &[F], &[E], &[E])>,
@@ -43,19 +43,17 @@ where
             "binary root payload shape mismatch".into(),
         ));
     }
-    if let Some(claim) = claim {
-        claim.validate(manifest.descriptor())?;
-    }
+    claim.validate(manifest.descriptor())?;
     prime.validate(manifest.descriptor())?;
     if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
         return Err(AkitaError::InvalidInput(
             "prime plane profile mismatch".into(),
         ));
     }
-    let mut messages = vec![(3, manifest.canonical_bytes())];
-    if let Some(claim) = claim {
-        messages.push((4, claim.canonical_bytes()));
-    }
+    let mut messages = vec![
+        (3, manifest.canonical_bytes()),
+        (4, claim.canonical_bytes()),
+    ];
     if !prime.planes().is_empty() {
         messages.push((5, prime.canonical_bytes()));
     }

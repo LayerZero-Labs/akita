@@ -15,8 +15,6 @@ pub use dispatch::{
 };
 pub mod golomb_rice;
 pub mod layout;
-#[cfg(feature = "binary")]
-pub mod ordinary_source;
 pub mod proof_size;
 mod ring_relation_mode;
 pub mod schedule;

@@ -107,41 +107,35 @@ where
     binary_root_statement::<Cfg::Field, Cfg::ExtField, _>(
         grinding.state_mut(),
         manifest,
-        claim.as_ref(),
+        claim,
         prime,
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
     let context = backend.proof_context(proof_session, 0)?;
     let span = tracing::info_span!("binary_root_field_switch").entered();
-    let terminal = if let Some(claim) = claim {
-        Some({
-            let (_, source) = backend.prepare_root_group(
-                proof_session,
-                &context.for_group(0),
-                handles.first().ok_or(AkitaError::InvalidProof)?,
-                &akita_types::binary::BinaryFieldSwitchSourceRequest {
-                    manifest: manifest.as_ref().clone(),
-                    polynomial: *claim.polynomial(),
-                },
-            )?;
-            let carriers = source.downcast_ref::<Vec<u128>>().ok_or_else(|| {
-                AkitaError::Internal("backend field-switch source type mismatch".into())
-            })?;
-            crate::binary_field_switch::prove_field_switch(
-                manifest.descriptor(),
-                claim,
-                carriers,
-                grinding.state_mut(),
-            )?
-        })
-    } else {
-        None
-    };
+    let (_, source) = backend.prepare_root_group(
+        proof_session,
+        &context.for_group(0),
+        handles.first().ok_or(AkitaError::InvalidProof)?,
+        &akita_types::binary::BinaryFieldSwitchSourceRequest {
+            manifest: manifest.as_ref().clone(),
+            polynomial: *claim.polynomial(),
+        },
+    )?;
+    let carriers = source
+        .downcast_ref::<Vec<u128>>()
+        .ok_or_else(|| AkitaError::Internal("backend field-switch source type mismatch".into()))?;
+    let terminal = crate::binary_field_switch::prove_field_switch(
+        manifest.descriptor(),
+        claim,
+        carriers,
+        grinding.state_mut(),
+    )?;
     drop(span);
     let public = BinaryRootPublic::new(
         manifest,
-        terminal.as_ref(),
+        &terminal,
         prime,
         expanded,
         logical_len,
@@ -173,9 +167,7 @@ where
     drop(span);
     if d_payload.len()
         != akita_error::checked::product([
-            manifest
-                .d_label(claim.is_some(), prime.planes().len())?
-                .rank as usize,
+            manifest.d_label(prime.planes().len())?.rank as usize,
             manifest.b_ring_dimension(),
         ])
         .ok_or(AkitaError::InvalidProof)?

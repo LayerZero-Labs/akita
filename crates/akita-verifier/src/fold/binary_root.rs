@@ -83,7 +83,6 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let typed = akita_types::binary::BinaryTypedPrefix::new(
         manifest,
-        claim.is_some(),
         prime.planes().len(),
         next.params.d_a(),
     )?;
@@ -118,25 +117,20 @@ where
     binary_root_statement::<F, E, _>(
         grinding.state_mut(),
         manifest,
-        claim.as_ref(),
+        claim,
         prime,
         group.commitment().rows().coeffs(),
         ordinary_statement,
     )?;
-    let terminal = claim
-        .as_ref()
-        .map(|claim| {
-            crate::binary_field_switch::verify_field_switch(
-                manifest.descriptor(),
-                claim,
-                grinding.state_mut(),
-            )
-        })
-        .transpose()?;
+    let terminal = crate::binary_field_switch::verify_field_switch(
+        manifest.descriptor(),
+        claim,
+        grinding.state_mut(),
+    )?;
     let span = tracing::info_span!("binary_root_public_new").entered();
     let public = BinaryRootPublic::new(
         manifest,
-        terminal.as_ref(),
+        &terminal,
         prime,
         &setup.expanded().descriptor,
         logical_len,
@@ -151,9 +145,7 @@ where
     let num_vars = domain_len.trailing_zeros() as usize;
 
     let payload_len = akita_error::checked::product([
-        manifest
-            .d_label(claim.is_some(), prime.planes().len())?
-            .rank as usize,
+        manifest.d_label(prime.planes().len())?.rank as usize,
         manifest.b_ring_dimension(),
     ])
     .ok_or(AkitaError::InvalidProof)?;

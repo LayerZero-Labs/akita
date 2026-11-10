@@ -19,9 +19,8 @@ fn projection_direct_weights_match_integer_residual_for_arbitrary_coefficient_ro
         },
     )
     .unwrap();
-    let plan =
-        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P128, true, 0)
-            .unwrap();
+    let plan = BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P128, 0)
+        .unwrap();
     let challenges = Challenges::from_sparse(
         (0..4)
             .map(|column| SparseChallenge {
@@ -149,8 +148,7 @@ fn quotient_plan(owners: usize, rows: usize, columns: usize) -> BinaryRootWitnes
         },
     )
     .unwrap();
-    BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P64, true, 0)
-        .unwrap()
+    BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P64, 0).unwrap()
 }
 
 #[test]
