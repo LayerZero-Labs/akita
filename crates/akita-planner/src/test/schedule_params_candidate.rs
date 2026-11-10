@@ -36,7 +36,7 @@ fn synthetic_profile(
 fn grouped_level_params() -> CommittedGroupParams {
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         3,
         2,
@@ -47,7 +47,7 @@ fn grouped_level_params() -> CommittedGroupParams {
     .with_decomp(2, 2, 2, 2, 2)
     .expect("grouped params");
     let precommitted = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         3,
         2,
@@ -83,7 +83,7 @@ fn audited_grouped_level_params() -> CommittedGroupParams {
         akita_params::sis::sis_table_key_for_linf_bound(
             akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
             akita_params::SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             role,
             64,
             1,

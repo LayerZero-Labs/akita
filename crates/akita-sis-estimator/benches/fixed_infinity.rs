@@ -76,7 +76,15 @@ fn default_cases() -> Vec<FixedInfinityCase> {
         case(AkitaModulusProfileId::Q32Offset99, 32, 1, 2, 15, 40, 0),
         case(AkitaModulusProfileId::Q32Offset99, 32, 5, 10, 15, 50, 0),
         case(AkitaModulusProfileId::Q64Offset59, 32, 1, 2, 15, 63, 0),
-        case(AkitaModulusProfileId::Q128OffsetA7F7, 32, 1, 2, 15, 63, 0),
+        case(
+            AkitaModulusProfileId::Q128Offset6A23801F,
+            32,
+            1,
+            2,
+            15,
+            63,
+            0,
+        ),
     ]
 }
 
@@ -207,7 +215,7 @@ fn family_label(family: AkitaModulusProfileId) -> &'static str {
     match family {
         AkitaModulusProfileId::Q32Offset99 => "q32",
         AkitaModulusProfileId::Q64Offset59 => "q64",
-        AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
+        AkitaModulusProfileId::Q128Offset6A23801F => "q128",
     }
 }
 

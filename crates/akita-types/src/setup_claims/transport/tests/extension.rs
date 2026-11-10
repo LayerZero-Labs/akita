@@ -1,6 +1,6 @@
 use super::super::*;
 use crate::{derive_public_matrix_prefix, AkitaExpandedSetup, AkitaSetupDescriptor, FpExtEncoding};
-use jolt_field::{Ext2, FpExt4, FpExt8, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{Ext2, FpExt4, FpExt8, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 
 fn round_trip<F, E>()
 where
@@ -116,7 +116,7 @@ where
 
 #[test]
 fn canonical_transport_preserves_base_field_encoding() {
-    round_trip::<Prime128OffsetA7F7, Prime128OffsetA7F7>();
+    round_trip::<Prime128Offset6A23801F, Prime128Offset6A23801F>();
 }
 
 #[test]
@@ -179,8 +179,8 @@ where
 
 #[test]
 fn canonical_transport_bounds_native_dimensions_by_field_dispatch() {
-    native_dimension::<Prime128OffsetA7F7, Prime128OffsetA7F7>(1024, true);
-    native_dimension::<Prime128OffsetA7F7, Prime128OffsetA7F7>(2048, false);
+    native_dimension::<Prime128Offset6A23801F, Prime128Offset6A23801F>(1024, true);
+    native_dimension::<Prime128Offset6A23801F, Prime128Offset6A23801F>(2048, false);
     native_dimension::<Prime64Offset59, Ext2<Prime64Offset59>>(2048, true);
     native_dimension::<Prime64Offset59, Ext2<Prime64Offset59>>(4096, false);
     native_dimension::<Prime32Offset99, FpExt4<Prime32Offset99>>(2048, true);

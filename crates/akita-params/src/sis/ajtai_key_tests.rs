@@ -20,7 +20,7 @@ fn l2_table_has_the_expected_q128_d64_rank_boundary() {
     let key = sis_l2_table_key_for_collision_sq(
         DEFAULT_SIS_SECURITY_POLICY,
         SisL2TableDigest::CURRENT,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         1u128 << 50,
     )
@@ -37,7 +37,7 @@ fn l2_lookup_rejects_an_unknown_table_digest() {
     assert!(sis_l2_table_key_for_collision_sq(
         DEFAULT_SIS_SECURITY_POLICY,
         SisL2TableDigest([0u8; 32]),
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         1u128 << 50,
     )
@@ -49,7 +49,7 @@ fn inner_l2_route_owns_its_cap_shape_and_table_identity() {
     let table_key = sis_l2_table_key_for_collision_sq(
         DEFAULT_SIS_SECURITY_POLICY,
         SisL2TableDigest::CURRENT,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         1u128 << 50,
     )
@@ -89,7 +89,7 @@ fn inner_l2_route_rejects_a_shape_inconsistent_with_matrix_width() {
     let table_key = sis_l2_table_key_for_collision_sq(
         DEFAULT_SIS_SECURITY_POLICY,
         SisL2TableDigest::CURRENT,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         1u128 << 50,
     )
@@ -119,8 +119,9 @@ fn inner_l2_route_rejects_a_shape_inconsistent_with_matrix_width() {
 
 #[test]
 fn physical_norm_shape_derivation_selects_direct_or_limb_gram() {
-    let direct = PhysicalL2NormProofShape::derive(SisModulusProfileId::Q128OffsetA7F7, 64, 4, 2)
-        .expect("large-field direct shape");
+    let direct =
+        PhysicalL2NormProofShape::derive(SisModulusProfileId::Q128Offset6A23801F, 64, 4, 2)
+            .expect("large-field direct shape");
     assert_eq!(
         direct,
         PhysicalL2NormProofShape::Direct {

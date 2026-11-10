@@ -156,7 +156,7 @@ fn runtime_table_emits_direct_q128_d512_rows() {
         .into_iter()
         .enumerate()
         .map(|(index, max_width)| InfinityWidthRow {
-            modulus_profile: AkitaModulusProfileId::Q128OffsetA7F7,
+            modulus_profile: AkitaModulusProfileId::Q128Offset6A23801F,
             d: 512,
             rank: u32::try_from(index + 1).unwrap(),
             coeff_linf_bound: 2,
@@ -173,7 +173,7 @@ fn runtime_table_emits_direct_q128_d512_rows() {
     assert_eq!(
         runtime_rows,
         [RuntimeWidthRow {
-            modulus_profile: AkitaModulusProfileId::Q128OffsetA7F7,
+            modulus_profile: AkitaModulusProfileId::Q128Offset6A23801F,
             d: 512,
             coeff_linf_bound: 2,
             widths: vec![10, 20, 30, 40],
@@ -184,27 +184,27 @@ fn runtime_table_emits_direct_q128_d512_rows() {
 #[test]
 fn generation_filters_to_production_and_documented_diagnostic_cells() {
     assert!(scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         64,
         15
     ));
     assert!(!scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         32,
         2
     ));
     assert!(!scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         64,
         2
     ));
     assert!(scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         64,
         1_428
     ));
     assert!(scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         512,
         532
     ));
@@ -219,22 +219,22 @@ fn generation_filters_to_production_and_documented_diagnostic_cells() {
         532
     ));
     assert!(!scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         16,
         15
     ));
     assert!(scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         16,
         1
     ));
     assert!(!scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         8,
         1
     ));
     assert!(scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         64,
         1
     ));
@@ -249,7 +249,7 @@ fn generation_filters_to_production_and_documented_diagnostic_cells() {
         1
     ));
     assert!(scalar_origin_is_canonical(
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
         32,
         1
     ));
@@ -268,7 +268,7 @@ fn generation_filters_to_production_and_documented_diagnostic_cells() {
 #[test]
 fn q128_d512_rows_are_estimated_directly() {
     let config = InfinityWidthTableConfig {
-        profiles: vec![AkitaModulusProfileId::Q128OffsetA7F7],
+        profiles: vec![AkitaModulusProfileId::Q128Offset6A23801F],
         ring_dims: vec![512],
         // `4 * 19 * (2^3 - 1)`: the smallest exact D512 A-role target.
         coeff_linf_bounds: vec![532],

@@ -12,7 +12,7 @@ use akita_algebra::{
     CanonicalEncoding, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, MontCoeff,
     One, Ring, Zero,
 };
-use jolt_field::Prime128OffsetA7F7 as Fp;
+use jolt_field::Prime128Offset6A23801F as Fp;
 use serde::{Deserialize, Serialize};
 
 /// Check names, in [`ParityReport::digests`] order.
