@@ -216,6 +216,8 @@ pub struct GarnerData<const K: usize> {
     /// First limb of the run containing limb `i`. Each run's modulus product
     /// is below 2^126, so its centered mixed-radix value fits in i128.
     run_start: [usize; K],
+    /// Inverse of the explicit CRT cofactor modulo each prime.
+    crt_inverse: [u64; K],
 }
 
 impl<const K: usize> GarnerData<K> {
@@ -227,6 +229,13 @@ impl<const K: usize> GarnerData<K> {
     /// Garner inverses used to construct the cached Shoup quotients.
     pub fn gamma(&self) -> &[[u64; K]; K] {
         &self.gamma
+    }
+
+    /// Explicit CRT inverses `(product_{j != i} p_j)^-1 mod p_i`.
+    ///
+    /// These depend only on public moduli; no secret input is processed.
+    pub fn crt_inverse(&self) -> &[u64; K] {
+        &self.crt_inverse
     }
 
     /// Compute Garner constants from a set of NTT primes.
@@ -265,12 +274,24 @@ impl<const K: usize> GarnerData<K> {
             }
             run_start[index] = start;
         }
+        let mut crt_inverse = [0; K];
+        for (i, inverse) in crt_inverse.iter_mut().enumerate() {
+            let pi = moduli[i];
+            let cofactor = moduli.iter().enumerate().filter(|&(j, _)| j != i).fold(
+                1 % pi,
+                |product, (_, &pj)| {
+                    ((u128::from(product) * u128::from(pj % pi)) % u128::from(pi)) as u64
+                },
+            );
+            *inverse = modular_inverse(cofactor, pi)?;
+        }
         Ok(Self {
             moduli,
             gamma,
             gamma_shoup,
             lift,
             run_start,
+            crt_inverse,
         })
     }
 
@@ -309,6 +330,46 @@ impl<const K: usize> GarnerData<K> {
             end = start;
         }
         result
+    }
+
+    /// [`Self::centered_mixed_radix`] with every value-dependent correction
+    /// computed by a mask, so neither control flow nor addresses depend on the
+    /// residues. Timing assumes data-independent target integer arithmetic.
+    pub(crate) fn centered_mixed_radix_ct<const D: usize>(&self, limbs: &mut [[i64; D]; K]) {
+        for index in 0..K {
+            let modulus = self.moduli[index];
+            let half = (modulus / 2) as i64;
+            let (prior_limbs, rest) = limbs.split_at_mut(index);
+            let Some(column) = rest.first_mut() else {
+                return;
+            };
+            for value in column.iter_mut() {
+                *value += (*value >> 63) & modulus as i64;
+            }
+            for (prior, prior_digits) in prior_limbs.iter().enumerate() {
+                let (gamma, gamma_shoup) =
+                    (self.gamma[index][prior], self.gamma_shoup[index][prior]);
+                let lift = self.lift[index][prior];
+                for (value, &prior_digit) in column.iter_mut().zip(prior_digits) {
+                    // As in `centered_mixed_radix`: the sum is in [0, 2^64),
+                    // and the Shoup product leaves `digit` in [0, 2 p_i).
+                    let shifted = (*value as u64 + lift).wrapping_add_signed(-prior_digit);
+                    let quotient = ((u128::from(shifted) * u128::from(gamma_shoup)) >> 64) as u64;
+                    let digit = shifted
+                        .wrapping_mul(gamma)
+                        .wrapping_sub(quotient.wrapping_mul(modulus));
+                    // `p_i < 2^62`, so the top bit of `digit - p_i` is set
+                    // exactly when `digit < p_i`.
+                    let reduced = digit.wrapping_sub(modulus);
+                    let below = 0u64.wrapping_sub(reduced >> 63);
+                    *value = reduced.wrapping_add(modulus & below) as i64;
+                }
+            }
+            for value in column.iter_mut() {
+                let above_half = ((half - *value) >> 63) as u64;
+                *value -= (modulus & above_half) as i64;
+            }
+        }
     }
 
     /// Replace each column of residues with its centered mixed-radix digits.
@@ -350,6 +411,27 @@ impl<const K: usize> GarnerData<K> {
             }
         }
     }
+}
+
+/// The field image of `Σ_i digits[i] · weights[i]`, with no branch on the
+/// digits or digit-dependent memory indices: each digit is
+/// lifted by [`crate::lift_biased`], and `bias`, `F(LIFT_BIAS) · Σ_i weights[i]`,
+/// removes the offsets. With the radix weights of
+/// `GarnerData::field_weights` this is the constant-time counterpart of
+/// `GarnerData::digits_to_field`. Constant time assumes data-independent field
+/// and integer arithmetic. For `p > 2^64` and `|digit| < 2^62`, the biased
+/// multiplier operand is also nonzero, independently of the digit sign.
+pub(crate) fn digits_to_field_ct<F: Field + crate::CanonicalEncoding, const K: usize>(
+    digits: &[i64; K],
+    weights: &[F; K],
+    bias: F,
+) -> F {
+    digits
+        .iter()
+        .zip(weights)
+        .fold(-bias, |acc, (&digit, &weight)| {
+            acc + crate::lift_biased::<F>(digit) * weight
+        })
 }
 
 pub(crate) fn modular_inverse(value: u64, modulus: u64) -> Result<u64, AkitaError> {
@@ -542,6 +624,9 @@ mod garner_tests {
 
     fn assert_mixed_radix<const K: usize>(garner: &GarnerData<K>, residues: [i64; K]) {
         let digits = mixed_radix(garner, residues);
+        let mut ct = residues.map(|residue| [residue]);
+        garner.centered_mixed_radix_ct(&mut ct);
+        assert_eq!(ct.map(|[digit]| digit), digits);
         for (i, &modulus) in garner.moduli.iter().enumerate() {
             let modulus = i128::from(modulus);
             assert!(i128::from(digits[i]).abs() <= modulus / 2);
@@ -556,7 +641,10 @@ mod garner_tests {
     }
 
     /// Checks the i128 run evaluation against one field product per digit.
-    fn assert_field_lift<F: Field, const K: usize>(garner: &GarnerData<K>, digits: &[i64; K]) {
+    fn assert_field_lift<F: Field + crate::CanonicalEncoding, const K: usize>(
+        garner: &GarnerData<K>,
+        digits: &[i64; K],
+    ) {
         let (weights, _) = garner.field_weights::<F>();
         let expected = digits
             .iter()
@@ -565,10 +653,29 @@ mod garner_tests {
                 sum + F::from_i64(digit) * weight
             });
         assert_eq!(garner.digits_to_field(digits, &weights), expected);
+        let bias = weights
+            .iter()
+            .copied()
+            .fold(F::zero(), |sum, weight| sum + weight)
+            * F::from_u64(crate::LIFT_BIAS);
+        assert_eq!(super::digits_to_field_ct(digits, &weights, bias), expected);
     }
 
     fn check_profile<const K: usize>(moduli: [u64; K]) {
         let garner = GarnerData::try_from_moduli(moduli).unwrap();
+        for (index, &modulus) in moduli.iter().enumerate() {
+            let cofactor = moduli
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != index)
+                .fold(1u128, |acc, (_, &p)| {
+                    (acc * u128::from(p)) % u128::from(modulus)
+                });
+            assert_eq!(
+                cofactor * u128::from(garner.crt_inverse()[index]) % u128::from(modulus),
+                1
+            );
+        }
         let mut state = 0x9e37_79b9_7f4a_7c15u64;
         for round in 0..4096 {
             let residues = core::array::from_fn(|limb| {
