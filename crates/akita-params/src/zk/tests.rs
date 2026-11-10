@@ -7,7 +7,7 @@ fn randomness_columns_match_the_headline_sizes() {
     let pad = HiddenImage {
         rows: 3,
         ring_dim: 256,
-        modulus: SisModulusProfileId::Q128OffsetA7F7,
+        modulus: SisModulusProfileId::Q128Offset6A23801F,
         hidden: HiddenRows::StrideZero,
     };
     let residual = HiddenImage {
@@ -24,7 +24,7 @@ fn pad_sizing_includes_the_stride_zero_image() {
     let pad = HiddenImage {
         rows: 8,
         ring_dim: 128,
-        modulus: SisModulusProfileId::Q128OffsetA7F7,
+        modulus: SisModulusProfileId::Q128Offset6A23801F,
         hidden: HiddenRows::StrideZero,
     };
     let alphabet = DigitAlphabet { log_basis: 4 };
@@ -51,7 +51,7 @@ fn headline_slice_needs_forty_five_columns() {
     let image = HiddenImage {
         rows: 1,
         ring_dim: 64,
-        modulus: SisModulusProfileId::Q128OffsetA7F7,
+        modulus: SisModulusProfileId::Q128Offset6A23801F,
         hidden: HiddenRows::None,
     };
     assert_eq!(
@@ -65,7 +65,7 @@ fn sizing_is_minimal_for_every_profile_and_alphabet() {
     for modulus in [
         SisModulusProfileId::Q32Offset99,
         SisModulusProfileId::Q64Offset59,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
     ] {
         for (hidden, extra) in [(HiddenRows::None, 0), (HiddenRows::StrideZero, 64)] {
             for ring_dim in [64, 128, 256] {
