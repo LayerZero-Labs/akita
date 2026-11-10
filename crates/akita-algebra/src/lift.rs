@@ -31,7 +31,7 @@ pub fn lift_biased<F: Field + CanonicalEncoding>(x: i64) -> F {
 }
 
 /// `x` as a field element with no branch on `x`, unlike
-/// [`Field::from_i64`]: [`lift_biased`] minus the
+/// [`Ring::from_i64`](crate::Ring::from_i64): [`lift_biased`] minus the
 /// constant bias. Wider fields need no multiplication; 32-bit fields use
 /// the fixed radix assembly in [`lift_biased`]. Use this for masks and response
 /// digits.
