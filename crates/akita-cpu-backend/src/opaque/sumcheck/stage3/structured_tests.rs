@@ -71,11 +71,10 @@ fn binary_root_p64_typed_stage3_matches_dense_extension_rounds() {
         3,
         64,
         BinaryFieldProfile::P64,
-        true,
         0,
     )
     .unwrap();
-    let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+    let typed = BinaryTypedPrefix::new(&manifest, 0, 64).unwrap();
     let extension = |i: usize| E::from_base_fn(|c| Base::from_u64((17 + i * 31 + c * 43) as u64));
     let point = (0..plan.repacking().domain_len().trailing_zeros())
         .map(|i| extension(i as usize))
@@ -86,7 +85,7 @@ fn binary_root_p64_typed_stage3_matches_dense_extension_rounds() {
     let a = BinaryAProduct::new(&plan, &rho, &point, typed.domain_len).unwrap();
     let batches = [
         vec![extension(3000); manifest.b_rows()],
-        vec![extension(4000); manifest.d_label(true, 0).unwrap().rank as usize],
+        vec![extension(4000); manifest.d_label(0).unwrap().rank as usize],
     ];
     let alpha = extension(5000);
     let dense = typed

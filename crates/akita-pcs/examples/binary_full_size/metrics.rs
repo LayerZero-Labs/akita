@@ -213,11 +213,7 @@ pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub(super) fn proof(
-    proof: &[u8],
-    log_carriers: usize,
-    word: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn proof(proof: &[u8], log_carriers: usize) -> Result<(), Box<dyn std::error::Error>> {
     use akita_error::checked;
 
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
@@ -241,36 +237,20 @@ pub(super) fn proof(
     let frontend_round_bytes = checked::product([42, log_carriers]).ok_or("frontend overflow")?;
     let terminal_start = checked::sum([2048, frontend_round_bytes]).ok_or("frontend overflow")?;
     for (name, start, bytes, atoms) in [
-        (
-            "field_switch_partials",
-            0,
-            if word { 2048 } else { 0 },
-            if word { 128 } else { 0 },
-        ),
+        ("field_switch_partials", 0, 2048, 128),
         (
             "field_switch_rounds",
             2048,
-            if word { frontend_round_bytes } else { 0 },
-            if word {
-                checked::product([2, log_carriers]).ok_or("atom overflow")?
-            } else {
-                0
-            },
+            frontend_round_bytes,
+            checked::product([2, log_carriers]).ok_or("atom overflow")?,
         ),
-        (
-            "field_switch_terminal",
-            terminal_start,
-            if word { 21 } else { 0 },
-            usize::from(word),
-        ),
+        ("field_switch_terminal", terminal_start, 21, 1),
         ("integer_projections", projection_start, 84, 7),
     ] {
-        if bytes != 0 {
-            let end = checked::sum([start, bytes]).ok_or("range overflow")?;
-            coverage.push((start, end));
-            accounted = checked::sum([accounted, bytes]).ok_or("byte overflow")?;
-            println!("proof_stage level=0 name={name} start={start} bytes={bytes} atoms={atoms}");
-        }
+        let end = checked::sum([start, bytes]).ok_or("range overflow")?;
+        coverage.push((start, end));
+        accounted = checked::sum([accounted, bytes]).ok_or("byte overflow")?;
+        println!("proof_stage level=0 name={name} start={start} bytes={bytes} atoms={atoms}");
     }
     for range in ranges {
         let site = akita_transcript::ProtocolSiteId::from_bytes(range.context.site_id);

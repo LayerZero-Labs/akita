@@ -25,11 +25,10 @@ fn binary_root_stage3_p64_extension_claim_and_endpoint_replay_and_reject_coordin
         3,
         64,
         BinaryFieldProfile::P64,
-        true,
         0,
     )
     .unwrap();
-    let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+    let typed = BinaryTypedPrefix::new(&manifest, 0, 64).unwrap();
     let scalar = |i: usize| E::from_base_fn(|c| F::from_u64((11 + 31 * i + 43 * c) as u64));
     let point = (0..root.repacking().domain_len().trailing_zeros())
         .map(|i| scalar(i as usize))
@@ -42,7 +41,7 @@ fn binary_root_stage3_p64_extension_claim_and_endpoint_replay_and_reject_coordin
         (0..manifest.b_rows())
             .map(|r| scalar(3000 + r))
             .collect::<Vec<_>>(),
-        (0..manifest.d_label(true, 0).unwrap().rank as usize)
+        (0..manifest.d_label(0).unwrap().rank as usize)
             .map(|r| scalar(4000 + r))
             .collect::<Vec<_>>(),
     ];

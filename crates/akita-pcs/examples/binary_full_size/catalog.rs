@@ -26,7 +26,6 @@ pub(super) fn plan(
         carrier,
         BinaryFieldProfile::P128,
     )?;
-    let word = true;
     let planes = usize::from(shape != "binary-claim");
     let arity = checked::sum([log, 8]).ok_or(AkitaError::InvalidProof)?;
     let prime = PrimePlaneManifest::with_field_profile(
@@ -41,14 +40,13 @@ pub(super) fn plan(
         BinaryFieldProfile::P128,
     )?;
     let price = akita_planner::prime_planes::price_binary_root_planes(
-        &manifest, word, &prime, dimension, ordinary,
+        &manifest, &prime, dimension, ordinary,
     )?;
     let mut canonical = BinaryRootWitnessPlan::for_profile(
         &descriptor,
         manifest.a_rank(),
         dimension,
         manifest.field_profile(),
-        word,
         planes,
     )?;
     if let Some(ordinary) = ordinary {

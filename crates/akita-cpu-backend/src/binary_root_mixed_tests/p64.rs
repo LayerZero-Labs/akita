@@ -1,5 +1,7 @@
-//! Fixture-sized P64 prime and mixed roots, below public schedule admission.
-use crate::binary_root::{prime_plane_digits, BinaryRootRelation};
+//! Fixture-sized P64 word-and-prime and mixed roots, below public schedule admission.
+use crate::binary_root::{
+    binary_row_partials, prime_plane_digits, BinaryEvaluationWitness, BinaryRootRelation,
+};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::trinomial::{
     image::Q24Image, module_map::unpack_signed_components, signed::signed_trinomial_product,
@@ -9,13 +11,13 @@ use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_types::binary::{
     binary_ordinary_profile_fixture, binary_public_digit_commitment, binary_root_matrix,
-    binary_word_manifest_fixture, BinaryRootPublic, OrdinaryNativeRootPlan, PrimeGroupClaim,
-    PrimePlaneClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
+    binary_word_manifest_fixture, BinaryRootPublic, BinaryTerminalClaim, OrdinaryNativeRootPlan,
+    PrimeGroupClaim, PrimePlaneClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
 };
 use jolt_field::{CanonicalEncoding, Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
 
 #[test]
-fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
+fn binary_root_p64_word_prime_and_mixed_replay_all_three_stages() {
     for mixed in [false, true] {
         let field = BinaryFieldProfile::P64;
         let manifest = binary_word_manifest_fixture(field, 1);
@@ -123,18 +125,46 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             num_field_elements: akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
             setup_seed: seed.into(),
         };
+        // Zero row and column points select scalar row zero, column zero; its
+        // packed binary value is read directly from that source component.
+        let mut word_value = [0u8; 21];
+        for coefficient in 0..128 {
+            word_value[coefficient / 8] |=
+                ((sources[0][4 * coefficient] & 1) as u8) << (coefficient % 8);
+        }
+        let claim = BinaryTerminalClaim::new(
+            descriptor,
+            descriptor.polynomials()[0],
+            vec![[0; 21]; 2],
+            vec![[0; 21]],
+            word_value,
+        )
+        .unwrap();
         let public =
-            BinaryRootPublic::new(&manifest, None, &prime, &setup, 1 << 17, 64, profile).unwrap();
+            BinaryRootPublic::new(&manifest, &claim, &prime, &setup, 1 << 17, 64, profile).unwrap();
         let plan = public.plan();
+        let partials = binary_row_partials(descriptor, &claim, &sources).unwrap();
+        let evaluation = BinaryEvaluationWitness::build(
+            descriptor,
+            &claim,
+            &partials,
+            &relation.response,
+            &challenges,
+            field.modulus(),
+        )
+        .unwrap();
         let mut natural = vec![
             BinaryRootRelation::response_digits(&relation.response).unwrap(),
             BinaryRootRelation::image_digits(&images).unwrap(),
+            partials,
+            evaluation.parity_digits,
+            evaluation.value_digits,
             prime_plane_digits::<F>(descriptor, &prime, &sources).unwrap(),
         ];
-        assert_eq!(natural[2].len(), 2 * 2 * 22 * 162);
-        assert!(natural[2][2 * 22 * 162..].iter().any(|&digit| digit != 0));
+        assert_eq!(natural[5].len(), 2 * 2 * 22 * 162);
+        assert!(natural[5][2 * 22 * 162..].iter().any(|&digit| digit != 0));
         let ordinary = profile.map(|profile| {
-            let ordinary = OrdinaryNativeRootPlan::new(profile, 3).unwrap();
+            let ordinary = OrdinaryNativeRootPlan::new(profile, 6).unwrap();
             let compression = profile.outer_compression_plan().unwrap();
             assert_eq!(compression.field_bits(), 64);
             assert_eq!(
@@ -175,13 +205,10 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
             .unwrap();
         let b =
             binary_public_digit_commitment::<F>(&seed, manifest.b_label(), 0, &natural[1]).unwrap();
-        let d = binary_public_digit_commitment::<F>(
-            &seed,
-            manifest.d_label(false, 2).unwrap(),
-            0,
-            &natural[2],
-        )
-        .unwrap();
+        let d_digits = [natural[2].as_slice(), natural[5].as_slice()].concat();
+        let d =
+            binary_public_digit_commitment::<F>(&seed, manifest.d_label(2).unwrap(), 0, &d_digits)
+                .unwrap();
         let mut false_publics = Vec::new();
         for coordinate in 0..2 {
             for point in [false, true] {
@@ -197,7 +224,7 @@ fn binary_root_p64_prime_and_mixed_replay_all_three_stages() {
                 let bad =
                     PrimePlaneManifest::with_field_profile(descriptor, Some(bad), field).unwrap();
                 false_publics.push(
-                    BinaryRootPublic::new(&manifest, None, &bad, &setup, 1 << 17, 64, profile)
+                    BinaryRootPublic::new(&manifest, &claim, &bad, &setup, 1 << 17, 64, profile)
                         .unwrap(),
                 );
             }

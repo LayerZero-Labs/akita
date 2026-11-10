@@ -76,7 +76,7 @@ fn trusted_composite_preparation_preserves_singleton_and_authenticates_distinct_
         [1, 2].map(|owners| binary_word_manifest_fixture(BinaryFieldProfile::P64, owners));
     let typed = manifests
         .each_ref()
-        .map(|manifest| BinaryTypedPrefix::new(manifest, true, 0, 64).unwrap());
+        .map(|manifest| BinaryTypedPrefix::new(manifest, 0, 64).unwrap());
     let slots = typed.each_ref().map(|prefix| slot(prefix.domain_len));
     let combined_domain = (typed[0].domain_len.div_ceil(typed[1].domain_len) * typed[1].domain_len
         + typed[1].domain_len)
@@ -212,7 +212,7 @@ fn trusted_composite_preparation_preserves_singleton_and_authenticates_distinct_
 #[test]
 fn opaque_ordinary_local_table_is_copied_without_reinterpreting_its_roles() {
     let manifest = binary_word_manifest_fixture(BinaryFieldProfile::P64, 1);
-    let typed = BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+    let typed = BinaryTypedPrefix::new(&manifest, 0, 64).unwrap();
     let local_slot = slot(typed.domain_len);
     let combined_slot = slot(typed.domain_len * 2);
     let capacity = akita_params::SetupMatrixCapacity {

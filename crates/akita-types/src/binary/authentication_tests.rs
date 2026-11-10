@@ -14,8 +14,7 @@ fn plan() -> BinaryRootWitnessPlan {
         },
     )
     .unwrap();
-    BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P128, true, 0)
-        .unwrap()
+    BinaryRootWitnessPlan::for_profile(&descriptor, 3, 256, BinaryFieldProfile::P128, 0).unwrap()
 }
 
 fn label(role: SetupStreamRole) -> SetupStreamLabel {
@@ -246,8 +245,7 @@ fn p64_authentication_keeps_both_extension_coordinates_at_every_rank() {
     type E = Ext2<Base>;
     let descriptor = plan().descriptor().clone();
     let plan =
-        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, true, 0)
-            .unwrap();
+        BinaryRootWitnessPlan::for_profile(&descriptor, 3, 64, BinaryFieldProfile::P64, 0).unwrap();
     let mut natural = plan
         .repacking()
         .segments()

@@ -14,7 +14,7 @@ use akita_types::root_repacking::RootCoefficientRepacking;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reconstruct(
     manifest: &BinaryCommittedGroupManifest,
-    claim: Option<&BinaryTerminalClaim>,
+    claim: &BinaryTerminalClaim,
     prime: &PrimePlaneManifest,
     plan: &BinaryRootWitnessPlan,
     seed: &[u8; 32],
@@ -60,18 +60,16 @@ pub(super) fn reconstruct(
     let mut native: Vec<Vec<i8>> = (0..2)
         .map(|segment| extract(&response_plan, &response_digits, segment))
         .collect();
-    if let Some(claim) = claim {
-        let partials = binary_row_partials(descriptor, claim, &sources)?;
-        let evaluation = BinaryEvaluationWitness::build(
-            descriptor,
-            claim,
-            &partials,
-            &response.response,
-            challenges,
-            manifest.field_profile().modulus(),
-        )?;
-        native.extend([partials, evaluation.parity_digits, evaluation.value_digits]);
-    }
+    let partials = binary_row_partials(descriptor, claim, &sources)?;
+    let evaluation = BinaryEvaluationWitness::build(
+        descriptor,
+        claim,
+        &partials,
+        &response.response,
+        challenges,
+        manifest.field_profile().modulus(),
+    )?;
+    native.extend([partials, evaluation.parity_digits, evaluation.value_digits]);
     if plan.prime_segment().is_some() {
         native.push(akita_cpu_backend::binary_root::prime_plane_digits::<F>(
             descriptor, prime, &sources,

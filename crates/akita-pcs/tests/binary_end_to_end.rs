@@ -466,7 +466,6 @@ fn run_fixture(
         .collect::<Vec<_>>();
     let typed = BinaryTypedPrefix::new(
         &manifest,
-        true,
         0,
         resolved.schedule().recursive_folds[0].params.d_a(),
     )
@@ -735,9 +734,15 @@ fn run_fixture(
         first_prefix.n_prefix().unwrap().trailing_zeros() as usize,
         |altered| rejects(altered, &claim, &ordinary_point, ordinary_value),
     );
-    projection::mutate_values(&proof, successor_coefficients, true, 1, |bytes| {
-        rejects(bytes, &claim, &ordinary_point, ordinary_value);
-    });
+    projection::mutate_values(
+        &proof,
+        successor_coefficients,
+        projection::d_payload(&stage3_ranges),
+        1,
+        |bytes| {
+            rejects(bytes, &claim, &ordinary_point, ordinary_value);
+        },
+    );
     let mut value = *claim.value();
     value[0] ^= 1;
     let altered = BinaryWordClaim::new(

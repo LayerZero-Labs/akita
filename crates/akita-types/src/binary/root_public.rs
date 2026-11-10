@@ -68,7 +68,7 @@ pub fn binary_root_matrix(
 #[derive(Clone, Debug)]
 pub struct BinaryRootPublic {
     manifest: BinaryCommittedGroupManifest,
-    claim: Option<BinaryTerminalClaim>,
+    claim: BinaryTerminalClaim,
     prime: super::PrimePlaneManifest,
     setup: AkitaSetupDescriptor,
     plan: BinaryRootWitnessPlan,
@@ -80,7 +80,7 @@ pub struct BinaryRootPublic {
 impl BinaryRootPublic {
     pub fn new(
         manifest: &BinaryCommittedGroupManifest,
-        claim: Option<&BinaryTerminalClaim>,
+        claim: &BinaryTerminalClaim,
         prime: &super::PrimePlaneManifest,
         setup: &AkitaSetupDescriptor,
         logical_len: usize,
@@ -88,9 +88,7 @@ impl BinaryRootPublic {
         ordinary_profile: Option<GroupCommitPhaseParams>,
     ) -> Result<Self, AkitaError> {
         manifest.validate()?;
-        if let Some(claim) = claim {
-            claim.validate(manifest.descriptor())?;
-        }
+        claim.validate(manifest.descriptor())?;
         prime.validate(manifest.descriptor())?;
         if !prime.planes().is_empty() && prime.field_profile() != manifest.field_profile() {
             return Err(AkitaError::InvalidInput(
@@ -103,7 +101,6 @@ impl BinaryRootPublic {
             manifest.a_rank(),
             destination_ring_dimension,
             manifest.field_profile(),
-            claim.is_some(),
             prime.planes().len(),
         )?;
         let ordinary = ordinary_profile
@@ -134,9 +131,7 @@ impl BinaryRootPublic {
         let batch_count = checked::sum([
             plan.row_counts(
                 manifest.b_rows(),
-                manifest
-                    .d_label(claim.is_some(), prime.planes().len())?
-                    .rank as usize,
+                manifest.d_label(prime.planes().len())?.rank as usize,
             )?
             .total()?,
             ordinary
@@ -151,7 +146,7 @@ impl BinaryRootPublic {
         .ok_or(AkitaError::InvalidProof)?;
         Ok(Self {
             manifest: manifest.clone(),
-            claim: claim.cloned(),
+            claim: claim.clone(),
             prime: prime.clone(),
             setup: setup.clone(),
             plan,
@@ -177,9 +172,7 @@ impl BinaryRootPublic {
     pub(super) fn batch_ranges(&self) -> Result<[Range<usize>; 6], AkitaError> {
         let counts = self.plan.row_counts(
             self.manifest.b_rows(),
-            self.manifest
-                .d_label(self.claim.is_some(), self.prime.planes().len())?
-                .rank as usize,
+            self.manifest.d_label(self.prime.planes().len())?.rank as usize,
         )?;
         let terminal =
             checked::range(counts.coefficients, counts.word).ok_or(AkitaError::InvalidProof)?;
@@ -293,7 +286,7 @@ impl BinaryRootPublic {
         let algebra = || {
             let _span = tracing::info_span!("binary_root_weights_algebra").entered();
             self.plan.relation_weights(
-                self.claim.as_ref(),
+                &self.claim,
                 matrix,
                 challenges.as_ref(),
                 alpha,
@@ -357,8 +350,7 @@ impl BinaryRootPublic {
             &self.plan,
             &self.plan.opening_segments(),
             &self.setup.setup_seed.seed,
-            self.manifest
-                .d_label(self.claim.is_some(), self.prime.planes().len())?,
+            self.manifest.d_label(self.prime.planes().len())?,
             d_payload,
             alpha,
             batches.get(d).ok_or(AkitaError::InvalidProof)?,

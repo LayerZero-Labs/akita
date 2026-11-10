@@ -15,12 +15,12 @@ use super::{
 };
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 
-/// Public selection for one binary occurrence. Point/owner-subset validation
-/// belongs to the selected claim API.
+/// Public selection for one binary occurrence. Every binary occurrence opens
+/// its word claim; prime claims are optional on top. Point/owner-subset
+/// validation belongs to the selected claim API.
 #[derive(Clone, Debug)]
 pub struct BinaryRootGroupOccurrence {
     pub manifest: BinaryCommittedGroupManifest,
-    pub word: bool,
     /// Physical base-coordinate EP planes: extension degree times claim count.
     pub prime_coordinate_planes: usize,
     /// Explicit registration in the caller's commitment history. Reuse permits
@@ -84,7 +84,6 @@ pub struct BinaryRootOccurrencePlan {
     pub owners: usize,
     pub word_width: usize,
     pub logical_len: usize,
-    pub word: bool,
     /// Physical base-coordinate EP planes: extension degree times claim count.
     pub prime_coordinate_planes: usize,
     pub evaluation_bounds: BinaryEvaluationBounds,
@@ -193,7 +192,6 @@ impl BinaryRootGroupPlan {
                 || index.padded_carriers() > 1 << 23
                 || !(1..=4096).contains(&owners)
                 || prime_claims > owners
-                || (!group.word && group.prime_coordinate_planes == 0)
             {
                 return Err(admission_error());
             }
@@ -270,7 +268,6 @@ impl BinaryRootGroupPlan {
                 group.manifest.a_rank(),
                 destination_ring_dimension,
                 field,
-                group.word,
                 group.prime_coordinate_planes,
             )?;
             let legacy_len = local_plan
@@ -297,7 +294,6 @@ impl BinaryRootGroupPlan {
                 owners: descriptor.polynomials().len(),
                 word_width: descriptor.index_map().word_width(),
                 logical_len: descriptor.index_map().logical_len(),
-                word: group.word,
                 prime_coordinate_planes: group.prime_coordinate_planes,
                 evaluation_bounds: BinaryEvaluationBounds::new(
                     scalar_rows,
@@ -365,10 +361,7 @@ impl BinaryRootGroupPlan {
         for (group, input) in binary_plans.iter_mut().zip(binary) {
             let counts = group.local_plan.row_counts(
                 input.manifest.b_rows(),
-                input
-                    .manifest
-                    .d_label(input.word, input.prime_coordinate_planes)?
-                    .rank as usize,
+                input.manifest.d_label(input.prime_coordinate_planes)?.rank as usize,
             )?;
             group.rows.word = checked::range(next, counts.word).ok_or_else(admission_error)?;
             group.rows.b =

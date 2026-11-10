@@ -44,7 +44,6 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
         let installed_manifest = make_manifest(0);
         let typed = BinaryTypedPrefix::new(
             &installed_manifest,
-            true,
             0,
             row.schedule().recursive_folds[0].params.d_a(),
         )
@@ -213,10 +212,10 @@ pub(super) fn reject_foreign_prefixes(
 
 #[test]
 fn stage3_p64_extension_endpoint_matches_the_committed_base_prefix_oracle() {
-    p64_typed_prefix_endpoint(true, 0);
+    p64_typed_prefix_endpoint(0);
 }
 
-pub(super) fn p64_typed_prefix_endpoint(word: bool, planes: usize) -> BinaryCommittedGroupManifest {
+pub(super) fn p64_typed_prefix_endpoint(planes: usize) -> BinaryCommittedGroupManifest {
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_params::binary_setup::BinaryFieldProfile;
     use akita_types::binary::{
@@ -230,7 +229,6 @@ pub(super) fn p64_typed_prefix_endpoint(word: bool, planes: usize) -> BinaryComm
         3,
         64,
         BinaryFieldProfile::P64,
-        word,
         planes,
     )
     .unwrap();
@@ -245,7 +243,7 @@ pub(super) fn p64_typed_prefix_endpoint(word: bool, planes: usize) -> BinaryComm
     let a = BinaryAProduct::new(&plan, &rho, &stage2, typed.domain_len).unwrap();
     let batches = [
         vec![extension(3000); manifest.b_rows()],
-        vec![extension(4000); manifest.d_label(word, planes).unwrap().rank as usize],
+        vec![extension(4000); manifest.d_label(planes).unwrap().rank as usize],
     ];
     let weights = typed
         .prover_weights(

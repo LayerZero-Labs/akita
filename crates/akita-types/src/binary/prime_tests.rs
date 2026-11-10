@@ -123,12 +123,10 @@ fn prime_manifest_orders_one_plane_per_polynomial_without_a_separate_cap() {
     }
     assert_eq!(bytes, expected);
     assert!(
-        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P128, false, 6)
-            .is_ok()
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P128, 6).is_ok()
     );
     assert!(
-        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P128, false, 7)
-            .is_err()
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P128, 7).is_err()
     );
 }
 
@@ -356,7 +354,7 @@ fn p64_prime_manifest_binds_both_canonical_coordinates_and_rejects_other_version
 }
 
 #[test]
-fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
+fn p64_prime_reach_and_plane_sizes() {
     use crate::binary::{binary_ordinary_profile_fixture, BinaryCommittedGroupManifest};
     use akita_params::binary_setup::BinaryFieldProfile;
     let reach = |digits: usize, digit: u128| {
@@ -391,20 +389,18 @@ fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
             field,
         )
         .unwrap();
-        let plan =
-            BinaryRootWitnessPlan::for_profile(manifest.descriptor(), 3, 64, field, false, planes)
-                .unwrap();
+        let plan = BinaryRootWitnessPlan::for_profile(manifest.descriptor(), 3, 64, field, planes)
+            .unwrap();
         assert!(BinaryRootWitnessPlan::for_profile(
             manifest.descriptor(),
             3,
             64,
             field,
-            false,
             planes + 2
         )
         .is_err());
-        assert!(manifest.d_label(false, planes + 2).is_err());
-        assert!(manifest.d_label(false, planes - 1).is_err());
+        assert!(manifest.d_label(planes + 2).is_err());
+        assert!(manifest.d_label(planes - 1).is_err());
         let segment = plan.prime_segment().unwrap();
         let shape = &plan.repacking().segments()[segment];
         let depth = field.prime_plane_digits();
@@ -418,11 +414,6 @@ fn p64_prime_reach_plane_sizes_and_prime_only_d_rank() {
         assert_eq!(
             plan.repacking().segment_range(segment).unwrap().len(),
             planes * columns * depth * shape.geometry.physical_coefficient_width()
-        );
-        let width = (planes * depth * 162 * columns).div_ceil(64);
-        crate::binary::root_public::reference::assert_digit_rank::<akita_params::sis::Open>(
-            manifest.d_label(false, planes).unwrap(),
-            width,
         );
     }
 }
@@ -476,7 +467,7 @@ fn p64_prime_structured_and_reference_weights_match_over_e64() {
     ]
     .into();
     let manifest = PrimePlaneManifest::with_field_profile(&source, Some(c), field).unwrap();
-    let plan = BinaryRootWitnessPlan::for_profile(&source, 3, 64, field, false, 2).unwrap();
+    let plan = BinaryRootWitnessPlan::for_profile(&source, 3, 64, field, 2).unwrap();
     let repacking = plan.repacking();
     let segment = plan.prime_segment().unwrap();
     let mut natural = repacking
@@ -583,11 +574,19 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
         num_field_elements: crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         setup_seed: [41; 32].into(),
     };
+    let terminal = crate::binary::BinaryTerminalClaim::new(
+        source,
+        source.polynomials()[0],
+        vec![[0; 21]; 2],
+        vec![[0; 21]],
+        [0; 21],
+    )
+    .unwrap();
     let legacy =
         PrimePlaneManifest::with_field_profile(source, Some(c.clone()), BinaryFieldProfile::P128)
             .unwrap();
     assert!(matches!(
-        BinaryRootPublic::new(&manifest, None, &legacy, &setup, 1 << 17, 64, None),
+        BinaryRootPublic::new(&manifest, &terminal, &legacy, &setup, 1 << 17, 64, None),
         Err(AkitaError::InvalidInput(_))
     ));
     let mut c = c;
@@ -597,7 +596,7 @@ fn p64_root_rejects_legacy_prime_and_mixed_profile_identities() {
     assert!(matches!(
         BinaryRootPublic::new(
             &manifest,
-            None,
+            &terminal,
             &prime,
             &setup,
             1 << 17,
@@ -671,8 +670,7 @@ fn p64_native_tensors_and_readings_match_naive_evaluation() {
         PrimePlaneManifest::with_field_profile(&source, Some(claim), BinaryFieldProfile::P64)
             .unwrap();
     let plan =
-        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, false, 2)
-            .unwrap();
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, 2).unwrap();
     let repacking = plan.repacking();
     let segment = plan.prime_segment().unwrap();
     let mut natural = repacking
@@ -858,8 +856,7 @@ fn p64_prime_compilers_reject_a_different_quadratic_basis() {
         PrimePlaneManifest::with_field_profile(&source, Some(claim), BinaryFieldProfile::P64)
             .unwrap();
     let plan =
-        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, false, 2)
-            .unwrap();
+        BinaryRootWitnessPlan::for_profile(&source, 3, 64, BinaryFieldProfile::P64, 2).unwrap();
     let challenges = Challenges::from_sparse(
         (0..4)
             .map(|_| SparseChallenge {
