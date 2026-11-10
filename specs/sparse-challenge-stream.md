@@ -557,6 +557,31 @@ returns `AkitaError::InvalidProof` and leaves the session unchanged. Decoders
 borrow checked word slices from the session without allocating shared owners.
 Callers of the previous one-argument installer MUST supply this trusted bound.
 
+For a versioned session, a conservative schedule-derived bound in bytes is:
+
+```text
+max_bytes = 16
+          + sum over quartet draws of (32 * count)
+          + sum over position draws of (8 * ceil(w / 4) * candidates)
+```
+
+Sum over every fold draw covered by the installed session. For each draw,
+`count = num_live_blocks * num_claims`, `w = count_pm1 + count_pm2`, and
+`candidates = family.stream(count)?.candidates()`. Use the quartet term only
+for the unfiltered D64/31/10 draws with `count >= 1024`; all other draws use
+the position term. The 16 bytes cover the versioned header; omit them for an
+unversioned quartet-only tape. Compute products, ceiling division and sums with
+checked arithmetic, rejecting configurations whose bound cannot be represented.
+
+An unfiltered stream has `candidates == count`. An operator-norm stream has a
+larger candidate pool: every in-range candidate examined consumes a position
+record, including predicate-rejected candidates. The actual advice size depends
+on the transcript, so a captured honest proof's size MUST NOT be used as the
+general bound. The formula reserves room for the entire candidate pool; a
+smaller application budget can reject otherwise valid proofs. This is an
+installation limit, not a tape length: producers still append only the records
+actually consumed, and finishing rejects unused words.
+
 Fold drawing selects the advice route explicitly; ordinary `SparseChallengeStream::decode`
 never reads or consumes that session. Position advice is consumed serially, even
 in a parallel build. Every used position or quartet is authenticated against the

@@ -282,6 +282,13 @@ budget, independently of the supplied advice's length or header. The bound
 covers the entire input, including its frame header. The previous one-argument
 installer is replaced by this explicit resource contract.
 
+Position advice includes a record for every in-range candidate examined, even
+when the operator-norm predicate rejects it. Its size therefore varies with the
+transcript. A captured honest proof's size is not a safe general bound; use the
+schedule's full candidate pools and the
+[schedule-derived budget formula](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame).
+A smaller application budget can reject otherwise valid proofs.
+
 An existing session, an oversized input, or malformed framing is rejected before
 any tape allocation. Tape storage uses fallible allocation; failures return
 `AkitaError::InvalidProof` without installing a partial session. Decoding borrows
