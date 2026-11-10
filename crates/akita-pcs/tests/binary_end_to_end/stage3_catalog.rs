@@ -187,7 +187,7 @@ fn stage3_catalog_consumes_each_selected_root_prefix() {
 }
 
 #[test]
-fn stage3_p64_layout_has_a_distinct_identity_and_remains_outside_the_catalog() {
+fn stage3_p64_typed_prefix_identity_differs_from_p128() {
     use akita_params::binary_setup::BinaryFieldProfile;
     use akita_types::binary::{binary_word_manifest_fixture, BinaryTypedPrefix};
     let row = catalog()

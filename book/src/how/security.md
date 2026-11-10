@@ -180,7 +180,9 @@ with loss one needs one grinding bit. The column-challenge work entry keeps its
 `2^136` denominator under both profiles. The P64 site table is in
 [`specs/binary-p64-root.md`](../../../specs/binary-p64-root.md#security-accounting).
 Both profiles share the column-sampler extraction premise, the fixed-witness
-premise and the q24 certificate above.
+premise and the q24 A instance above. The certificate prices that instance at
+three source-comparison bounds only; its certification under the production
+security allocation is open for both profiles, as the spec lists.
 
 ### Quantum policy
 
