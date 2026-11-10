@@ -186,7 +186,7 @@ fn mixed_preimage_uses_canonical_multi_block_b_slices() {
         let weights = plan
             .linear_weights(
                 &repacking,
-                setup.expanded.descriptor(),
+                &setup.expanded,
                 &point,
                 &[evaluation],
                 committed.rows().coeffs(),

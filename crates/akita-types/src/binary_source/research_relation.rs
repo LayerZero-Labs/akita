@@ -2,7 +2,7 @@
 
 use super::{BinaryAOperand, OrdinaryNativeRootClaim, ResearchBatchPlan, ResearchBinaryRelation};
 use crate::native_root_relation::NativeRootWeights;
-use crate::{AkitaSetupDescriptor, OpeningClaims};
+use crate::{AkitaExpandedSetup, OpeningClaims};
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
 use akita_params::GroupCommitPhaseParams;
@@ -13,7 +13,7 @@ use std::sync::Arc;
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn research_batch_relation<F, E, C>(
     plan: &ResearchBatchPlan,
-    setup: &AkitaSetupDescriptor,
+    setup: &AkitaExpandedSetup<F>,
     claims: &OpeningClaims<'_, E, C>,
     profiles: &[GroupCommitPhaseParams],
     challenges: &[Challenges],

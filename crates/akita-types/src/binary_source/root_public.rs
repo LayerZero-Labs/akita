@@ -347,17 +347,58 @@ impl BinaryRootPublic {
         let ordinary_weights = || {
             let _span = tracing::info_span!("binary_root_weights_ordinary").entered();
             match (&self.ordinary, ordinary_claim) {
-                (Some(ordinary), Some((point, evaluation, payload))) => ordinary
-                    .linear_weights(
-                        self.plan.repacking(),
-                        &self.setup,
-                        point,
-                        core::slice::from_ref(&evaluation),
-                        payload,
-                        alpha,
-                        batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
-                    )
-                    .map(Some),
+                (Some(ordinary), Some((point, evaluation, payload))) => {
+                    let required = ordinary.setup_field_elements()?;
+                    if required > self.setup.num_field_elements
+                        || required > crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
+                    {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let mut descriptor = self.setup.clone();
+                    descriptor.num_field_elements = required;
+                    // Singleton mixed roots retain their declared base-field sampling.
+                    match ordinary.profile().inner.matrix.sis_modulus_profile() {
+                        akita_params::SisModulusProfileId::Q128Offset275 => {
+                            let matrix = crate::derive_public_matrix_prefix::<
+                                jolt_field::Prime128Offset275,
+                            >(
+                                required, &descriptor.setup_seed
+                            );
+                            let setup = crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(descriptor, matrix);
+                            ordinary
+                                .linear_weights(
+                                    self.plan.repacking(),
+                                    &setup,
+                                    point,
+                                    core::slice::from_ref(&evaluation),
+                                    payload,
+                                    alpha,
+                                    batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
+                                )
+                                .map(Some)
+                        }
+                        akita_params::SisModulusProfileId::Q64Offset59 => {
+                            let matrix = crate::derive_public_matrix_prefix::<
+                                jolt_field::Prime64Offset59,
+                            >(
+                                required, &descriptor.setup_seed
+                            );
+                            let setup = crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(descriptor, matrix);
+                            ordinary
+                                .linear_weights(
+                                    self.plan.repacking(),
+                                    &setup,
+                                    point,
+                                    core::slice::from_ref(&evaluation),
+                                    payload,
+                                    alpha,
+                                    batches.get(ordinary_rows).ok_or(AkitaError::InvalidProof)?,
+                                )
+                                .map(Some)
+                        }
+                        _ => Err(AkitaError::InvalidProof),
+                    }
+                }
                 (None, None) => Ok(None),
                 _ => Err(AkitaError::InvalidProof),
             }

@@ -268,9 +268,22 @@ where
         negative_count = tracing::field::Empty
     )
     .entered();
+    let required = plan.ordinary_setup_field_elements()?;
+    if required > expanded.num_field_elements
+        || required > akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut descriptor = expanded.clone();
+    descriptor.num_field_elements = required;
+    let matrix =
+        akita_types::derive_public_matrix_prefix::<Cfg::Field>(required, &descriptor.setup_seed);
+    let ordinary_setup = akita_types::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        descriptor, matrix,
+    );
     let (relation, negative) = research_batch_relation::<Cfg::Field, Cfg::ExtField, _>(
         &plan,
-        expanded,
+        &ordinary_setup,
         claims,
         &profiles,
         &challenges,

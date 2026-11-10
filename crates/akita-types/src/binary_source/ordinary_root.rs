@@ -8,18 +8,14 @@ use akita_params::{
     CompressionChainPlan, CompressionMapPlan, GroupCommitPhaseParams, RelationRowGeometry,
     SisModulusProfileId,
 };
-#[cfg(feature = "parallel")]
-use jolt_field::solinas::parallel::*;
-use jolt_field::{
-    cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275, Prime64Offset59,
-};
+use jolt_field::{CanonicalEncoding, Field};
 
 use super::paired_offset_eq_sum;
 use crate::native_root_relation::{
     NativeRootWeights, ProfileBuilder, RootEq, RootWeightFamily, TranslatedLanes,
 };
 use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
-use crate::{derive_public_matrix_prefix, AkitaSetupDescriptor};
+use crate::AkitaExpandedSetup;
 
 /// Ordinary preimage families sharing the native root's outgoing table.
 ///
@@ -264,12 +260,31 @@ impl OrdinaryNativeRootPlan {
         Ok(ranges)
     }
 
+    /// Largest flat public prefix read by A, B and both compression maps.
+    pub fn setup_field_elements(&self) -> Result<usize, AkitaError> {
+        let a = self.profile.inner.matrix;
+        let b = self.profile.outer.matrix;
+        [
+            checked::product([a.output_rank(), a.input_width(), a.ring_dimension()]),
+            checked::product([b.output_rank(), b.input_width(), b.ring_dimension()]),
+            Some(self.compression.max_setup_field_elements()?),
+        ]
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(AkitaError::InvalidProof)?
+        .into_iter()
+        .max()
+        .ok_or(AkitaError::InvalidProof)
+    }
+
     /// Direct public A/B/compression and source-evaluation identities.
     ///
     /// Rows are A in owner/block/row order, B in slice/row order, the two
     /// compression maps, all slot evaluations, then signed-bound rows. The
     /// public matrix is the canonical ordinary setup prefix, reused with each
-    /// role's own dimensions.
+    /// role's own dimensions. The caller supplies an admitted seed-derived
+    /// expanded setup; this compiler checks its field and prefix bounds and
+    /// never samples a second matrix.
     ///
     /// Each identity repeats one public pattern: an A row reads the same
     /// kernels in every owner and block, a B row the same kernels in every
@@ -280,10 +295,10 @@ impl OrdinaryNativeRootPlan {
     /// evaluates them at the Stage 2 point without one term per table address;
     /// the prover materializes the same field elements.
     #[allow(clippy::too_many_arguments)]
-    pub fn linear_weights<E: Field>(
+    pub fn linear_weights<F: Field + CanonicalEncoding, E: Field>(
         &self,
         repacking: &RootCoefficientRepacking,
-        setup: &AkitaSetupDescriptor,
+        setup: &AkitaExpandedSetup<F>,
         point: &[E],
         evaluations: &[E],
         payload: &[E],
@@ -302,26 +317,20 @@ impl OrdinaryNativeRootPlan {
         let a = self.profile.inner.matrix;
         let b = self.profile.outer.matrix;
         let [first, second] = self.maps()?;
-        let required = [
-            checked::product([a.output_rank(), a.input_width(), a.ring_dimension()]),
-            checked::product([b.output_rank(), b.input_width(), b.ring_dimension()]),
-            Some(self.compression.max_setup_field_elements()?),
-        ]
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .ok_or(AkitaError::InvalidProof)?
-        .into_iter()
-        .max()
-        .ok_or(AkitaError::InvalidProof)?;
-        if required > setup.num_field_elements
+        let required = self.setup_field_elements()?;
+        if required > setup.descriptor.num_field_elements
             || required > crate::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS
+            || akita_params::field_modulus::<F>()? != a.sis_modulus_profile().modulus()
         {
             return Err(AkitaError::InvalidSetup(
-                "mixed root exceeds the admitted setup prefix".into(),
+                "mixed root exceeds or mismatches the admitted setup prefix".into(),
             ));
         }
-        let matrix = self.setup_coefficients::<E>(required, setup)?;
-        let matrix = matrix.as_slice();
+        let matrix = setup
+            .shared_matrix
+            .as_field_slice()
+            .get(..required)
+            .ok_or(AkitaError::InvalidProof)?;
         let table_len = repacking.domain_len();
         let lanes = |offset| {
             checked::sum([self.first_segment, offset])
@@ -629,46 +638,6 @@ impl OrdinaryNativeRootPlan {
         NativeRootWeights::structured(table_len, Vec::new(), families, claim)
     }
 
-    /// Derive ordinary setup in its declared base field before lifting to the
-    /// testing field. Sampling extension coefficients would change the matrix.
-    fn setup_coefficients<E: Field>(
-        &self,
-        required: usize,
-        setup: &AkitaSetupDescriptor,
-    ) -> Result<Vec<E>, AkitaError> {
-        fn derive<F: Field + CanonicalEncoding, E: Field>(
-            required: usize,
-            setup: &AkitaSetupDescriptor,
-        ) -> Result<Vec<E>, AkitaError> {
-            let matrix = derive_public_matrix_prefix::<F>(required, &setup.setup_seed);
-            let source = matrix.as_field_slice();
-            let mut coefficients = Vec::new();
-            coefficients
-                .try_reserve_exact(source.len())
-                .map_err(|_| AkitaError::InvalidProof)?;
-            coefficients.resize(source.len(), E::zero());
-            cfg_chunks_mut!(coefficients, LIFT_CHUNK)
-                .zip(cfg_chunks!(source, LIFT_CHUNK))
-                .try_for_each(|(target, source)| {
-                    for (slot, coefficient) in target.iter_mut().zip(source) {
-                        *slot = coefficient
-                            .to_u128_checked()
-                            .map(E::from_u128)
-                            .ok_or(AkitaError::InvalidProof)?;
-                    }
-                    Ok::<_, AkitaError>(())
-                })?;
-            Ok(coefficients)
-        }
-        match self.profile.inner.matrix.sis_modulus_profile() {
-            SisModulusProfileId::Q128Offset275 => derive::<Prime128Offset275, E>(required, setup),
-            SisModulusProfileId::Q64Offset59 => derive::<Prime64Offset59, E>(required, setup),
-            _ => Err(AkitaError::InvalidSetup(
-                "unsupported mixed root field".into(),
-            )),
-        }
-    }
-
     fn maps(&self) -> Result<[CompressionMapPlan; 2], AkitaError> {
         match self.compression.maps() {
             &[first, second] => Ok([first, second]),
@@ -681,19 +650,16 @@ impl OrdinaryNativeRootPlan {
 ///
 /// Entry `(row, column)` is the degree-`degree` ring at flat offset
 /// `(row * width + column) * degree` of the ordinary setup prefix. The
-/// prefix is lifted once into the testing field, in parallel under `parallel`,
-/// and every role borrows it; [`Self::ring`] copies one entry out.
+/// roles borrow the admitted base-field prefix; [`Self::ring`] lifts only the
+/// requested entry into the testing field.
 struct RoleRings<'a, E> {
     coefficients: &'a [E],
     width: usize,
     degree: usize,
 }
 
-/// Coefficients one parallel task lifts.
-const LIFT_CHUNK: usize = 1 << 13;
-
-impl<'a, E: Field> RoleRings<'a, E> {
-    fn new(matrix: &'a [E], rows: usize, width: usize, degree: usize) -> Result<Self, AkitaError> {
+impl<'a, F: Field + CanonicalEncoding> RoleRings<'a, F> {
+    fn new(matrix: &'a [F], rows: usize, width: usize, degree: usize) -> Result<Self, AkitaError> {
         let len = checked::product([rows, width, degree]).ok_or(AkitaError::InvalidProof)?;
         let coefficients = matrix.get(..len).ok_or(AkitaError::InvalidProof)?;
         if degree == 0 {
@@ -707,15 +673,22 @@ impl<'a, E: Field> RoleRings<'a, E> {
     }
 
     /// A copy of ring `(row, column)`.
-    fn ring(&self, row: usize, column: usize) -> Result<Vec<E>, AkitaError> {
+    fn ring<E: Field>(&self, row: usize, column: usize) -> Result<Vec<E>, AkitaError> {
         if column >= self.width {
             return Err(AkitaError::InvalidProof);
         }
         checked::mul_add(row, self.width, column)
             .and_then(|entry| checked::range(checked::product([entry, self.degree])?, self.degree))
             .and_then(|range| self.coefficients.get(range))
-            .map(<[E]>::to_vec)
-            .ok_or(AkitaError::InvalidProof)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter()
+            .map(|coefficient| {
+                coefficient
+                    .to_u128_checked()
+                    .map(E::from_u128)
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .collect()
     }
 }
 

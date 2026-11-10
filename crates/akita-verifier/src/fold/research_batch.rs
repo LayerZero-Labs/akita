@@ -131,7 +131,7 @@ where
     }
     let (relation, negative) = research_batch_relation::<F, E, _>(
         &plan,
-        descriptor,
+        setup.expanded(),
         claims,
         &profiles,
         &challenges,

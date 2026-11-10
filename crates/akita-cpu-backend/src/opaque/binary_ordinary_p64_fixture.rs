@@ -189,6 +189,17 @@ fn p64_four_signed_ordinary_groups_match_actual_commitments() {
         num_field_elements: akita_types::MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
         setup_seed: [41; 32].into(),
     };
+    let mut setup = setup;
+    setup.num_field_elements = batch
+        .plans()
+        .iter()
+        .map(|plan| plan.setup_field_elements().unwrap())
+        .max()
+        .unwrap();
+    let matrix =
+        akita_types::derive_public_matrix_prefix::<F>(setup.num_field_elements, &setup.setup_seed);
+    let setup =
+        akita_types::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(setup, matrix);
     let ext = |i: usize| E::from_base_fn(|c| F::from_u64((23 + i * 31 + c * 43) as u64));
     let batches = (0..batch.linear_batch_count()).map(ext).collect::<Vec<_>>();
     let weights = batch

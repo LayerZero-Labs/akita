@@ -4,16 +4,73 @@
 //! term. It pushes one `(address, weight)` pair per public coefficient weight;
 //! the differential tests compare the structured families with it.
 
+use crate::derive_public_matrix_prefix;
 use akita_algebra::ring::ResidueKernelPoint;
 use akita_error::{checked, AkitaError};
-use jolt_field::Field;
+use akita_params::SisModulusProfileId;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{
+    cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field, Prime128Offset275, Prime64Offset59,
+};
+const LIFT_CHUNK: usize = 1 << 13;
 
 use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
 use crate::AkitaSetupDescriptor;
 
+fn expanded<F: Field + CanonicalEncoding>(
+    descriptor: &AkitaSetupDescriptor,
+    required: usize,
+) -> crate::AkitaExpandedSetup<F> {
+    let mut descriptor = descriptor.clone();
+    descriptor.num_field_elements = required;
+    let matrix = derive_public_matrix_prefix(required, &descriptor.setup_seed);
+    crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(descriptor, matrix)
+}
+
 impl OrdinaryNativeRootPlan {
+    /// Derive ordinary setup in its declared base field before lifting to the
+    /// testing field. Sampling extension coefficients would change the matrix.
+    fn reference_setup_coefficients<E: Field>(
+        &self,
+        required: usize,
+        setup: &AkitaSetupDescriptor,
+    ) -> Result<Vec<E>, AkitaError> {
+        fn derive<F: Field + CanonicalEncoding, E: Field>(
+            required: usize,
+            setup: &AkitaSetupDescriptor,
+        ) -> Result<Vec<E>, AkitaError> {
+            let matrix = derive_public_matrix_prefix::<F>(required, &setup.setup_seed);
+            let source = matrix.as_field_slice();
+            let mut coefficients = Vec::new();
+            coefficients
+                .try_reserve_exact(source.len())
+                .map_err(|_| AkitaError::InvalidProof)?;
+            coefficients.resize(source.len(), E::zero());
+            cfg_chunks_mut!(coefficients, LIFT_CHUNK)
+                .zip(cfg_chunks!(source, LIFT_CHUNK))
+                .try_for_each(|(target, source)| {
+                    for (slot, coefficient) in target.iter_mut().zip(source) {
+                        *slot = coefficient
+                            .to_u128_checked()
+                            .map(E::from_u128)
+                            .ok_or(AkitaError::InvalidProof)?;
+                    }
+                    Ok::<_, AkitaError>(())
+                })?;
+            Ok(coefficients)
+        }
+        match self.profile.inner.matrix.sis_modulus_profile() {
+            SisModulusProfileId::Q128Offset275 => derive::<Prime128Offset275, E>(required, setup),
+            SisModulusProfileId::Q64Offset59 => derive::<Prime64Offset59, E>(required, setup),
+            _ => Err(AkitaError::InvalidSetup(
+                "unsupported mixed root field".into(),
+            )),
+        }
+    }
+
     /// Flat reference for [`OrdinaryNativeRootPlan::linear_weights`].
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn reference_linear_weights<E: Field>(
@@ -65,7 +122,7 @@ impl OrdinaryNativeRootPlan {
                 "mixed root exceeds the admitted setup prefix".into(),
             ));
         }
-        let matrix = self.setup_coefficients::<E>(required, setup)?;
+        let matrix = self.reference_setup_coefficients::<E>(required, setup)?;
         let matrix = matrix.as_slice();
         let source_coefficients = checked::product([
             self.segments
@@ -641,10 +698,12 @@ mod tests {
                     .collect::<Vec<_>>();
                 let alpha = field(&mut rng);
 
+                let expanded =
+                    expanded::<Prime128Offset275>(&setup, plan.setup_field_elements().unwrap());
                 let structured = plan
                     .linear_weights(
                         &repacking,
-                        &setup,
+                        &expanded,
                         &point,
                         &evaluations,
                         &payload,
@@ -693,7 +752,7 @@ mod p64_tests {
     use crate::native_root_relation::{ProfileBuilder, RootEq};
     use akita_algebra::offset_eq::OffsetEqWindow;
     use akita_params::binary_setup::BinaryFieldProfile;
-    use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
+    use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as F, Ring, Zero};
     type E = Ext2<F>;
 
     #[test]
@@ -855,10 +914,11 @@ mod p64_tests {
                 .map(|slot| ext(300 + slot))
                 .collect::<Vec<_>>();
             let batches = (0..plan.linear_batch_count()).map(ext).collect::<Vec<_>>();
+            let expanded = expanded::<F>(&setup, plan.setup_field_elements().unwrap());
             let structured = plan
                 .linear_weights(
                     &repacking,
-                    &setup,
+                    &expanded,
                     &point,
                     &evaluations,
                     &payload,
@@ -932,8 +992,17 @@ mod p64_tests {
         let batches = (0..batch.linear_batch_count())
             .map(|i| ext(1000 + i))
             .collect::<Vec<_>>();
+        let expanded = expanded::<F>(
+            &setup,
+            batch
+                .plans()
+                .iter()
+                .map(|plan| plan.setup_field_elements().unwrap())
+                .max()
+                .unwrap(),
+        );
         let weights = batch
-            .linear_weights(&repacking, &setup, &claims, ext(400), &batches)
+            .linear_weights(&repacking, &expanded, &claims, ext(400), &batches)
             .unwrap();
         let mut cursor = 0;
         let reference = batch
@@ -993,11 +1062,106 @@ mod p64_tests {
         }
         assert_eq!(profiles.take_dense(), dense);
         assert!(batch
-            .linear_weights(&repacking, &setup, &claims, ext(400), &batches[1..])
+            .linear_weights(&repacking, &expanded, &claims, ext(400), &batches[1..])
             .is_err());
         claims[2].width = claims[0].width;
         assert!(batch
-            .linear_weights(&repacking, &setup, &claims, ext(400), &batches)
+            .linear_weights(&repacking, &expanded, &claims, ext(400), &batches)
+            .is_err());
+    }
+
+    #[test]
+    fn ordinary_shared_setup_rejects_short_prefix_and_wrong_base_field() {
+        let profile = binary_ordinary_profile_fixture(BinaryFieldProfile::P64, Some((2, 3)));
+        let plan = OrdinaryNativeRootPlan::new_signed(
+            profile,
+            0,
+            akita_params::ordinary_source::OrdinarySourceWidth::new(2).unwrap(),
+        )
+        .unwrap();
+        let repacking = RootCoefficientRepacking::new(plan.segments().to_vec(), 64).unwrap();
+        let required = plan.setup_field_elements().unwrap();
+        let descriptor = AkitaSetupDescriptor {
+            max_num_vars: profile.group.num_vars(),
+            max_num_batched_polys: 3,
+            num_field_elements: required,
+            setup_seed: [41; 32].into(),
+        };
+        let point = vec![E::zero(); profile.group.num_vars()];
+        let evaluations = vec![E::zero(); 3];
+        let payload = vec![
+            E::zero();
+            profile
+                .outer_compression_plan()
+                .unwrap()
+                .terminal_coefficients()
+        ];
+        let batches = vec![E::one(); plan.linear_batch_count()];
+        let mut shared = expanded::<F>(&descriptor, required);
+        let weights = plan
+            .linear_weights(
+                &repacking,
+                &shared,
+                &point,
+                &evaluations,
+                &payload,
+                E::one(),
+                &batches,
+            )
+            .unwrap();
+        let reference = plan
+            .reference_linear_weights(
+                &repacking,
+                &descriptor,
+                &point,
+                &evaluations,
+                &payload,
+                E::one(),
+                &batches,
+            )
+            .unwrap();
+        assert_eq!(
+            weights.materialize().unwrap(),
+            reference.materialize().unwrap()
+        );
+        assert_eq!(weights.claim(), reference.claim());
+        shared.shared_matrix =
+            crate::derive_public_matrix_prefix::<F>(required - 1, &descriptor.setup_seed);
+        assert!(plan
+            .linear_weights(
+                &repacking,
+                &shared,
+                &point,
+                &evaluations,
+                &payload,
+                E::one(),
+                &batches
+            )
+            .is_err());
+        let mut shared = expanded::<F>(&descriptor, required);
+        shared.descriptor.num_field_elements = required - 1;
+        assert!(plan
+            .linear_weights(
+                &repacking,
+                &shared,
+                &point,
+                &evaluations,
+                &payload,
+                E::one(),
+                &batches
+            )
+            .is_err());
+        let wrong = expanded::<Prime128Offset275>(&descriptor, required);
+        assert!(plan
+            .linear_weights(
+                &repacking,
+                &wrong,
+                &point,
+                &evaluations,
+                &payload,
+                E::one(),
+                &batches
+            )
             .is_err());
     }
 

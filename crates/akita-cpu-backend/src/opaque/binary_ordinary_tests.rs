@@ -273,7 +273,7 @@ fn signed_extrema_all_slots_and_all_commitment_rows_authenticate() {
                 batches[row] = F::one();
                 plan.linear_weights(
                     &repacking,
-                    input.setup.expanded.descriptor(),
+                    &input.setup.expanded,
                     &input.point,
                     &input.evaluations,
                     &input.payload,
@@ -290,7 +290,7 @@ fn signed_extrema_all_slots_and_all_commitment_rows_authenticate() {
             let compile = |evaluations: &[F], payload: &[F]| {
                 plan.linear_weights(
                     &repacking,
-                    input.setup.expanded.descriptor(),
+                    &input.setup.expanded,
                     &input.point,
                     evaluations,
                     payload,
@@ -415,7 +415,7 @@ fn signed_offset_membership_rejects_non_boolean_linear_preserving_mutation() {
         batches[row] = F::one();
         plan.linear_weights(
             &repacking,
-            input.setup.expanded.descriptor(),
+            &input.setup.expanded,
             &input.point,
             &input.evaluations,
             &input.payload,
@@ -485,7 +485,7 @@ fn ordered_batch_rejects_omitted_reordered_and_wrong_width_groups() {
     let compile = |claims: &[OrdinaryNativeRootClaim<'_, F>]| {
         batch.linear_weights(
             &repacking,
-            inputs[0].setup.expanded.descriptor(),
+            &inputs[0].setup.expanded,
             claims,
             F::from_u64(29),
             &batches,
@@ -592,7 +592,7 @@ fn legacy_partial_block_preserves_base_relation_and_repacking_boundary() {
     let current = plan
         .linear_weights(
             &repacking,
-            input.setup.expanded.descriptor(),
+            &input.setup.expanded,
             &input.point,
             &input.evaluations,
             &input.payload,
@@ -661,7 +661,7 @@ fn one_digit_fixture_matches_frozen_pre_extension_relation_bytes() {
     let current = plan
         .linear_weights(
             &repacking,
-            input.setup.expanded.descriptor(),
+            &input.setup.expanded,
             &input.point,
             &input.evaluations,
             &input.payload,

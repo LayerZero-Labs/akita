@@ -5,12 +5,12 @@ use akita_params::ordinary_source::OrdinarySourceWidth;
 use akita_params::GroupCommitPhaseParams;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_iter, Field};
+use jolt_field::{cfg_iter, CanonicalEncoding, Field};
 
 use super::OrdinaryNativeRootPlan;
 use crate::native_root_relation::NativeRootWeights;
 use crate::root_repacking::RootCoefficientRepacking;
-use crate::AkitaSetupDescriptor;
+use crate::AkitaExpandedSetup;
 
 /// Exact ordered ordinary identities fixed before root randomness.
 ///
@@ -70,10 +70,10 @@ impl OrdinaryNativeRootBatch {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn linear_weights<E: Field>(
+    pub fn linear_weights<F: Field + CanonicalEncoding, E: Field>(
         &self,
         repacking: &RootCoefficientRepacking,
-        setup: &AkitaSetupDescriptor,
+        setup: &AkitaExpandedSetup<F>,
         claims: &[OrdinaryNativeRootClaim<'_, E>],
         alpha: E,
         batches: &[E],

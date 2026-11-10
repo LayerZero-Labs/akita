@@ -6,16 +6,16 @@ use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::GroupCommitPhaseParams;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{cfg_iter, cfg_join, Field};
+use jolt_field::{cfg_iter, cfg_join, CanonicalEncoding, Field};
 
 use super::{
     BinaryAOperand, BinaryRootPublic, BinaryRootWitnessPlan, OrdinaryNativeRootBatch,
-    OrdinaryNativeRootClaim, PrimeClaims, ResearchTerminalMode,
+    OrdinaryNativeRootClaim, OrdinaryNativeRootPlan, PrimeClaims, ResearchTerminalMode,
 };
 use crate::native_root_relation::NativeRootWeights;
 use crate::opening_claims::GroupClaimKind;
 use crate::root_repacking::RootCoefficientRepacking;
-use crate::AkitaSetupDescriptor;
+use crate::{AkitaExpandedSetup, AkitaSetupDescriptor};
 
 /// Complete local compilers and their aligned positions in one outgoing table.
 #[derive(Clone, Debug)]
@@ -296,11 +296,23 @@ impl ResearchBatchPlan {
         self.batch_count
     }
 
+    /// Largest ordinary prefix required by this frozen research roster.
+    pub fn ordinary_setup_field_elements(&self) -> Result<usize, AkitaError> {
+        self.ordinary
+            .plans()
+            .iter()
+            .map(OrdinaryNativeRootPlan::setup_field_elements)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .max()
+            .ok_or(AkitaError::InvalidProof)
+    }
+
     /// One independent coefficient per original row, including every K equation.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    pub fn relation<E: Field>(
+    pub fn relation<F: Field + CanonicalEncoding, E: Field>(
         &self,
-        setup: &AkitaSetupDescriptor,
+        setup: &AkitaExpandedSetup<F>,
         binary: &[ResearchBinaryRelation<'_, E>],
         ordinary: &[OrdinaryNativeRootClaim<'_, E>],
         alpha: E,
