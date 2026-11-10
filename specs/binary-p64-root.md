@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Akita contributors |
 | Created | 2026-11-05 |
-| Status | approved |
+| Status | active |
 | PR | |
 | Supersedes | P128 root profile and exact-divisibility projection design in [binary-opening.md](binary-opening.md), upon implementation |
 | Superseded-by | |
@@ -79,22 +79,24 @@ It does not preserve binary-root proof or persisted-setup compatibility.
 
 - [ ] A p64/E64 word-only, prime-only and mixed opening uses the same grouped
   PCS entry points, caller transcript and grinding cursor as its successor.
-- [ ] Geometry determines K's digit depth and addresses before commitment.
+  Word-only and mixed are met (`crates/akita-pcs/tests/binary_end_to_end/p64.rs`);
+  prime-only binary groups are being removed, so this box stays open.
+- [x] Geometry determines K's digit depth and addresses before commitment.
   Admission checks `L + q B_K < p` using the full accepted digit bounds.
-- [ ] K is committed at order 5 and range-checked in Stage 1.
+- [x] K is committed at order 5 and range-checked in Stage 1.
   There are no order-six J rows, y messages or 95-bit y admission cap.
-- [ ] Order 7 draws independent E64 coefficient weights.
+- [x] Order 7 draws independent E64 coefficient weights.
   The K-digit weight is `-q * 8^j * rho_i` at its natural address.
-- [ ] Prover, verifier, reference compiler and optimized compiler agree for
+- [x] Prover, verifier, reference compiler and optimized compiler agree for
   challenges with a nonzero u coordinate.
-- [ ] Prime base coordinates use 22 digits and eight-byte canonical residues.
+- [x] Prime base coordinates use 22 digits and eight-byte canonical residues.
   Any admitted E64 prime claim accounts for both coordinate planes.
-- [ ] B/D ranks cover their actual widths under the q64 table.
+- [x] B/D ranks cover their actual widths under the q64 table.
   The outgoing witness, typed prefix and ordinary suffix are repriced.
 - [ ] The grinding plan keeps the root's column-challenge work entry and its
   `2^136` denominator. The full security ledger includes all algebraic, retry, setup and
-  binding losses.
-- [ ] The evidence script passes under `python3 -I`.
+  binding losses. The first sentence is met; the full ledger is not.
+- [x] The evidence script passes under `python3 -I`.
   Protocol mutations and malformed-input tests reject with typed errors.
 
 ### Testing Strategy
@@ -697,6 +699,31 @@ Use the complete Fiat–Shamir/grinding analysis with the new challenge order
 and query sites. Include retry, hash, binding, setup and ordinary-suffix losses.
 Do not divide interactive error by grinding work without the corresponding
 security theorem.
+
+Allocation: every root site is ground to a `2^-128` per-query rate against
+`|E| = p^2`, as the P128 root is against `|E| = P`. Each site takes the least
+`g` with `L * 2^128 <= p^2 * 2^g`. Because `p^2 < 2^128`, loss one needs one
+bit. The column-challenge entry keeps its `2^136` denominator (see below).
+The table is the level-0 plan that `binary_root_grinding_plan` returns for
+the `binary-and-prime-claims` fixture
+(`scripts/binary-full-size.sh --plan-only --field p64`):
+
+| Site | Loss L | g at 2^10 | g at 2^22 |
+| --- | ---: | ---: | ---: |
+| Fold response | 0 | 0 | 0 |
+| Column-challenge work (`2^136` denominator) | 2 at 2^10, 256 at 2^22 | 0 | 0 |
+| Fold challenge group | 0 | 0 | 0 |
+| Ring-switch alpha | 648 | 10 | 10 |
+| Tau0 point | 21 at 2^10, 25 at 2^22 | 5 | 5 |
+| Tau1 point | 1 | 1 | 1 |
+| Stage 1 round (21 at 2^10, 25 at 2^22) | 5 | 3 | 3 |
+| Stage 2 batch | 1 | 1 | 1 |
+| Stage 2 round (21 at 2^10, 25 at 2^22) | 3 | 2 | 2 |
+| Stage 3 round (19 at 2^10, 25 at 2^22) | 2 | 2 | 2 |
+
+The ordinary suffix is planned under the same order; a suffix planned under
+another order is rejected (`binary_root_grinding_plan` in
+`crates/akita-types/src/binary/grinding.rs`).
 Two independent coefficient tests on the same fixed witness would give
 `1/e^2 < 2^-255` for that step if both are authenticated.
 Batching their results back to one scalar would restore a `1/e` bottleneck.
@@ -864,24 +891,33 @@ The stages below describe future changes; this spec commit changes no Rust.
 
 ### Open questions
 
-- Which p64 catalog and successor schedules cover the intended word, prime and
-  mixed shapes? Complete proof bytes, time and memory remain unmeasured.
-- What complete security allocation will production admit? The q24, B/D,
-  suffix and setup instances need certification under that allocation.
+Closed in stage 6:
+
+- Catalog and schedules: the fixture catalogs come from
+  `crates/akita-pcs/examples/binary_full_size/` with `--field p64` and from
+  `crates/akita-pcs/tests/binary_end_to_end/p64.rs`, which open the word and
+  mixed shapes through the public grouped entry points.
+- Security allocation: every root site is ground to `2^-128` against
+  `|E| = p^2`, as for P128 (`binary_root_grinding_plan` in
+  `crates/akita-types/src/binary/grinding.rs`); see "Security accounting".
+- B and D ranks: they are separate, each the least q64 rank for its own width
+  (`BinaryFieldProfile::digit_commitment_rank` in
+  `crates/akita-params/src/binary_setup.rs`).
+- Ordinary profile: the mixed root uses `Q64Offset59`
+  (`OrdinaryNativeRootPlan::new` in `crates/akita-types/src/binary/ordinary_root.rs`).
+
+Open, shared with the P128 root and unchanged by this migration:
+
 - Which extraction argument covers the seed-plus-indexed-SHAKE column sampler?
   The indexed stage of the checkpoint argument replaces one coordinate at a
   time. It needs each indexed stream modeled as an independently programmable
   oracle with its queries counted, or a sampler whose coordinates are encoded
-  independently in the transcript. This question applies equally to the
-  current root.
-- Will B and D keep a shared rank or expose separate ranks?
-  Either choice must meet the per-role minima above.
-- Which p64 ordinary profile supplies the mixed root's compression and norm
-  contract?
+  independently in the transcript.
 - Does the generalized checkpoint comparison establish the required fixed
   witness for the extension compiler and shared setup/suffix claim?
   Validate that premise alongside negative carries, quotient mutations and
   genuine non-base challenges.
+- Certification of the q24 A instance under the production security allocation.
 
 ## References
 

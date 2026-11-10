@@ -435,6 +435,11 @@ Grinding makes each attempt cost $2^g$ hash queries on average. The plan
 chooses the least nonnegative integer $g$ with $L 2^{128} \le |E| 2^g$, which
 keeps the chance per query at most $2^{-128}$. The calculation uses integers
 and the actual prime power, including the deficit below a power of two.
+A binary root prices its sites against its field profile's challenge order:
+`|E| = P` for P128 and `|E| = p^2` for P64. Its ordinary suffix plan must use
+the same order; `binary_root_grinding_plan` in
+`crates/akita-types/src/binary/grinding.rs` rejects a suffix planned under
+another order.
 
 At a protected query with grinding target $g>0$, the prover searches for the
 least nonce below $2^{g+7}$ that passes. Each attempt absorbs the nonce value
