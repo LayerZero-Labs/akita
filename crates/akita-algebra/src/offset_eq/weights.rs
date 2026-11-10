@@ -1,6 +1,6 @@
 //! Coefficient weights for exact affine interval contractions.
-use jolt_algebra::Field;
 use akita_error::AkitaError;
+use jolt_algebra::Field;
 
 /// Coefficient algebra used by [`super::eval_affine_digit_intervals`].
 ///

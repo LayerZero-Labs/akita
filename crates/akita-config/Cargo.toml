@@ -31,9 +31,6 @@ zk = ["akita-params/zk", "akita-schedules/zk"]
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
-  "lattice",
-] }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
   "solinas",

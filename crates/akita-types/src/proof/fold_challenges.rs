@@ -38,7 +38,7 @@ impl OpeningFamily<Challenges, CoefficientPackingChallenges> {
 /// method and certified A-security route.
 ///
 /// Returns `None` when the group's operator-norm pool runs out; see
-/// [`FoldDraw::draw_fold_challenges`].
+/// [`FoldChallengeDraw::draw_fold_challenges`].
 pub fn draw_group_fold_challenges<F, E, D>(
     draw: &mut D,
     params: &akita_params::GroupOpenPhaseParams,

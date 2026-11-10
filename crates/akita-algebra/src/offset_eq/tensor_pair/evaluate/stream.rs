@@ -4,8 +4,8 @@ use super::{
     basis_eval_at_index, basis_pair_factors, charge_work, checked_axis_offset, merge_pair_states,
     unit_intervals, EqPairTensorFamily,
 };
-use jolt_algebra::Field;
 use akita_error::AkitaError;
+use jolt_algebra::Field;
 use std::collections::BTreeMap;
 
 #[allow(clippy::too_many_arguments)]

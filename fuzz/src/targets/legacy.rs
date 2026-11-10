@@ -3,9 +3,8 @@
 
 use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use jolt_algebra::{CanonicalBytes, Prime128Offset275 as F, Ring};
-use jolt_sumcheck::{
-    verify_single, SingleFormat, SingleInstance, SumcheckSite, VerifierRoundContext,
+use akita_sumcheck::{
+    verify_sumcheck_rounds, SumcheckRole, SumcheckShape, SumcheckVerifierChannel,
 };
 use akita_transcript::{
     ext_challenge, new_prover_channel, new_verifier_channel, public_bytes, ProtocolSiteId,
@@ -36,30 +35,30 @@ pub fn transcript_labels(data: &[u8]) {
 }
 
 struct FuzzVerifierChannel<'proof> {
-    state: VerifierTranscript<'proof, Blake2b512>,
+    state: VerifierChannel<'proof>,
     challenges: usize,
 }
 
-impl<'proof> VerifierRoundContext<F> for FuzzVerifierChannel<'proof> {
-    type Channel = VerifierTranscript<'proof, Blake2b512>;
-    type Error = AkitaError;
-
-    fn channel_mut(&mut self) -> &mut VerifierTranscript<'proof, Blake2b512> {
+impl<'proof> SumcheckVerifierChannel<'proof, F> for FuzzVerifierChannel<'proof> {
+    fn state_mut(&mut self) -> &mut VerifierChannel<'proof> {
         &mut self.state
     }
 
-    fn site(&self, site: SumcheckSite) -> Option<SiteId> {
-        let mut bytes = [0u8; 32];
-        bytes[..4].copy_from_slice(&site.round.to_le_bytes());
-        bytes[4..8].copy_from_slice(&(site.role as u32).to_le_bytes());
-        Some(SiteId(bytes))
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+        ProtocolSiteId {
+            family: SITE_FAMILY_SUMCHECK,
+            invocation,
+            round,
+            detail: role as u32,
+            ..ProtocolSiteId::default()
+        }
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<F, AkitaError> {
         let site = self.sumcheck_site(invocation, round, SumcheckRole::Challenge);
         let challenge = ext_challenge::<F, _>(&mut self.state, site)?;
         self.challenges += 1;
-        Ok(self.state.challenge())
+        Ok(challenge)
     }
 }
 
@@ -74,17 +73,11 @@ pub fn sumcheck_rounds(data: &[u8]) {
     };
     let state = new_verifier_channel(b"fuzz/sumcheck-rounds", data);
     let mut channel = FuzzVerifierChannel {
-        state: VerifierTranscript::new(&PROTOCOL, b"fixture", data),
+        state,
         challenges: 0,
     };
-    let instance = SingleInstance {
-        input_claim: F::from_u64(u64::from(*claim)),
-        rounds: num_rounds,
-        degree: degree_bound,
-        format: SingleFormat::Compressed,
-        invocation: 0,
-    };
-    let result = verify_single::<F, F, AkitaError, _>(&instance, &mut channel);
+    let result =
+        verify_sumcheck_rounds::<F, F, _>(&mut channel, 0, F::from_u64(u64::from(*claim)), shape);
     assert!(channel.challenges <= num_rounds);
     let round_bytes = degree_bound * F::NUM_BYTES;
     let complete_input_rounds = if round_bytes == 0 {
@@ -100,6 +93,9 @@ pub fn sumcheck_rounds(data: &[u8]) {
         assert_eq!(replay.challenges.len(), num_rounds);
         assert_eq!(channel.challenges, num_rounds);
         let expected_bytes = num_rounds * round_bytes;
-        assert_eq!(channel.state.finish().is_ok(), data.len() == expected_bytes);
+        assert_eq!(
+            channel.state.check_eof().is_ok(),
+            data.len() == expected_bytes
+        );
     }
 }

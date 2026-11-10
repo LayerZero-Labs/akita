@@ -16,6 +16,7 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
   "https://github.com/a16z/jolt",
+  "https://github.com/a16z/arkworks-algebra",
   "https://github.com/arkworks-rs/algebra",
   "https://github.com/arkworks-rs/spongefish",
 ]

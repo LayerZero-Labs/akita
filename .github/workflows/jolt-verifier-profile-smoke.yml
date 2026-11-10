@@ -93,8 +93,24 @@ jobs:
       - name: Read the pinned Jolt revision
         id: jolt
         run: |
-          rev=$(grep -m1 -o 'git+https://github.com/a16z/jolt?rev=[0-9a-f]*' Cargo.lock | sed 's/.*rev=//')
-          test -n "$rev"
+          # Install the exact SDK commit resolved in the lockfile, including
+          # when a preview branch is selected in the manifests.
+          rev=$(python3 - <<'PYTHON'
+          import re
+          import tomllib
+          from pathlib import Path
+
+          sources = {
+              package["source"]
+              for package in tomllib.loads(Path("Cargo.lock").read_text())["package"]
+              if package.get("source", "").startswith("git+https://github.com/a16z/jolt?")
+          }
+          revisions = {source.rsplit("#", 1)[-1] for source in sources}
+          if len(revisions) != 1 or not re.fullmatch(r"[0-9a-f]{40}", next(iter(revisions))):
+              raise SystemExit("expected one resolved Jolt commit in Cargo.lock")
+          print(next(iter(revisions)))
+          PYTHON
+          )
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
       # The guest links ZeroOS, whose std build needs its musl toolchain.
       - name: Cache ZeroOS musl toolchain

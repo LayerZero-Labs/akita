@@ -22,15 +22,7 @@ use akita_transcript::{
 };
 use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{
-    prove_single, verify_single, ProveRounds, ProverRoundContext, SingleFormat, SingleInstance,
-    SumcheckError, SumcheckSite, VerifierRoundContext,
-};
-use jolt_transcript::{
-    Blake2b512, Channel, ProtocolId, ProverTranscript, SiteId, VerifierTranscript,
-};
-
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("akita-fuzz/sumcheck");
+use std::marker::PhantomData;
 
 pub fn run(data: &[u8]) {
     let mut reader = Reader::new(data);
@@ -41,16 +33,19 @@ pub fn run(data: &[u8]) {
     }
 }
 
-fn site(site: SumcheckSite) -> SiteId {
-    let mut bytes = [0u8; 32];
-    bytes[..4].copy_from_slice(&site.invocation.to_le_bytes());
-    bytes[4..8].copy_from_slice(&site.round.to_le_bytes());
-    bytes[8..12].copy_from_slice(&(site.role as u32).to_le_bytes());
-    SiteId(bytes)
+fn site(invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+    ProtocolSiteId {
+        family: SITE_FAMILY_SUMCHECK,
+        invocation,
+        round,
+        detail: role as u32,
+        ..ProtocolSiteId::default()
+    }
 }
 
-struct ProverContext {
-    state: ProverTranscript<Blake2b512>,
+struct ProverChannel<F, E> {
+    state: ProverState,
+    _marker: PhantomData<(F, E)>,
 }
 
 impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> SumcheckProverChannel<E>
@@ -60,8 +55,8 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> SumcheckProv
         &mut self.state
     }
 
-    fn site(&self, sumcheck_site: SumcheckSite) -> Option<SiteId> {
-        Some(site(sumcheck_site))
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+        site(invocation, round, role)
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
@@ -73,8 +68,9 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> SumcheckProv
     }
 }
 
-struct VerifierContext<'proof> {
-    state: VerifierTranscript<'proof, Blake2b512>,
+struct VerifierChannel<'proof, F, E> {
+    state: VerifierState<'proof>,
+    _marker: PhantomData<(F, E)>,
 }
 
 impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>
@@ -84,8 +80,8 @@ impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>
         &mut self.state
     }
 
-    fn site(&self, sumcheck_site: SumcheckSite) -> Option<SiteId> {
-        Some(site(sumcheck_site))
+    fn sumcheck_site(&self, invocation: u32, round: u32, role: SumcheckRole) -> ProtocolSiteId {
+        site(invocation, round, role)
     }
 
     fn round_challenge(&mut self, invocation: u32, round: u32) -> Result<E, AkitaError> {
@@ -101,6 +97,7 @@ impl<'proof, F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>
 struct ProductInstance<E> {
     tables: Vec<Vec<E>>,
     rounds: usize,
+    claim: E,
 }
 
 fn multiply<E: Field>(lhs: &[E], rhs: &[E]) -> Vec<E> {
@@ -113,33 +110,20 @@ fn multiply<E: Field>(lhs: &[E], rhs: &[E]) -> Vec<E> {
     out
 }
 
-impl<E: Field> ProductInstance<E> {
-    fn bind(&mut self, r: E) {
-        for table in &mut self.tables {
-            let half = table.len() / 2;
-            for index in 0..half {
-                let low = table[2 * index];
-                table[index] = low + r * (table[2 * index + 1] - low);
-            }
-            table.truncate(half);
-        }
-    }
-}
-
-impl<E: Field> ProveRounds<E> for ProductInstance<E> {
+impl<E: Field> SumcheckInstanceProver<E> for ProductInstance<E> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
 
-    fn prove_round(
-        &mut self,
-        bind: Option<E>,
-        _round: usize,
-        _previous_claim: E,
-    ) -> Result<UnivariatePoly<E>, SumcheckError<E>> {
-        if let Some(r) = bind {
-            self.bind(r);
-        }
+    fn degree_bound(&self) -> usize {
+        self.tables.len()
+    }
+
+    fn input_claim(&self) -> E {
+        self.claim
+    }
+
+    fn compute_round_univariate(&mut self, _round: usize, _claim: E) -> UnivariatePoly<E> {
         let half = self.tables[0].len() / 2;
         let mut sum = vec![E::zero(); self.tables.len() + 1];
         for pair in 0..half {
@@ -152,13 +136,25 @@ impl<E: Field> ProveRounds<E> for ProductInstance<E> {
                 *acc += coefficient;
             }
         }
-        Ok(UnivariatePoly::new(sum))
+        UnivariatePoly::new(sum)
     }
 
-    fn finish_rounds(&mut self, bind: E) -> Result<(), SumcheckError<E>> {
-        self.bind(bind);
-        Ok(())
+    fn ingest_challenge(&mut self, _round: usize, r: E) {
+        for table in &mut self.tables {
+            let half = table.len() / 2;
+            for index in 0..half {
+                let low = table[2 * index];
+                table[index] = low + r * (table[2 * index + 1] - low);
+            }
+            table.truncate(half);
+        }
     }
+}
+
+struct ProductVerifier<E> {
+    tables: Vec<Vec<E>>,
+    rounds: usize,
+    claim: E,
 }
 
 fn evaluate<E: Field>(table: &[E], point: &[E]) -> E {
@@ -222,40 +218,39 @@ fn case<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec>(reader: &
             .iter()
             .fold(E::one(), |product, table| product * table[index])
     });
-    let instance = |claim: E| SingleInstance {
-        input_claim: claim,
-        rounds,
-        degree,
-        format: SingleFormat::Compressed,
-        invocation,
-    };
+    let shape = SumcheckShape::new(rounds, degree).expect("valid shape");
 
-    let mut member = ProductInstance {
+    let mut instance = ProductInstance {
         tables: tables.clone(),
         rounds,
+        claim,
     };
     let mut prover = ProverChannel::<F, E> {
         state: new_prover_channel(&session),
         _marker: PhantomData,
     };
-    let reduction =
-        prove_single::<F, E, SumcheckError<E>, _>(&mut member, &instance(claim), &mut prover)
-            .expect("honest sumcheck must prove");
-    let challenges = reduction.challenges;
+    let (challenges, final_claim) = prove_sumcheck::<F, E, _, _>(
+        &mut InfallibleSumcheck(&mut instance),
+        &mut prover,
+        shape,
+        invocation,
+    )
+    .expect("honest sumcheck must prove");
     assert_eq!(challenges.len(), rounds, "one challenge per round");
     let expected_final = tables
         .iter()
         .fold(E::one(), |acc, table| acc * evaluate(table, &challenges));
     assert_eq!(
-        reduction.output_claim, expected_final,
+        final_claim, expected_final,
         "prover final claim equals the product at the challenge point"
     );
-    let proof = prover.state.finish();
+    let proof = prover.state.narg_string().to_vec();
 
-    // `Err(())` is any rejection: transcript, replay, EOF, or the oracle.
-    let verify = |proof: &[u8], claim: E| -> Result<Vec<E>, ()> {
-        let mut channel = VerifierContext {
-            state: VerifierTranscript::new(&PROTOCOL, &session, proof),
+    let verify = |proof: &[u8], claim: E| -> Result<Vec<E>, AkitaError> {
+        let verifier = ProductVerifier {
+            tables: tables.clone(),
+            rounds,
+            claim,
         };
         let mut channel = VerifierChannel::<F, E> {
             state: new_verifier_channel(&session, proof),

@@ -1,7 +1,7 @@
 use super::{DenseLeftTensorView, ResidualTerms};
 use crate::offset_eq::OffsetEqWindow;
-use jolt_algebra::Field;
 use akita_error::AkitaError;
+use jolt_algebra::Field;
 
 /// Reorder the residual-by-coordinate sum into runs within one low table.
 /// The high factor and residual coefficient are constant within each run.

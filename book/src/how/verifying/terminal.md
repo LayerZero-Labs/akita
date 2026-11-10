@@ -350,7 +350,7 @@ $c_{m-1}^{-1}$ to the existing NTT product $A\cdot z$.
 In the code, `terminal_sent_blocks` in
 `crates/akita-params/src/layout/tail_segments.rs` sets the layout,
 `crates/akita-verifier/src/terminal/direct.rs` recovers the block, and
-`crates/akita-algebra/src/ring/cyclotomic/inverse.rs` inverts the challenge.
+Jolt's `jolt-algebra` module `ring::cyclotomic::inverse` inverts the challenge.
 
 ## No-panic boundary and code map
 

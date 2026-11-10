@@ -22,13 +22,15 @@
 
 use crate::input::Reader;
 use crate::stats;
-use akita_types::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw};
+use akita_error::AkitaError;
+use akita_transcript::{bind_instance, new_prover_channel};
+use akita_types::{
+    FoldChallengeDraw, FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw,
+};
 use jolt_crypto::challenge::{
     selective_l2_challenge_config, selective_l2_operator_norm_rejection, SparseChallenge,
     SparseChallengeConfig, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
-use akita_error::AkitaError;
-use akita_transcript::{bind_instance, new_prover_channel};
 
 /// Draws on the live prover channel and records each message length.
 struct RecordingDraw<'a> {

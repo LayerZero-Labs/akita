@@ -110,7 +110,6 @@ graph TD
   Sumcheck --> JoltSumcheck
   JoltSumcheck --> Transcript
   Error --> JoltSumcheck
-  Types --> JoltSumcheck
   Verifier --> JoltSumcheck
   Prover --> JoltSumcheck
   Params --> Error
@@ -138,7 +137,6 @@ graph TD
   Schedules --> Params
   Config --> Params
   Config --> Error
-  Config --> Crypto
   Config --> Field
   Config --> Transcript
   Config --> Types

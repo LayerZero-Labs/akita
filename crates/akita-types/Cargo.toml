@@ -23,7 +23,6 @@ jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branc
 ] }
 jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
 jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "transcript-blake2b",
 ] }

@@ -1,8 +1,8 @@
 //! Bounded weighted recurrence grouping and singleton fallback.
 
 use super::{charge_work, eval_multi_axis_families, EqPairTensorFamily, EqPairTensorWeights};
-use jolt_algebra::Field;
 use akita_error::AkitaError;
+use jolt_algebra::Field;
 use std::collections::{btree_map::Entry, BTreeMap};
 
 pub(super) type RecurrenceBatches<'a, F> =

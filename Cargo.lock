@@ -49,9 +49,6 @@ dependencies = [
  "jolt-crypto",
  "keccak 0.1.6",
  "num-bigint 0.5.1",
- "postcard",
- "serde",
- "serde_json",
  "shake",
  "smallvec",
 ]
@@ -67,7 +64,6 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-algebra",
- "jolt-crypto",
  "serde_json",
 ]
 
@@ -91,8 +87,6 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
- "jolt-sumcheck",
- "jolt-transcript",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rayon",
@@ -391,7 +385,6 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
- "jolt-sumcheck",
  "jolt-transcript",
  "jolt-zk",
  "rand 0.8.8",

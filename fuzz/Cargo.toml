@@ -36,10 +36,6 @@ akita-algebra = { path = "../crates/akita-algebra" }
 jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "lattice",
 ] }
-jolt-sumcheck = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
-  "transcript-blake2b",
-] }
 akita-config = { path = "../crates/akita-config", default-features = false, features = [
   "transcript-keccak",
 ] }

@@ -10,7 +10,6 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-serde = { version = "1", features = ["derive"] }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
   "solinas",
@@ -25,8 +24,6 @@ jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch
 ] }
 
 [dev-dependencies]
-postcard = { version = "1.1", default-features = false, features = ["alloc"] }
-serde_json = "1"
 criterion = "0.8"
 shake = "0.1.0"
 [features]

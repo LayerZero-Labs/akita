@@ -1,7 +1,7 @@
 //! Exact unit-stride intervals via shared binary-addition contractions.
 use super::{basis_bit_factor, basis_pair_factors, charge_work, checked_axis_offset, EqPairSeed};
-use jolt_algebra::Field;
 use akita_error::AkitaError;
+use jolt_algebra::Field;
 use std::collections::BTreeMap;
 
 fn high_eval<F: Field, const MONOMIAL: bool>(

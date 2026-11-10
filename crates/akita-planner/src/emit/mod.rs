@@ -156,7 +156,7 @@ pub struct EmitSpec {
     pub output_path: PathBuf,
     pub ring_challenge_config: fn(usize) -> Result<FoldChallengeDistribution, AkitaError>,
     /// Which rows the family admits; a zero-knowledge family plans every row
-    /// with [`crate::find_zk_schedule`].
+    /// with `find_zk_schedule` (requires the `zk` feature).
     pub admission: ScheduleAdmission,
 }
 

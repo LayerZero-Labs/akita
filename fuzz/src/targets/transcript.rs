@@ -21,17 +21,15 @@ type F = akita_config::proof_optimized::fp128::Field;
 type Ext4 = fp32::ExtensionField;
 type Ext2 = fp64::ExtensionField;
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("akita-fuzz/transcript");
-
 #[derive(Clone, Debug, PartialEq)]
 enum Op {
-    PublicBytes(Vec<u8>),
-    PublicFields(Vec<F>),
+    PublicBytes(ProtocolSiteId, Vec<u8>),
+    PublicFields(ProtocolSiteId, Vec<F>),
     SendField(F),
     SendExt4(Ext4),
     SendBytes(Vec<u8>),
-    ChallengeField,
-    ChallengeExt2,
+    ChallengeField(ProtocolSiteId),
+    ChallengeExt2(ProtocolSiteId),
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,17 +40,29 @@ enum Seen {
     Bytes(Vec<u8>),
 }
 
+fn site(reader: &mut Reader<'_>) -> ProtocolSiteId {
+    ProtocolSiteId {
+        family: u32::from(reader.u8()),
+        invocation: u32::from(reader.u8()),
+        round: u32::from(reader.u8()),
+        ..ProtocolSiteId::default()
+    }
+}
+
 fn ops(reader: &mut Reader<'_>) -> Vec<Op> {
     let count = 1 + usize::from(reader.u8() % 24);
     (0..count)
         .map(|_| match reader.u8() % 7 {
             0 => {
+                let site = site(reader);
                 let len = usize::from(reader.u8() % 80);
-                Op::PublicBytes(reader.take(len).to_vec())
+                Op::PublicBytes(site, reader.take(len).to_vec())
             }
             1 => {
+                let site = site(reader);
                 let len = usize::from(reader.u8() % 6);
                 Op::PublicFields(
+                    site,
                     (0..len)
                         .map(|_| gen::scalar(reader, gen::Domain::Full))
                         .collect(),
@@ -64,8 +74,8 @@ fn ops(reader: &mut Reader<'_>) -> Vec<Op> {
                 let len = usize::from(reader.u8() % 80);
                 Op::SendBytes(reader.take(len).to_vec())
             }
-            5 => Op::ChallengeField,
-            _ => Op::ChallengeExt2,
+            5 => Op::ChallengeField(site(reader)),
+            _ => Op::ChallengeExt2(site(reader)),
         })
         .collect()
 }
@@ -104,10 +114,7 @@ fn prove(state: &mut ProverChannel, ops: &[Op]) -> Vec<Seen> {
 }
 
 /// Replay; `None` means the verifier rejected somewhere.
-fn replay(
-    mut state: VerifierTranscript<'_, Blake2b512>,
-    ops: &[Op],
-) -> Option<(Vec<Seen>, Vec<Seen>)> {
+fn replay(mut state: VerifierChannel<'_>, ops: &[Op]) -> Option<(Vec<Seen>, Vec<Seen>)> {
     let mut received = Vec::new();
     let mut challenges = Vec::new();
     for op in ops {
@@ -140,7 +147,7 @@ fn replay(
             )),
         }
     }
-    state.finish().ok()?;
+    state.check_eof().ok()?;
     Some((received, challenges))
 }
 
@@ -186,7 +193,7 @@ pub fn run(data: &[u8]) {
 
     let first_challenge = ops
         .iter()
-        .position(|op| matches!(op, Op::ChallengeField | Op::ChallengeExt2));
+        .position(|op| matches!(op, Op::ChallengeField(_) | Op::ChallengeExt2(_)));
     if first_challenge.is_some() && !challenges.is_empty() {
         let mut other_session = session.clone();
         other_session.push(reader.u8());

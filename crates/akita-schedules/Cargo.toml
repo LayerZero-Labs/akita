@@ -12,12 +12,8 @@ readme = "../../README.md"
 default = ["transcript-keccak"]
 # Extension seam: explicitly selected native roots; https://github.com/LayerZero-Labs/akita/issues/285.
 labinius-trinomial = ["dep:jolt-algebra"]
-transcript-blake2b = [
-  "akita-params/transcript-blake2b",
-]
-transcript-keccak = [
-  "akita-params/transcript-keccak",
-]
+transcript-blake2b = ["akita-params/transcript-blake2b"]
+transcript-keccak = ["akita-params/transcript-keccak"]
 # Zero-knowledge catalogs (`ScheduleAdmission::ZeroKnowledge`).
 zk = ["akita-params/zk"]
 # Used only through `#[serde(with = "serde_bytes")]`, which machete cannot see.
