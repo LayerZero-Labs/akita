@@ -78,10 +78,10 @@ It does not preserve binary-root proof or persisted-setup compatibility.
 
 ### Acceptance Criteria
 
-- [ ] A p64/E64 word-only, word-plus-prime and mixed opening uses the same grouped
+- [x] A p64/E64 word-only, word-plus-prime and mixed opening uses the same grouped
   PCS entry points, caller transcript and grinding cursor as its successor.
-  Word-only and mixed are met (`crates/akita-pcs/tests/binary_end_to_end/p64.rs`);
-  prime-only binary groups are being removed, so this box stays open.
+  Word-only and mixed run in `crates/akita-pcs/tests/binary_end_to_end/p64.rs`;
+  all three run in `scripts/binary-full-size.sh --field p64`.
 - [x] Geometry determines K's digit depth and addresses before commitment.
   Admission checks `L + q B_K < p` using the full accepted digit bounds.
 - [x] K is committed at order 5 and range-checked in Stage 1.
