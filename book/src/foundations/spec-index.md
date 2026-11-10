@@ -39,6 +39,11 @@ policy and the checker use the same live set in
 | [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains current inline-LEB128 nonces and compares them with the historical packed representation. |
 | [`jolt-transcript-adoption`](../../../specs/jolt-transcript-adoption.md) | active | Akita's adoption of `jolt-transcript`: the session, codec, poisoning and proof-of-work check of protocol v8. |
 | [`akita-embedded-transcript`](../../../specs/akita-embedded-transcript.md) | implemented | Running Akita inside a caller's transcript: the protocol tag, the embedded entries, and the caller contract. |
+| [`dynamic-backend-bridges`](../../../specs/dynamic-backend-bridges.md) | implemented | Assigns each fold level to a registered prover backend and carries the private continuation between backends through typed bridges. |
+| [`external-setup-accumulation`](../../../specs/external-setup-accumulation.md) | implemented | Lets a recursive application defer direct setup evaluations and close them in an outer proof; Stage 3 is checked in both modes. |
+| [`recompute-last-terminal-block`](../../../specs/recompute-last-terminal-block.md) | active | Omits the last live block of the terminal `e` and `t` segments and binds each by a 32-byte digest. |
+| [`opaque-chunk-aware-fold-response`](../../../specs/opaque-chunk-aware-fold-response.md) | proposed | Proposal, not current behavior: keep every folded response behind the opening-compute boundary as an opaque handle. |
+| [`opaque-prover-consumer`](../../../specs/opaque-prover-consumer.md) | proposed | Proposal, not current behavior: make protocol orchestration independent of CPU witness representations. |
 
 ## Archived records
 

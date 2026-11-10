@@ -86,6 +86,17 @@ success it returns a `PendingEof`. Acceptance requires
 its own last message. See
 [Running inside a caller's transcript](./transcript.md#running-inside-a-callers-transcript).
 
+The last argument of both entries is a `SetupPolicy`. It says what the
+verifier does with the setup evaluations of direct folds, which are the folds
+whose setup contribution the verifier computes by a scan of the public setup.
+`SetupPolicy::Check(None)` is ordinary verification: the verifier computes
+every one of them. `SetupPolicy::Defer` records each one in an accumulator
+for an outer proof to close, and `SetupPolicy::Check(Some(..))` checks a
+batch that an inner verification left. Every policy checks each Stage 3
+reduction in full.
+[External setup accumulation](./recursion.md#external-setup-accumulation)
+gives the equations and the calling pattern.
+
 At a high level:
 
 1. **Resolve the exact trusted row** named by
@@ -121,7 +132,27 @@ nonterminal fold as a sequence of stage calls in transcript order:
 
 Each stage returns a typed replay output that the next call consumes. The
 Stage 2 round replay and output check are separate calls because Stage 3 sits
-between them in the transcript. `relation/` holds the prepared relation
+between them in the transcript.
+
+Between the Stage 2 rounds and Stage 3, `verify_fold` selects the fold's
+setup behavior once. The internal `FoldSetup` enum in `fold/mod.rs` records
+the choice. It depends on three facts: whether the successor consumes this
+fold's setup prefix, whether an inherited setup batch targets this fold, and
+the `SetupPolicy`.
+
+| Successor consumes the setup prefix | Inherited batch targets this fold | Policy | `FoldSetup` |
+| --- | --- | --- | --- |
+| yes | yes | either | `Offloaded`: Stage 3 proves the fold's claim and the inherited claims together |
+| yes | no | either | `Ordinary`: Stage 3 proves the fold's claim alone |
+| no | either | `Defer` | `Deferred`: the Stage 2 check takes the setup value from the accumulator's advice and records the claim |
+| no | either | `Check` | `Ordinary`: the Stage 2 check computes the setup value by a scan |
+
+In the last two rows the fold has no Stage 3. If an inherited batch targets
+such a fold, the verifier draws the batching coefficients at this point.
+`Check` then checks the batch against the setup, and `Defer` adds its claims
+to the pending list. When verification returns, the policy is settled:
+acceptance consumes the inherited batch, and rejection drops the claims
+collected by this call and keeps the inherited batch. `relation/` holds the prepared relation
 evaluator, the relation point, and the evaluation trace. `terminal/` holds the
 direct terminal checks and the exact A-product evaluation.
 
@@ -291,6 +322,37 @@ commitment, direct witness, or transcript input must be rejected with
 `AkitaError` or `SerializationError`, never by panicking.
 `AkitaError` has one canonical definition in `akita-error`.
 
+### Which error means what
+
+The variant tells the caller where the fault lies.
+
+| Variant | Meaning |
+| --- | --- |
+| `InvalidProof` | Proof bytes failed a protocol check |
+| `InvalidInput`, `InvalidSize`, `InvalidPointDimension` | The statement or another argument is malformed |
+| `InvalidSetup` | Setup data, the schedule catalog, or a cache is missing or invalid |
+| `UnsupportedSchedule` | The requested polynomial layout has no supported schedule |
+| `Internal` | An invariant that Akita maintains itself failed; this reports a bug in Akita or in a custom backend |
+
+A check on a proof, a commitment, or any other untrusted value returns
+`InvalidProof`, even when only a bug in an honest prover could make it fail.
+`Internal` never stands in for a rejection.
+
+### The proof has no shape header
+
+The accepted proof topology is fixed: one root fold, zero or more recursive
+folds, and one terminal response sent in the clear. The proof carries no
+header that describes this shape. The verifier derives every message count
+and length from the validated schedule and opening layout before it decodes
+the proof. A proof with another topology fails a message read during replay,
+or it reaches the end with the grinding plan unfinished or with bytes unread.
+The end-of-proof check rejects those last two cases. There is no fallback
+proof form.
+
+The same bound covers transcript replay. The nonce encoding and the rule of
+one squeezed challenge message per fold group are specified in
+[Transcript and instance binding](./transcript.md).
+
 ### Checked challenge advice
 
 Recursive verification can use untrusted advice for sparse challenge decoding.
@@ -331,7 +393,8 @@ defines the binary layout and consumption order.
 2. Use `akita_error::checked` for reusable exact `usize` formulas. The functions return `Option`, so the caller maps failure to the `AkitaError` variant that matches the protocol boundary. A direct standard library `checked_*` call remains appropriate for one local operation.
 3. Do not use wrapping or saturating arithmetic for exact sizes and indices. Reject arithmetic that cannot represent the required geometry.
 4. Strengthen validation at deserialization, setup construction, schedule selection, `CommittedGroupParams` construction, and verifier API entry points rather than sprinkling checks through hot loops.
-5. Prover-only panics are acceptable when not reachable from verifier paths.
+5. Keep hot verifier arithmetic paths fast. Do not add slow fallback evaluators, compatibility shims, or repeated defensive checks inside tight loops when one check at the boundary can enforce the invariant.
+6. Prover-only panics are acceptable when not reachable from verifier paths.
 
 Maintainer mirror: [`docs/verifier-contract.md`](../../../docs/verifier-contract.md).
 Historical audit evidence: [`docs/verifier-panic-audit.md`](../../../docs/verifier-panic-audit.md).

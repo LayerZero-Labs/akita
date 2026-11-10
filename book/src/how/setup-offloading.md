@@ -51,6 +51,24 @@ Artifact admission, serialized slot registries, and prover setup all
 reject a prefix profile that covers only the natural support or leaves a
 partial final block.
 
+The same check fixes the inner digit count of the prefix commitment. A
+commitment first splits each coefficient into `num_digits` digits of
+`log_basis` bits. A recursive witness holds small values, so its schedule can
+use few digits. Setup coefficients are different: they are uniform field
+elements and use every bit of the field. A prefix profile must therefore use
+
+```text
+num_digits = ceil(field_bits / log_basis)
+```
+
+inner digits. For a 128-bit field and `log_basis = 8`, that is 16 digits. A
+smaller count would drop the high bits, and the commitment would bind a
+truncated value in place of the setup coefficient. A profile with any other
+count is rejected with `InvalidSetup`. The check is
+`GroupCommitPhaseParams::validate_setup_prefix_geometry` in
+`crates/akita-params/src/schedule/profiles.rs`, and the test
+`setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer` covers it.
+
 A `SetupPrefixSlotId` binds the active length and the commitment profile. That
 profile fixes the commitment domain, inner and outer matrices, ring dimensions,
 and decomposition parameters. The scheduled incoming prefix also fixes how its
@@ -119,6 +137,11 @@ detailed polynomial identity is in [Sumcheck stages](./proving/sumcheck-stages.m
 The exact mixed dimension evaluation rules are in
 [Setup contribution and Stage 3](./verifying/setup_contribution.md).
 
+A recursive application can attach setup claims from inner proofs to one
+offloaded fold. Stage 3 then proves those claims together with the fold's own
+claim. See
+[Stage 3 with an inherited batch](./verifying/setup_contribution.md#stage-3-with-an-inherited-batch).
+
 ## How the planner chooses offloading
 
 The ordinary configuration catalogs use direct setup evaluation. A supported
@@ -148,6 +171,62 @@ first setup capacity that the verifier still scans directly. Within those
 capacity buckets, it compares the exact proof-and-work score, then estimated
 proof bytes, including every Stage 3 proof, and the first direct output-witness
 length. The canonical descriptor breaks remaining ties.
+
+This order has a name, and so does the order that direct catalogs use. Both
+are variants of `SelectionPolicyId` in `crates/akita-schedules/src/runtime.rs`.
+The planner compares candidates field by field, and a later field matters only
+when all earlier fields are equal.
+
+| Policy | Used by | Compared in order |
+| --- | --- | --- |
+| `MinFirstDirectSetupThenExactProofAndWorkV5` | Direct catalogs | First direct setup capacity, exact proof-and-work score, proof bytes, total setup size, root output witness length, descriptor |
+| `MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6` | Recursive setup catalogs | Power-of-two setup envelope, first direct setup capacity, exact proof-and-work score, proof bytes, first direct output witness length, descriptor |
+
+The setup envelope is the total setup size rounded up to a power of two. The
+policy identity is bound into the catalog artifact, so a catalog generated
+under one policy is not admitted as a catalog of the other.
+
+Two rows of `artifacts/schedule-catalog.tsv` for one dense polynomial with 24
+variables show the effect:
+
+| Family | Setup field elements | First direct setup capacity | Proof bytes | Fold levels |
+| --- | --- | --- | --- | --- |
+| `fp128_dense` | 1,048,576 | 1,048,576 | 76,204 | 7 |
+| `fp128_dense_recursive` | 1,048,576 | 524,288 | 80,986 | 8 |
+
+Both rows fit the same $2^{20}$ envelope. The recursive row halves the setup
+that the verifier scans directly. It pays 4,782 more proof bytes and one more
+fold.
+
+### Searching under a widening setup budget
+
+A search under the V6 policy without a limit examines many candidates whose
+setup is far larger than the winner's. The planner avoids most of that work
+with a setup budget, which is an upper bound on a schedule's total setup
+field elements for one search pass.
+
+1. The first pass uses a budget of one field element.
+2. Each pass starts from an empty memo table and rejects every candidate
+   whose setup exceeds the budget. It records the smallest setup size that it
+   rejected.
+3. If the pass selects a schedule, the search stops and returns it.
+4. If the pass selects nothing, the next budget is the smallest rejected
+   size rounded up to a power of two.
+5. If the pass selects nothing and rejected nothing, no schedule exists.
+6. If the rounding overflows, a last pass runs without a budget.
+
+The result equals the result of one pass without a budget. The V6 policy
+compares the power-of-two setup envelope first, so a candidate over the
+budget can only displace candidates that are also over the budget. The
+winner of the first pass that finds any schedule is therefore the overall
+winner. The starting budget changes only the number of passes.
+
+This search is an implementation choice of the planner and affects only its
+running time. It runs only under the V6 policy and only when the caller gave
+no explicit setup budget; an explicit budget gets a single pass. The verifier
+never runs it. The loop is in `crates/akita-planner/src/planner.rs`, and the
+test `padded_setup_budget_passes_match_one_unbounded_pass` checks that the
+passes select the same schedule as one unbounded pass.
 
 The shipped recursive catalogs consider offloaded edges produced by the root
 and its direct child. This `RootAndFirstChildV1` domain is part of the catalog
@@ -235,6 +314,7 @@ rejects the proof when any of the following occurs:
 - the proof contains Stage 3 data for a direct edge;
 - an offloaded edge omits its Stage 3 proof;
 - the committed prefix is shorter than the active setup support;
+- the prefix profile's inner digit count does not cover the full field width;
 - the successor has the wrong group order or opening point;
 - the setup contribution plan does not match the scheduled A, B, and D
   geometry; or
