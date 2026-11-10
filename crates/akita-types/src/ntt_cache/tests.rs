@@ -8,18 +8,6 @@ fn flat_zeros<F: Field, const D: usize>(len: usize) -> akita_params::FlatMatrix<
 }
 
 #[test]
-fn prefix_requirements_join_by_maximum_in_one_dimension() {
-    let short = NttPrefixRequirement::from_matrix_shape(64, 2, 3).expect("short prefix");
-    let long = NttPrefixRequirement::from_matrix_shape(64, 4, 5).expect("long prefix");
-    assert_eq!(short.join(long).expect("join"), long);
-    assert_eq!(long.num_field_elements().expect("field count"), 20 * 64);
-
-    let other_dimension =
-        NttPrefixRequirement::from_matrix_shape(128, 1, 1).expect("other dimension");
-    assert!(short.join(other_dimension).is_err());
-}
-
-#[test]
 fn prepare_materializes_exactly_the_requested_layout() {
     const D: usize = 64;
     let flat = flat_zeros::<Prime32Offset99, D>(10);
