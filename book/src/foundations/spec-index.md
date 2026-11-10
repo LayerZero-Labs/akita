@@ -33,7 +33,7 @@ policy and the checker use the same live set in
 | [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | SIS estimator, certificate, and table design; its 128-bit target is superseded. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
 | [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Defines packing relations, fold challenges, and planner contracts. Its review record reports all three blockers repaired. |
-| [`transcript-grinding`](../../../specs/transcript-grinding.md) | implemented | Defines the current proof-of-work and fold-response grinding policy. |
+| [`transcript-grinding`](../../../specs/transcript-grinding.md) | active | Defines the current proof-of-work and fold-response grinding policy. |
 | [`sparse-challenge-stream`](../../../specs/sparse-challenge-stream.md) | implemented | One challenge message per sparse fold group, its decoder, and the fold proof of work. |
 | [`positional-word-aligned-transcript`](../../../specs/positional-word-aligned-transcript.md) | active | Positional, word-aligned absorbs and squeezes; the version-6 descriptor; fold draws that absorb nothing. |
 | [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains current inline-LEB128 nonces and compares them with the historical packed representation. |
@@ -42,6 +42,8 @@ policy and the checker use the same live set in
 | [`dynamic-backend-bridges`](../../../specs/dynamic-backend-bridges.md) | implemented | Assigns each fold level to a registered prover backend and carries the private continuation between backends through typed bridges. |
 | [`external-setup-accumulation`](../../../specs/external-setup-accumulation.md) | implemented | Lets a recursive application defer direct setup evaluations and close them in an outer proof; Stage 3 is checked in both modes. |
 | [`recompute-last-terminal-block`](../../../specs/recompute-last-terminal-block.md) | active | Omits the last live block of the terminal `e` and `t` segments and binds each by a 32-byte digest. |
+| [`opaque-chunk-aware-fold-response`](../../../specs/opaque-chunk-aware-fold-response.md) | proposed | Proposal, not current behavior: keep every folded response behind the opening-compute boundary as an opaque handle. |
+| [`opaque-prover-consumer`](../../../specs/opaque-prover-consumer.md) | proposed | Proposal, not current behavior: make protocol orchestration independent of CPU witness representations. |
 
 ## Archived records
 

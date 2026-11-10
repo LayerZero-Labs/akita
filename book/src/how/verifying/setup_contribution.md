@@ -33,7 +33,8 @@ address rules.
 
 ## Structured role weights
 
-For each group and nonempty unit, the plan builds paired equality tensors for
+For each group and nonempty unit, the plan builds
+[paired equality tensors](../optimizations.md#paired-equality-tensors-and-the-carry-recurrence) for
 the role columns and relation witness addresses. The main axes are claims,
 blocks, digits, native role subcolumns, and setup rows.
 

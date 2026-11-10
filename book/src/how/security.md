@@ -39,7 +39,9 @@ Module-SIS projection:
 where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
 The shipped policy is `Quantum169BitADPS16`. It accepts a row only when the
-complete ADPS16 quantum certificate reports a finite score or a classified
+complete ADPS16
+([references](../foundations/references.md#security-estimation)) quantum
+certificate reports a finite score or a classified
 above-target lower bound of at least 169 bits. The decision threshold is an
 explicit estimator configuration value supplied by the policy profile. The
 beta search checks values from 40 through the capped Euclidean baseline and
@@ -423,7 +425,9 @@ $W \cdot 2^{128}/2^K$ hash calls for $W$ pairs and smallest challenge set
 $2^K$. [Transcript and instance binding](./transcript.md#sparse-fold-challenges)
 describes the decoder.
 
-The production primes satisfy the fixed LS18 congruence and shortness
+The production primes satisfy the fixed LS18
+([references](../foundations/references.md#lattice-commitments-and-folding))
+congruence and shortness
 condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.

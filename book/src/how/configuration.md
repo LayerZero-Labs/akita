@@ -184,6 +184,12 @@ admission checks those edges and never reruns the search. See
 [Setup offloading](./setup-offloading.md) for the selection rules, setup
 artifacts, and recursive claim flow.
 
+The two catalog kinds also use different selection policies. Direct catalogs
+use `MinFirstDirectSetupThenExactProofAndWorkV5`. Recursive setup catalogs use
+`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6`.
+[How the planner chooses offloading](./setup-offloading.md#how-the-planner-chooses-offloading)
+lists what each policy compares.
+
 ### Ring-relation cutover
 
 Every nonterminal fold selects one `RingRelationMode`. `QuotientLift` adds

@@ -19,6 +19,15 @@ current implementation.
 - [Practical Product Proofs for Lattice Commitments](https://eprint.iacr.org/2020/517)
   gives background on proving multiplicative relations over lattice
   commitments.
+- [Generating Hard Instances of Lattice Problems](https://doi.org/10.1145/237814.237838)
+  by Ajtai introduces the short integer solution problem and the hash function
+  behind what the Book calls an Ajtai commitment.
+- [Worst-Case to Average-Case Reductions for Module Lattices](https://eprint.iacr.org/2012/090)
+  by Langlois and Stehlé gives the hardness reduction for Module-SIS.
+- [Short, Invertible Elements in Partially Splitting Cyclotomic Rings and Applications to Lattice-Based Zero-Knowledge Proofs](https://eprint.iacr.org/2017/523)
+  by Lyubashevsky and Seiler is the source of the condition that the Book
+  calls LS18: in a partially splitting ring, every short nonzero element is
+  invertible.
 
 ## Multilinear polynomials and sum-check
 
@@ -29,6 +38,36 @@ current implementation.
   explains equality-polynomial factoring techniques related to Akita's
   equality-factored sum-check. The `GruenSplitEq` type in `akita-algebra` is
   named after this split.
+
+## Transcripts, encodings, and arithmetic
+
+- [How To Prove Yourself: Practical Solutions to Identification and Signature Problems](https://doi.org/10.1007/3-540-47721-7_12)
+  by Fiat and Shamir introduces the transform that replaces verifier
+  randomness with a hash of the transcript.
+- [Run-Length Encodings](https://doi.org/10.1109/TIT.1966.1053907)
+  by Golomb introduces the code family behind the Golomb-Rice encoding of
+  terminal response coefficients. Rice coding is the case with a power-of-two
+  parameter.
+- [The Residue Number System](https://doi.org/10.1109/TEC.1959.5219515)
+  by Garner describes the mixed-radix reconstruction that the Book calls
+  Garner reconstruction.
+
+## Security estimation
+
+- [Post-Quantum Key Exchange: A New Hope](https://eprint.iacr.org/2015/1092)
+  by Alkim, Ducas, Pöppelmann, and Schwabe is the source of the lattice
+  reduction cost model that the Book calls ADPS16.
+- The CRYSTALS-Dilithium
+  [round-3 specification](https://pq-crystals.org/dilithium/data/dilithium-specification-round3-20210208.pdf),
+  Appendix C.3, and
+  [NTRU Fatigue](https://eprint.iacr.org/2021/999) by Ducas and van Woerden
+  give background for reduction-shape models of q-ary lattices. The Book's
+  [security model](../how/security.md) explains the LGSA shape that the SIS
+  estimator uses.
+- [Finding Many Collisions via Reusable Quantum Walks](https://eprint.iacr.org/2022/676)
+  and
+  [Does Quantum Lattice Sieving Require Quantum RAM?](https://eprint.iacr.org/2024/1700)
+  give background for the quantum cost discussion.
 
 ## Extension fields and packed openings
 

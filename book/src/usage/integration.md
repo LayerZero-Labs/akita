@@ -73,7 +73,12 @@ local compute state, not protocol identity.
 ### Revision contract
 
 The prover and verifier must use the same Akita protocol revision. Pin every
-Akita crate together and revalidate proof exchange when upgrading.
+Akita crate together and revalidate proof exchange when upgrading. The
+revision is the constant `akita_transcript::PROTOCOL_VERSION`, currently `8`.
+
+A host with its own transcript can run Akita inside it. The
+[proof artifacts guide](./proof-artifacts.md#embed-akita-in-a-host-transcript)
+describes the embedded entries and the extra end-of-proof check they need.
 
 ## Read the focused guides
 

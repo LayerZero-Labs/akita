@@ -210,6 +210,20 @@ from a benchmark. The `relation_evaluator` and `evaluation_trace` benches
 require it. It adds no protocol behavior, and an application build does not
 need it.
 
+The Jolt recursion profile under `profile/akita-recursion/` has its own
+benchmark features. They are not features of the published Akita crates.
+
+| Feature | Crate | Effect |
+| --- | --- | --- |
+| `trusted-benchmark-artifact` | `akita-recursion-glue`, forwarded by the guest | The guest decodes the host-produced setup through a trusted fixed-width path and does not derive the public matrix from its seed again |
+| `benchmark-guest` | guest | Enables `guest` and `trusted-benchmark-artifact` together |
+
+The trusted path still validates the wire format, the setup shape, canonical
+field values, and every allocation bound. It relies on the host to have
+decoded the artifact strictly, derived the setup from its seed, and verified
+the proof first. Use it only to measure. A plain `guest` build keeps the
+strict decode. [Jolt recursion](./jolt-recursion.md) describes the profile.
+
 ## Profile CI features
 
 The benchmark workflow uses narrow features such as `profile-ci-fp32` and
