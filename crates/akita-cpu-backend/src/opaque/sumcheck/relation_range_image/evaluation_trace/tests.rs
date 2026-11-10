@@ -585,3 +585,12 @@ pub(crate) fn response_norm_trace_fixture<E: Field>(
     assert!(!prepared.sources.is_empty());
     (prepared, dense)
 }
+
+#[test]
+fn prepared_linear_terms_reject_transposed_shape() {
+    // Equal products with different dimensions must not pass as the same shape.
+    let terms = PreparedProverLinearTerms::<F>::zero(32, 128);
+    assert!(terms.validate_shape(32, 128).is_ok());
+    assert!(terms.validate_shape(64, 64).is_err());
+    assert!(terms.validate_shape(128, 32).is_err());
+}

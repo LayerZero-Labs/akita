@@ -129,7 +129,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 }
             }
         }
-        linear_terms.validate_len(witness_len)?;
+        linear_terms.validate_shape(live_lane_count, coeff_count)?;
 
         // Self-consistency check: the materialized ordinary relation weights
         // plus the structured linear weights must reproduce the combined

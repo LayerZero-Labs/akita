@@ -779,14 +779,18 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         }
     }
 
-    pub(crate) fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {
-        let actual = self
-            .live_lane_count
-            .checked_mul(self.coeff_count)
-            .ok_or_else(|| AkitaError::Internal("evaluation-trace length overflow".into()))?;
-        if actual != witness_len {
+    /// Check both Stage-2 dimensions, not only their product: lookups index
+    /// by `(lane, coefficient)` against the prover's own coefficient count.
+    pub(crate) fn validate_shape(
+        &self,
+        live_lane_count: usize,
+        coeff_count: usize,
+    ) -> Result<(), AkitaError> {
+        if (self.live_lane_count, self.coeff_count) != (live_lane_count, coeff_count) {
             return Err(AkitaError::Internal(format!(
-                "prepared linear relation witness length: expected {witness_len}, actual {actual}"
+                "prepared linear relation shape: expected {live_lane_count} lanes x \
+                 {coeff_count} coefficients, actual {} x {}",
+                self.live_lane_count, self.coeff_count
             )));
         }
         let lane_shape_is_valid = match &self.lane_weights {
