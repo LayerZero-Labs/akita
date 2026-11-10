@@ -457,5 +457,5 @@ impl<E: Field> RelationMatrixEvaluator<E> {
     }
 }
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub(crate) mod native_root;

@@ -41,7 +41,7 @@ fn bench_binary_challenge(c: &mut Criterion) {
             ),
         ),
     ];
-    let mut group = c.benchmark_group("labinius_binary_challenge_batch");
+    let mut group = c.benchmark_group("binary_challenge_batch");
     for count in [1usize, 64, 4096] {
         group.throughput(Throughput::Elements(count as u64));
         for (name, sampler) in &mut samplers {

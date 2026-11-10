@@ -20,7 +20,7 @@ It admits no production parameter set. It has no outer commitment, setup
 offloading, quotient or carry rows, bit dropping, recursion, performance
 contract, or zero knowledge. Its proof encoding is not the production Akita
 proof format. Native field-switch integration is implemented separately; see
-[the native binary-source specification](../../binary-source-opening.md). Arithmetic
+[the native binary-source specification](../../binary-opening.md). Arithmetic
 and protocol agreement in this retired oracle do not establish native protocol
 security.
 

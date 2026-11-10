@@ -19,7 +19,7 @@ pub mod numeric;
 pub mod optimizer;
 pub mod params;
 pub mod probability;
-#[cfg(feature = "labinius-sis")]
+#[cfg(feature = "binary")]
 pub mod q24_width_table;
 pub mod reduction;
 pub mod schedule_security;

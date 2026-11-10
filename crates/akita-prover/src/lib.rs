@@ -46,7 +46,7 @@ pub use protocol::{
 };
 pub use setup::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[doc(hidden)]
 pub mod binary_field_switch;
 mod setup_batch;

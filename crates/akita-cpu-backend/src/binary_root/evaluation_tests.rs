@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::binary::BinaryField162;
-use akita_types::binary_source::{
+use akita_types::binary::{
     binary_scalar_geometry, binary_scalar_lift, BinaryEvaluationSegments, BinaryTerminalClaim,
 };
 use jolt_field::Zero;
@@ -59,7 +59,7 @@ fn terminal_carries_authenticate_response_partials_and_value() {
     // against the shared unreduced convolution and single final reduction.
     let (row_weights, _) = claim.equality_weights(&input.descriptor).unwrap();
     let scalar_challenges =
-        akita_types::binary_source::binary_scalar_challenges(&input.descriptor, &input.challenges)
+        akita_types::binary::binary_scalar_challenges(&input.descriptor, &input.challenges)
             .unwrap();
     let mut parity = [0i128; 162];
     for (row, weight) in row_weights.into_iter().enumerate() {

@@ -6,7 +6,7 @@ Akita develops on two long-lived branches:
   refactors, performance work, CI, and documentation that leave that protocol
   unchanged, plus protocol changes that the maintainer team approves.
 - **`dev`** is `main` plus opt-in protocol extensions and compute backends,
-  such as LaBinius binary openings, zero knowledge, and the Metal prover
+  such as binary openings, zero knowledge, and the Metal prover
   backend. When no extension is selected, `dev` runs exactly the protocol on
   `main`.
 

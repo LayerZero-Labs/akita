@@ -16,7 +16,7 @@ mod coefficient_functional;
 mod geometry;
 mod plan;
 pub(crate) mod setup_index_weight;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 mod trinomial;
 
 #[cfg(test)]
@@ -29,7 +29,7 @@ pub use plan::{
     PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionGroupPlan,
     SetupContributionPlan,
 };
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use trinomial::{PreparedTrinomialASetupWeights, TrinomialASetupView, TrinomialResponseLayout};
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.

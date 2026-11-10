@@ -8,7 +8,7 @@ mod sealed {
     impl Sealed for super::BinaryField192 {}
 }
 
-/// One of the two supported host-field/binary-source coordinate contracts.
+/// One of the two supported host-field/binary-field coordinate contracts.
 ///
 /// Sealed to F128/F128 and F64/F192. This is a coordinate contract for the
 /// switch, not an implementation of the odd-characteristic field interface.

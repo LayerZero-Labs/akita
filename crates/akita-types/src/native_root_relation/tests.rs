@@ -1,5 +1,5 @@
 use super::*;
-use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
+use crate::binary::{BinaryCommitmentProfiles, BinaryIndexMap};
 use crate::root_repacking::RootRepackingSegment;
 use akita_params::RelationRowGeometry;
 use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};

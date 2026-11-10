@@ -14,7 +14,7 @@ use akita_params::{
     DigitRangePlan, FlatBooleanDomain, GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol,
 };
 use akita_sumcheck::{SumcheckKernel, SumcheckProverChannel, SumcheckRole, SumcheckShape};
-use akita_types::binary_source::{
+use akita_types::binary::{
     binary_root_p64_batch_challenges, BinaryAOperand, BinaryAProduct, BinaryAReadGuard,
     BinaryCommittedGroupManifest, BinaryRootPublic, BinaryTypedPrefix,
 };

@@ -12,7 +12,7 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
-#[cfg(feature = "labinius-binary")]
+#[cfg(feature = "binary")]
 pub mod binary;
 pub mod eq_poly;
 pub mod fft;
@@ -26,7 +26,7 @@ pub mod split_eq;
 // Flat re-exports for convenience.
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use fft::SmoothFftField;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use fft::{
     Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, PRIME64_OFFSET_23703_MODULUS,
 };
@@ -44,7 +44,7 @@ pub use ring::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
     DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
 };
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use ring::{
     embed_scalar, pack_scalar_components, shifted_remainder_evaluations, unpack_scalar_components,
     MinusTrinomial, PlusTrinomial, TrinomialError, TrinomialI8Lut, TrinomialLimbAccumulator,

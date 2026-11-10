@@ -1,6 +1,6 @@
 //! Akita parameter geometry, sizing, schedules, and security policy.
 
-#[cfg(feature = "labinius-sis")]
+#[cfg(feature = "binary")]
 pub mod binary_setup;
 pub mod commitment_slicing;
 pub mod compression;
@@ -15,7 +15,7 @@ pub use dispatch::{
 };
 pub mod golomb_rice;
 pub mod layout;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub mod ordinary_source;
 pub mod proof_size;
 mod ring_relation_mode;
@@ -73,7 +73,7 @@ pub use layout::{
     SETUP_SUMCHECK_DEGREE, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
     TERMINAL_BLOCK_DIGEST_BYTES,
 };
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use layout::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
 pub use proof_size::{nonterminal_level_layout, NonterminalLevelLayout};
 pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};

@@ -1,6 +1,6 @@
 use super::*;
 use akita_params::binary_setup::BinaryFieldProfile;
-use akita_types::binary_source::binary_word_manifest_fixture;
+use akita_types::binary::binary_word_manifest_fixture;
 use jolt_field::{Ext2, Prime64Offset59 as F, Zero};
 type E = Ext2<F>;
 
@@ -31,7 +31,7 @@ fn p128_slot(domain: usize) -> SetupPrefixSlotId {
     use akita_params::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
     use akita_params::{BlockGeometry, CommitmentSliceGeometry, PolynomialGroupLayout};
     let mut profile =
-        akita_types::binary_source::binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
+        akita_types::binary::binary_ordinary_profile_fixture(BinaryFieldProfile::P128);
     profile.group = PolynomialGroupLayout::singleton(domain.trailing_zeros() as usize);
     profile.inner.digits.num_digits = 43;
     profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
@@ -155,7 +155,7 @@ fn trusted_composite_preparation_preserves_singleton_and_authenticates_distinct_
     let wrong_field_layout =
         CompositePrefixLayout::new(&blocks, b"wrong successor field", &wrong_field_slot).unwrap();
     {
-        let _guard = akita_types::binary_source::BinaryAReadGuard::forbid();
+        let _guard = akita_types::binary::BinaryAReadGuard::forbid();
         assert!(matches!(
             backend.prepare_composite_prefix(&wrong_field_layout, &definitions, combined_domain),
             Err(AkitaError::InvalidInput(_))

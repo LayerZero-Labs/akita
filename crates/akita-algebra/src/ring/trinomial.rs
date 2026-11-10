@@ -1,4 +1,4 @@
-//! Arithmetic for the LaBinius scalar and commitment trinomial rings.
+//! Arithmetic for the binary scalar and commitment trinomial rings.
 //!
 //! The scalar rings use `X^D + X^(D/2) + 1`; packing rank greater than one
 //! maps them into `Y^D - Y^(D/2) + 1` by `X -> -Y^rank`. The transform is a

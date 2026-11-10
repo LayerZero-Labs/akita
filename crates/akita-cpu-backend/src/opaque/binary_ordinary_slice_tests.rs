@@ -12,7 +12,7 @@ use akita_params::{
     GadgetDigits, GroupCommitPhaseParams, PolynomialGroupLayout, RoleParams, SetupMatrixCapacity,
     SisModulusProfileId,
 };
-use akita_types::binary_source::OrdinaryNativeRootPlan;
+use akita_types::binary::OrdinaryNativeRootPlan;
 use akita_types::root_repacking::RootCoefficientRepacking;
 use jolt_field::{One, Prime128Offset275, Ring, Zero};
 use std::sync::Arc;

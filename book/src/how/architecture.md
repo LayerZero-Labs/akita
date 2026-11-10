@@ -26,14 +26,14 @@ orchestration lives in `akita-pcs`.
 | `akita-setup` | Config-backed setup construction and optional setup cache |
 | `akita-verifier` | Verifier replay without prover-only polynomial backends; directly `<Cfg>`-generic |
 | `akita-prover` | Protocol sequencing, public geometry checks, proof assembly, opaque operation contracts |
-| `akita-cpu-backend` | Backend-owned sources, native binary-source kernels, commitment and witness arithmetic, prepared setup resources, caches |
+| `akita-cpu-backend` | Backend-owned sources, native binary kernels, commitment and witness arithmetic, prepared setup resources, caches |
 | `akita-pcs` | Umbrella crate: `AkitaCommitmentScheme`, re-exports, examples, benches, integration tests |
 
 **Dependency graph and ownership rules:** [`docs/crate-graph.md`](https://github.com/LayerZero-Labs/akita/blob/main/docs/crate-graph.md).
 CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
-The native grouped binary root is the binary-source product. Its fold, limb
+The native grouped binary root is the binary product. Its fold, limb
 commitment, weighted-source, and weighted integer convolution kernels live in
-`crates/akita-cpu-backend/src/kernels/binary_source/`. The former standalone
+`crates/akita-cpu-backend/src/kernels/binary/`. The former standalone
 LaBinius crates were removed, together with the F192 host path, arbitrary prime
 functionals, and the old Family64 PCS.
 

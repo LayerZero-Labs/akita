@@ -1,7 +1,7 @@
 //! Explicit construction of the binary group kind in the canonical commitment.
 
 use super::{Commitment, CommittedGroup, CommittedGroupKind};
-use crate::binary_source::BinaryCommittedGroupManifest;
+use crate::binary::BinaryCommittedGroupManifest;
 use akita_error::AkitaError;
 use akita_params::GroupCommitPhaseParams;
 use akita_serialization::{AkitaSerialize, Valid};
@@ -32,7 +32,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> CommittedGroup<F> {
 #[cfg(test)]
 mod binary_source_tests {
     use super::*;
-    use crate::binary_source::{BinaryIndexMap, BinarySourceDescriptor};
+    use crate::binary::{BinaryIndexMap, BinarySourceDescriptor};
     use crate::{Commitment, CommittedGroup, RingVec};
     use akita_params::binary_setup::{BinaryFieldProfile, BINARY_SETUP_P64};
     use akita_params::sis::{
@@ -146,8 +146,8 @@ mod binary_source_tests {
 
     #[test]
     fn p64_manifest_ranks_cover_actual_compact_widths_with_minimal_roles() {
-        use crate::binary_source::reference::assert_digit_rank;
-        use crate::binary_source::BinaryRootWitnessPlan;
+        use crate::binary::reference::assert_digit_rank;
+        use crate::binary::BinaryRootWitnessPlan;
         use akita_params::sis::{Open, Outer};
         for (columns, owners) in [(2, 1), (2, 4096), (256, 1), (256, 10), (256, 4096)] {
             let field = BinaryFieldProfile::P64;
@@ -287,7 +287,7 @@ mod binary_source_tests {
         type F = Prime64Offset59;
         type E = jolt_field::Ext2<F>;
         let manifest = manifest(BinaryFieldProfile::P64, 2, 1);
-        let prime = crate::binary_source::PrimePlaneManifest::with_field_profile(
+        let prime = crate::binary::PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
             None,
             BinaryFieldProfile::P128,
@@ -296,7 +296,7 @@ mod binary_source_tests {
         let payload = vec![F::zero(); manifest.payload_coefficients().unwrap()];
         let mut prover = new_prover_channel(b"p64-admission");
         let mut verifier = new_verifier_channel(b"p64-admission", &[]);
-        let prove = crate::binary_source::binary_root_statement::<F, E, _>(
+        let prove = crate::binary::binary_root_statement::<F, E, _>(
             &mut prover,
             &manifest,
             None,
@@ -304,7 +304,7 @@ mod binary_source_tests {
             &payload,
             None,
         );
-        let verify = crate::binary_source::binary_root_statement::<F, E, _>(
+        let verify = crate::binary::binary_root_statement::<F, E, _>(
             &mut verifier,
             &manifest,
             None,

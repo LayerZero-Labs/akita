@@ -3,7 +3,7 @@
 use akita_algebra::ring::trinomial::module_map::unpack_signed_components;
 use akita_error::{checked, AkitaError};
 use akita_params::binary_setup::BinaryFieldProfile;
-use akita_types::binary_source::{BinarySourceDescriptor, PrimePlaneManifest};
+use akita_types::binary::{BinarySourceDescriptor, PrimePlaneManifest};
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_chunks, cfg_chunks_mut, CanonicalEncoding, Field};
@@ -144,7 +144,7 @@ pub(crate) fn packed_prime_plane_digits<F: Field + CanonicalEncoding>(
             .ok_or(AkitaError::InvalidProof)?;
         let range =
             checked::range(start, index.padded_carriers()).ok_or(AkitaError::InvalidProof)?;
-        let partials = crate::kernels::binary_source::weighted_source::weighted_source_bits::<
+        let partials = crate::kernels::binary::weighted_source::weighted_source_bits::<
             akita_algebra::binary::BinaryField128,
             F,
         >(
@@ -217,7 +217,7 @@ mod tests {
     use super::*;
     use akita_params::binary_setup::BINARY_SETUP_P;
     const COLUMN_DIGITS: usize = BinaryFieldProfile::P128.prime_plane_digits() * 162;
-    use akita_types::binary_source::{
+    use akita_types::binary::{
         BinaryCommitmentProfiles, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
     };
     use jolt_field::{One, Prime128Offset275, Ring, Zero};
@@ -308,7 +308,7 @@ mod tests {
 #[cfg(test)]
 mod p64_tests {
     use super::*;
-    use akita_types::binary_source::{
+    use akita_types::binary::{
         BinaryCommitmentProfiles, BinaryIndexMap, PrimeGroupClaim, PrimePlaneClaim,
     };
     use jolt_field::{One, Prime64Offset59 as F, Ring, Zero};

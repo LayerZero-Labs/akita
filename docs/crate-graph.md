@@ -29,13 +29,13 @@ orchestration lives in `akita-pcs`.
 | `akita-setup` | Setup construction and optional cache |
 | `akita-verifier` | Verifier replay (no prover polynomial backends) |
 | `akita-prover` | Generic protocol sequencing and opaque backend contracts |
-| `akita-cpu-backend` | Owning CPU sources, commitments, native binary-source kernels, witness arithmetic, and caches |
+| `akita-cpu-backend` | Owning CPU sources, commitments, native binary kernels, witness arithmetic, and caches |
 | `akita-pcs` | Umbrella orchestration, examples, integration tests |
 | `akita-zk-verifier` (`dev`) | Verifier-side zero-knowledge building blocks (#120); no proof path depends on it |
 | `akita-zk-prover` (`dev`) | Prover-side zero-knowledge building blocks (#120); no proof path depends on it |
 
-The native grouped binary root is the binary-source product. Its four kernel
-families live in `akita-cpu-backend/src/kernels/binary_source/`. The former
+The native grouped binary root is the binary product. Its four kernel
+families live in `akita-cpu-backend/src/kernels/binary/`. The former
 standalone LaBinius crates were removed, together with the F192 host path,
 arbitrary prime functionals, and the old Family64 PCS.
 
@@ -169,7 +169,7 @@ graph TD
   protocol error variant. Callers map failure at the boundary where its meaning
   is known. Generic checked helpers must not be redefined in downstream crates.
 - `akita-challenges` owns transcript-derived challenge distributions. Its
-  optional `labinius-challenges` profiles use external `num-bigint` for exact
+  optional `binary` profiles use external `num-bigint` for exact
   combinatorial counts that exceed 256 bits; protocol crates should consume
   those counts and norm bounds instead of reimplementing the policy.
 - `akita-planner` is the offline schedule search and artifact emission engine.

@@ -1,4 +1,4 @@
-use crate::binary_source::{root_weight_scenarios, RootFixtureField as F};
+use crate::binary::{root_weight_scenarios, RootFixtureField as F};
 use akita_algebra::poly::fold_evals_in_place;
 use jolt_field::Ring;
 

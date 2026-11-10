@@ -1,15 +1,15 @@
 //! Direct CPU implementation of the opaque protocol kernels.
 mod admission;
 mod backend;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
+mod binary;
+#[cfg(feature = "binary")]
 mod binary_ordinary;
-#[cfg(all(test, feature = "labinius-trinomial"))]
+#[cfg(all(test, feature = "binary"))]
 pub(crate) mod binary_ordinary_p64_fixture;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[path = "../binary_root/sessions.rs"]
 mod binary_root_sessions;
-#[cfg(feature = "labinius-trinomial")]
-mod binary_source;
 pub(crate) mod capabilities;
 pub(crate) mod compression;
 pub(crate) mod consumer_kernels;
@@ -185,7 +185,7 @@ where
         + Sync
         + 'static,
 {
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn prepare_root_group(
         &self,
         session: &Self::ProofSessionHandle,
@@ -193,10 +193,10 @@ where
         handle: &Self::CommitmentHandle,
         request: &dyn std::any::Any,
     ) -> Result<(Vec<F>, Box<dyn std::any::Any + Send + Sync>), AkitaError> {
-        binary_source::prepare_root_group(self, session, context, handle, request)
+        binary::prepare_root_group(self, session, context, handle, request)
     }
 
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn build_root_group(
         &self,
         session: &Self::ProofSessionHandle,
@@ -206,7 +206,7 @@ where
         logical_len: usize,
         destination_ring_dimension: usize,
     ) -> Result<Option<Self::WitnessHandle>, AkitaError> {
-        binary_source::build_root_group(
+        binary::build_root_group(
             self,
             session,
             context,
@@ -217,7 +217,7 @@ where
         )
     }
 
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn import_root_witness(
         &self,
         session: &Self::ProofSessionHandle,
@@ -448,7 +448,7 @@ where
         + Sync
         + 'static,
 {
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn begin_root_digit_range(
         &self,
         witness: &Self::WitnessHandle,
@@ -596,7 +596,7 @@ where
         + Sync
         + 'static,
 {
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn begin_root_relation(
         &self,
         witness: &Self::WitnessHandle,

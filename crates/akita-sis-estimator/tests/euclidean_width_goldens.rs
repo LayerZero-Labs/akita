@@ -63,7 +63,7 @@ fn euclidean_width_goldens_match_checked_in_l2_table() {
         let profile = match row.family {
             AkitaModulusProfileId::Q32Offset99 => SisModulusProfileId::Q32Offset99,
             AkitaModulusProfileId::Q64Offset59 => SisModulusProfileId::Q64Offset59,
-            #[cfg(feature = "labinius-sis")]
+            #[cfg(feature = "binary")]
             AkitaModulusProfileId::Q24Minus2523807 => {
                 panic!("binary commitment primes have no native Euclidean runtime profile")
             }

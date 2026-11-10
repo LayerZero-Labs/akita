@@ -213,7 +213,7 @@ impl<'a, F: Field, E: Field> ValidatedRelationSessionPlan<'a, F, E> {
 
 /// Root rows compiled at the shared ring-switch point, before the fused Stage 2.
 /// The caller fixes the successor commitment before sampling these weights.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub struct NativeRootRelationRequest<'a, E: Field> {
     pub relation: &'a akita_types::native_root_relation::NativeRootRelation<E>,
     pub alpha: E,

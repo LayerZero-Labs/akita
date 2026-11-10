@@ -1,16 +1,16 @@
 //! Canonical polynomial identities and coefficient layouts for relation rows.
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 use core::ops::Range;
 
 use akita_algebra::fft::field_pow;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 use akita_error::checked;
 use akita_error::AkitaError;
 use jolt_field::Field;
 
 /// Sign of the middle term in `X^D +/- X^(D/2) + 1`.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TrinomialSign {
     Plus,
@@ -23,7 +23,7 @@ pub enum RelationPolynomialKind {
     /// `X^D + 1`, retained by the existing power-of-two relation path.
     Negacyclic,
     /// `X^D +/- X^(D/2) + 1`.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     Trinomial(TrinomialSign),
 }
 
@@ -57,18 +57,18 @@ impl RelationPolynomial {
     }
 
     /// Construct `X^D + X^(D/2) + 1`.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     pub fn plus_trinomial(degree: usize) -> Result<Self, AkitaError> {
         Self::trinomial(degree, TrinomialSign::Plus)
     }
 
     /// Construct `X^D - X^(D/2) + 1`.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     pub fn minus_trinomial(degree: usize) -> Result<Self, AkitaError> {
         Self::trinomial(degree, TrinomialSign::Minus)
     }
 
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn trinomial(degree: usize, sign: TrinomialSign) -> Result<Self, AkitaError> {
         if degree == 0 || !degree.is_multiple_of(2) {
             return Err(AkitaError::InvalidSetup(
@@ -92,7 +92,7 @@ impl RelationPolynomial {
     }
 
     /// Maximum coefficient count of a product of two degree-`D` elements.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     pub fn product_coefficient_len(self) -> Result<usize, AkitaError> {
         checked::product([self.degree, 2])
             .and_then(|value| value.checked_sub(1))
@@ -100,7 +100,7 @@ impl RelationPolynomial {
     }
 
     /// Canonical coefficient count of the monic quotient for such a product.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     pub fn quotient_coefficient_len(self) -> Result<usize, AkitaError> {
         self.degree
             .checked_sub(1)
@@ -108,7 +108,7 @@ impl RelationPolynomial {
     }
 
     /// Validate a natural, unpadded coefficient slice length for one role.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     pub fn validate_coefficient_len(
         self,
         role: RelationCoefficientRole,
@@ -128,7 +128,7 @@ impl RelationPolynomial {
         let leading = field_pow(alpha, degree);
         let value = match self.kind {
             RelationPolynomialKind::Negacyclic => leading + F::one(),
-            #[cfg(feature = "labinius-trinomial")]
+            #[cfg(feature = "binary")]
             RelationPolynomialKind::Trinomial(sign) => {
                 let middle = field_pow(alpha, degree / 2);
                 match sign {
@@ -163,7 +163,7 @@ impl RelationPolynomial {
             * alpha;
         let value = match self.kind {
             RelationPolynomialKind::Negacyclic => leading + F::one(),
-            #[cfg(feature = "labinius-trinomial")]
+            #[cfg(feature = "binary")]
             RelationPolynomialKind::Trinomial(sign) => {
                 let middle = powers
                     .get(self.degree / 2)
@@ -180,7 +180,7 @@ impl RelationPolynomial {
 }
 
 /// Natural coefficient role represented by a padded table segment.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RelationCoefficientRole {
     /// One canonical quotient-ring element, with `D` coefficients.
@@ -189,7 +189,7 @@ pub enum RelationCoefficientRole {
     Quotient,
 }
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 impl RelationCoefficientRole {
     fn natural_len(self, polynomial: RelationPolynomial) -> Result<usize, AkitaError> {
         match self {
@@ -200,7 +200,7 @@ impl RelationCoefficientRole {
 }
 
 /// Checked natural and padded coefficient geometry for one polynomial role.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RelationCoefficientLayout {
     polynomial: RelationPolynomial,
@@ -209,7 +209,7 @@ pub struct RelationCoefficientLayout {
     padded_len: usize,
 }
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 impl RelationCoefficientLayout {
     /// Construct an explicitly padded coefficient layout.
     pub fn new(
@@ -303,7 +303,7 @@ impl RelationCoefficientLayout {
     }
 }
 
-#[cfg(all(test, feature = "labinius-trinomial"))]
+#[cfg(all(test, feature = "binary"))]
 mod tests {
     use super::*;
     use akita_algebra::ring::scalar_powers;

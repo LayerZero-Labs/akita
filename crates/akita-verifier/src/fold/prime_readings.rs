@@ -6,7 +6,7 @@ use akita_error::AkitaError;
 use akita_params::{descriptor_bytes::digest_descriptor_bytes, BasisMode};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::VerifierChannel;
-use akita_types::binary_source::{
+use akita_types::binary::{
     BinaryOpening, BinaryWordClaim, PrimeGroupClaim, SourceAgreementBinding,
 };
 use akita_types::opening_claims::GroupClaimKind;

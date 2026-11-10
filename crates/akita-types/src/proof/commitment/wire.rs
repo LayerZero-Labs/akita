@@ -283,7 +283,7 @@ pub(super) fn check_group<F: Field + CanonicalEncoding + Valid>(
             .outer_compression_plan()
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?
             .terminal_coefficients(),
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         CommittedGroupKind::Binary(manifest) => {
             manifest
                 .validate_carrier(profile)
@@ -312,7 +312,7 @@ fn write_group<F: Field + AkitaSerialize, W: Write>(
 ) -> Result<(), SerializationError> {
     match kind {
         CommittedGroupKind::Ordinary => {}
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         CommittedGroupKind::Binary(manifest) => {
             let bytes = manifest.canonical_bytes();
             let len = u32::try_from(bytes.len()).map_err(|_| {
@@ -383,7 +383,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for C
             + self.commitment.serialized_size(compress);
         match &self.kind {
             CommittedGroupKind::Ordinary => ordinary_size,
-            #[cfg(feature = "labinius-trinomial")]
+            #[cfg(feature = "binary")]
             CommittedGroupKind::Binary(manifest) => {
                 akita_error::checked::sum([ordinary_size, 5, manifest.canonical_bytes().len()])
                     .unwrap_or(usize::MAX)
@@ -410,7 +410,7 @@ where
                 .outer_compression_plan()
                 .map_err(|error| SerializationError::InvalidData(error.to_string()))?
                 .terminal_coefficients(),
-            #[cfg(feature = "labinius-trinomial")]
+            #[cfg(feature = "binary")]
             CommittedGroupKind::Binary(manifest) => {
                 manifest
                     .validate_carrier(&descriptor)
@@ -428,7 +428,7 @@ where
         }
         // Binary manifests bind canonical base residues. Reducing an unchecked
         // residue here would accept several wire encodings of the same payload.
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         let validate = match &kind {
             CommittedGroupKind::Binary(_) => Validate::Yes,
             CommittedGroupKind::Ordinary => validate,
@@ -446,9 +446,9 @@ fn deserialize_kind_and_profile<F: Field + CanonicalEncoding, R: Read>(
 ) -> Result<(CommittedGroupKind, GroupCommitPhaseParams), SerializationError> {
     let tag = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
     match tag {
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         255 => {
-            use crate::binary_source::{
+            use crate::binary::{
                 BinaryCommittedGroupManifest, MAX_BINARY_COMMITTED_MANIFEST_BYTES,
             };
             let len = u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;

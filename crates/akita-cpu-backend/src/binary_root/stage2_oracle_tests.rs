@@ -1,7 +1,7 @@
 //! Stage 2 on block profiles against Stage 2 on the materialized root table.
 
 use super::*;
-use akita_types::binary_source::{root_weight_scenarios, RootFixtureField as E};
+use akita_types::binary::{root_weight_scenarios, RootFixtureField as E};
 use jolt_field::{One, Zero};
 
 /// `eq(point, x)` for every address `x`, with bit `i` of `x` against `point[i]`.
@@ -112,7 +112,7 @@ mod p64 {
     use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
     use akita_params::binary_setup::BinaryFieldProfile;
     use akita_params::{DigitRangePlan, FlatBooleanDomain};
-    use akita_types::binary_source::{
+    use akita_types::binary::{
         binary_public_digit_commitment, binary_root_matrix, BinaryAOperand,
         BinaryCommittedGroupManifest, BinaryIndexMap, BinaryRootPublic, BinarySourceDescriptor,
         BinaryTerminalClaim, PrimePlaneManifest, BINARY_SOURCE_Q,
@@ -464,14 +464,13 @@ mod p64 {
         );
         // The same dense coefficient coordinates feed Stage 3 over the
         // selected base setup; no integer representative of E64 is used.
-        let typed =
-            akita_types::binary_source::BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
+        let typed = akita_types::binary::BinaryTypedPrefix::new(&manifest, true, 0, 64).unwrap();
         let stage2_point = (0..variables)
             .map(|round| extension(500 + round))
             .collect::<Vec<_>>();
         let (stage3_rho, _) = public.coefficient_inputs(&batches, &[], &[]).unwrap();
         assert_eq!(stage3_rho.as_ref(), rho);
-        let a = akita_types::binary_source::BinaryAProduct::new(
+        let a = akita_types::binary::BinaryAProduct::new(
             plan,
             &stage3_rho,
             &stage2_point,

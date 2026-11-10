@@ -16,7 +16,7 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_chunks, cfg_iter, Field};
 
 use super::profiles::ProfileBuilder;
-use crate::binary_source::{
+use crate::binary::{
     DigitAuthenticationWeights, DirectAWeights, ImageWeights, ParityRowWeights,
     PartialColumnWeights, PrimePlaneWeights, SourceEvaluationWeights,
 };

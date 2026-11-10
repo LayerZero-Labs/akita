@@ -44,12 +44,12 @@ pub struct FactoredStage3Request<'a, F: Field, E: Field, ProofSession> {
 /// committed table from it. The table must be zero outside the live blocks.
 /// Rounds, challenges and the final claim equal those of
 /// [`FactoredStage3Request`] on the same table and the expanded weight.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub struct TypedStage3Request<'a, E: Field, ProofSession, Prefix> {
     pub session: &'a ProofSession,
     pub level: u32,
     pub prefix: &'a Prefix,
-    pub weights: akita_types::binary_source::TypedPrefixWeights<E>,
+    pub weights: akita_types::binary::TypedPrefixWeights<E>,
 }
 
 /// Arithmetic for Stage 3. The prover owns prefix selection and transcript order.
@@ -102,7 +102,7 @@ pub trait OpaqueStage3Kernel<F: Field, E: Field>: super::ProofScopeConsumer {
     /// Extension seam: start the ordinary Stage 3 session on a typed setup
     /// prefix with block-structured weights. Backends opt in explicitly.
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn begin_typed_stage3(
         &self,
         _request: TypedStage3Request<'_, E, Self::ProofSessionHandle, Self::CommitmentHandle>,

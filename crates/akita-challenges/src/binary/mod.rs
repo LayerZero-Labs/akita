@@ -1,4 +1,4 @@
-//! Exact parity-injective challenge families for LaBinius-style binary folds.
+//! Exact parity-injective challenge families for binary folds.
 //!
 //! A family contains one signed ternary lift of each admitted binary support.
 //! Signs are a deterministic function of the complete canonical support and

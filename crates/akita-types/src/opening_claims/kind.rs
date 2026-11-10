@@ -8,14 +8,14 @@ pub enum GroupClaimKind {
     /// The ordinary negacyclic-ring opening relation.
     Ordinary,
     /// A binary word claim supplied by the caller.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     Binary {
         /// Frozen binary A/B contract, retained when mapping commitment payloads.
-        manifest: Box<crate::binary_source::BinaryCommittedGroupManifest>,
+        manifest: Box<crate::binary::BinaryCommittedGroupManifest>,
         /// The caller's logical word MLE evaluation over GF(2^128).
-        claim: Option<crate::binary_source::BinaryWordClaim>,
+        claim: Option<crate::binary::BinaryWordClaim>,
         /// Checked single-point prime claim, in polynomial order.
-        prime: crate::binary_source::PrimePlaneManifest,
+        prime: crate::binary::PrimePlaneManifest,
     },
 }
 
@@ -32,7 +32,7 @@ impl<F: Clone, C> super::OpeningClaims<'_, F, C> {
                 ));
             }
         }
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         for (position, group) in groups.iter().enumerate() {
             if let GroupClaimKind::Binary {
                 manifest,

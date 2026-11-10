@@ -9,7 +9,7 @@ use crate::opaque::{
 use crate::sources::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
 use akita_params::{DigitRangePlan, FlatBooleanDomain};
-use akita_types::binary_source::TypedPrefixWeights;
+use akita_types::binary::TypedPrefixWeights;
 use akita_types::native_root_relation::{NativeRootWeights, RootWeightProfiles};
 use akita_types::DigitRangeEqualityPoint;
 use jolt_field::{Field, Fold, Ring, Unreduced};

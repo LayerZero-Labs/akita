@@ -11,7 +11,7 @@ use akita_params::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
-use akita_types::binary_source::{
+use akita_types::binary::{
     binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
     binary_root_p64_batch_challenges, binary_root_statement, BinaryProjectionRows,
     BinaryRootPublic,
@@ -81,7 +81,7 @@ where
         .setup_prefix()
         .and_then(|p| p.slot_id())
         .ok_or(AkitaError::InvalidProof)?;
-    let typed = akita_types::binary_source::BinaryTypedPrefix::new(
+    let typed = akita_types::binary::BinaryTypedPrefix::new(
         manifest,
         claim.is_some(),
         prime.planes().len(),
@@ -284,7 +284,7 @@ where
     }
     let mut replay_stage3 = || {
         let _span = tracing::info_span!("binary_root_typed_stage3").entered();
-        let product = akita_types::binary_source::BinaryAProduct::new(
+        let product = akita_types::binary::BinaryAProduct::new(
             public.plan(),
             &rho,
             &replay.challenges,

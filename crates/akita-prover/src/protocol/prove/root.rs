@@ -90,7 +90,7 @@ where
     B: ProverBackend<Cfg::Field, Cfg::ExtField> + 'static,
 {
     match claims.groups().first().map(|group| group.kind()) {
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         Some(akita_types::opening_claims::GroupClaimKind::Binary { .. }) => {
             super::binary_root::prove_root(
                 expanded,

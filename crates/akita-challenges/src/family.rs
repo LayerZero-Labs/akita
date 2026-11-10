@@ -14,7 +14,7 @@ pub enum FoldChallengeDistribution {
     /// Existing fixed-weight signed-sparse distribution.
     SignedSparse(SparseChallengeConfig),
     /// Bounded-weight 46 supports in Phi243, with deterministic Shake256V1 signs.
-    #[cfg(feature = "labinius-challenges")]
+    #[cfg(feature = "binary")]
     BinaryRoot,
 }
 
@@ -22,7 +22,7 @@ impl serde::Serialize for FoldChallengeDistribution {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::SignedSparse(config) => {
-                #[cfg(feature = "labinius-challenges")]
+                #[cfg(feature = "binary")]
                 if config.count_pm1 == u32::MAX as usize && config.count_pm2 == 1 {
                     return Err(serde::ser::Error::custom(
                         "reserved binary root family encoding",
@@ -30,7 +30,7 @@ impl serde::Serialize for FoldChallengeDistribution {
                 }
                 config.serialize(serializer)
             }
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => SparseChallengeConfig {
                 count_pm1: u32::MAX as usize,
                 count_pm2: 1,
@@ -45,7 +45,7 @@ impl<'de> serde::Deserialize<'de> for FoldChallengeDistribution {
         let config = SparseChallengeConfig::deserialize(deserializer)?;
         // Reserve an impossible supported sparse weight, preserving ordinary
         // JSON and Postcard encodings without an extra enum discriminant.
-        #[cfg(feature = "labinius-challenges")]
+        #[cfg(feature = "binary")]
         if config.count_pm1 == u32::MAX as usize && config.count_pm2 == 1 {
             return Ok(Self::BinaryRoot);
         }
@@ -73,7 +73,7 @@ impl FoldChallengeDistribution {
     /// Inspect a signed-sparse family at a boundary requiring that distribution.
     pub const fn signed_sparse(&self) -> Option<&SparseChallengeConfig> {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => None,
             Self::SignedSparse(config) => Some(config),
         }
@@ -82,7 +82,7 @@ impl FoldChallengeDistribution {
     /// Certified operator-norm policy, if this family supports one.
     pub fn operator_norm_rejection(&self, ring_d: usize) -> Option<OperatorNormRejection> {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => None,
             Self::SignedSparse(config) => {
                 crate::selective_l2_operator_norm_rejection(ring_d, config)
@@ -93,7 +93,7 @@ impl FoldChallengeDistribution {
     /// Maximum support weight.
     pub fn weight(&self) -> usize {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::WEIGHT,
             Self::SignedSparse(config) => config.weight(),
         }
@@ -102,7 +102,7 @@ impl FoldChallengeDistribution {
     /// Maximum coefficient L1 norm.
     pub fn l1_norm(&self) -> usize {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::WEIGHT,
             Self::SignedSparse(config) => config.l1_norm(),
         }
@@ -111,7 +111,7 @@ impl FoldChallengeDistribution {
     /// Maximum coefficient infinity norm.
     pub fn infinity_norm(&self) -> u32 {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => 1,
             Self::SignedSparse(config) => config.infinity_norm(),
         }
@@ -120,7 +120,7 @@ impl FoldChallengeDistribution {
     /// Maximum squared coefficient L2 norm.
     pub fn challenge_l2_sq_max(&self) -> u128 {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::WEIGHT as u128,
             Self::SignedSparse(config) => config.challenge_l2_sq_max(),
         }
@@ -132,7 +132,7 @@ impl FoldChallengeDistribution {
     /// draw context binds the family through `FamilyShell`.
     pub fn ordering_descriptor_bytes(&self) -> Vec<u8> {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::IDENTITY.to_vec(),
             Self::SignedSparse(config) => {
                 let mut out = Vec::with_capacity(17);
@@ -147,7 +147,7 @@ impl FoldChallengeDistribution {
     /// Validate the family for the selected ring dimension.
     pub fn validate_dyn(&self, ring_d: usize) -> Result<(), &'static str> {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::validate(ring_d, 0),
             Self::SignedSparse(config) => config.validate_dyn(ring_d),
         }
@@ -156,7 +156,7 @@ impl FoldChallengeDistribution {
     /// Validate structure and the ordinary minimum entropy floor.
     pub fn validate_for_ring_dim(&self, ring_d: usize) -> Result<(), &'static str> {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => {
                 crate::binary::root_family::validate(ring_d, crate::MIN_FOLD_CHALLENGE_ENTROPY_BITS)
             }
@@ -171,7 +171,7 @@ impl FoldChallengeDistribution {
         required_bits: u32,
     ) -> Result<(), &'static str> {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::validate(ring_d, required_bits),
             Self::SignedSparse(config) => {
                 config.validate_min_entropy_for_ring_dim(ring_d, required_bits)
@@ -187,7 +187,7 @@ impl FoldChallengeDistribution {
     /// Raw per-draw entropy in bits.
     pub fn log2_support_bits<const D: usize>(&self) -> f64 {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::entropy_bits(D),
             Self::SignedSparse(config) => config.log2_support_bits::<D>(),
         }
@@ -199,7 +199,7 @@ impl FoldChallengeDistribution {
         required_bits: u32,
     ) -> Result<(), &'static str> {
         match self {
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             Self::BinaryRoot => crate::binary::root_family::validate(D, required_bits),
             Self::SignedSparse(config) => config.validate_min_entropy::<D>(required_bits),
         }

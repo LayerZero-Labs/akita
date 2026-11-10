@@ -73,13 +73,12 @@ logging-transcript = [
 ]
 response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 disk-persistence = []
-labinius-trinomial = [
-  "akita-challenges/labinius-challenges",
-  "akita-algebra/labinius-binary",
-  "akita-prover/labinius-trinomial",
-  "akita-verifier/labinius-trinomial",
-  "akita-algebra/labinius-trinomial",
-  "akita-types/labinius-trinomial",
+binary = [
+  "akita-challenges/binary",
+  "akita-algebra/binary",
+  "akita-prover/binary",
+  "akita-verifier/binary",
+  "akita-types/binary",
 ]
 parallel = [
   "akita-prover/parallel",
@@ -111,7 +110,7 @@ harness = false
 [[bench]]
 name = "trinomial_relation"
 harness = false
-required-features = ["labinius-trinomial"]
+required-features = ["binary"]
 
 [[bench]]
 name = "quotient_kernels"
@@ -125,11 +124,11 @@ harness = false
 workspace = true
 
 [[bench]]
-name = "binary_source_fold"
+name = "binary_fold"
 harness = false
-required-features = ["labinius-trinomial"]
+required-features = ["binary"]
 
 [[bench]]
-name = "binary_source_limb_commit"
+name = "binary_limb_commit"
 harness = false
-required-features = ["labinius-trinomial"]
+required-features = ["binary"]

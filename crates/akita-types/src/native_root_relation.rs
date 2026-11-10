@@ -15,7 +15,7 @@ use akita_params::{RelationPolynomial, RelationPolynomialKind, TrinomialSign};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{cfg_chunks, cfg_iter, Field};
 
-use crate::binary_source::BinarySourceDescriptor;
+use crate::binary::BinarySourceDescriptor;
 use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
 mod profiles;

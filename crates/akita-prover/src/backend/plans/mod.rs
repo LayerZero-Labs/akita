@@ -539,5 +539,5 @@ impl ValidatedTerminalZEncodingPlan {
     }
 }
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use relation::NativeRootRelationRequest;

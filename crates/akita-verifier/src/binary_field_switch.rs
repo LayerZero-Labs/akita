@@ -3,7 +3,7 @@
 use akita_algebra::binary::BinaryField162 as B;
 use akita_error::AkitaError;
 use akita_transcript::ProofChannel;
-use akita_types::binary_source::{
+use akita_types::binary::{
     field_switch_challenge, field_switch_partials, field_switch_round, field_switch_terminal,
     BinarySourceDescriptor, BinaryTerminalClaim, BinaryWordClaim,
 };

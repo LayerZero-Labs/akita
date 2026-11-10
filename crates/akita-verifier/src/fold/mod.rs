@@ -9,11 +9,11 @@
 //! config boundary is extracted.
 
 mod admission;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 mod binary_root;
 mod challenges;
 mod ordinary_root;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 mod prime_readings;
 mod relation_instance;
 mod root;

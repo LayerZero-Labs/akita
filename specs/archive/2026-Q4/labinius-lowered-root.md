@@ -21,7 +21,7 @@ relation.
 This document is the normative definition of the lowered statement. The
 [clear opening](labinius-clear-opening.md),
 [root admission](labinius-root-admission.md) and
-[field switch](../../labinius-field-switch.md) specifications give its surrounding
+[field switch](../../binary-field-switch.md) specifications give its surrounding
 contracts. `LabiniusRootEncoding` supplies the enforced ranges and the response
 and image table lengths; this document fixes the relation over those tables.
 

@@ -81,6 +81,6 @@ pub(crate) trait StructuredRelationWeights<E: Field>: Send + Sync {
 pub(crate) enum RelationWeightOracle<E: Field> {
     QuotientFactored(RelationWeightFactorization<E>),
     ReducedDense(DenseRelationWeights<E>),
-    #[cfg_attr(not(any(test, feature = "labinius-trinomial")), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "binary")), allow(dead_code))]
     Structured(Box<dyn StructuredRelationWeights<E>>),
 }

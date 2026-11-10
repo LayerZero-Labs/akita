@@ -51,9 +51,9 @@ mod setup_claims;
 pub use setup_batch::{decide_setup_accumulator, verify_setup_batch_deferred};
 pub use setup_claims::{SetupClaimAccumulator, SetupClaimAdvice, SetupPolicy};
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use relation::native_root::MixedRootRelationWeights;
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[doc(hidden)]
 pub mod binary_field_switch;

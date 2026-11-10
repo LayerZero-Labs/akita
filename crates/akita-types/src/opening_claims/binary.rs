@@ -1,7 +1,7 @@
 //! Binary word claims inside the ordinary grouped opening interface.
 
 use super::{GroupClaimKind, PolynomialGroupClaims};
-use crate::binary_source::BinaryWordClaim;
+use crate::binary::BinaryWordClaim;
 use crate::proof::commitment::CommittedGroupKind;
 use crate::CommittedGroup;
 use akita_error::AkitaError;
@@ -27,7 +27,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
     pub fn new_binary_planes(
         commitment: CommittedGroup<F>,
         claim: Option<BinaryWordClaim>,
-        primes: Option<crate::binary_source::PrimeGroupClaim>,
+        primes: Option<crate::binary::PrimeGroupClaim>,
     ) -> Result<Self, AkitaError> {
         let CommittedGroupKind::Binary(manifest) = commitment.kind() else {
             return Err(AkitaError::InvalidInput(
@@ -37,7 +37,7 @@ impl<'a, E: Field, F: Field + CanonicalEncoding> PolynomialGroupClaims<'a, E, Co
         if let Some(claim) = &claim {
             claim.validate(manifest.descriptor())?;
         }
-        let prime = crate::binary_source::PrimePlaneManifest::with_field_profile(
+        let prime = crate::binary::PrimePlaneManifest::with_field_profile(
             manifest.descriptor(),
             primes,
             manifest.field_profile(),

@@ -1,6 +1,6 @@
 //! Protocol commitment/opening wrapper types.
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 mod binary;
 mod kind;
 /// Extension seam: validate and encode each commitment kind at one wire boundary.

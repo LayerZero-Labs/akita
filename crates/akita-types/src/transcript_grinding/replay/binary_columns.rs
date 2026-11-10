@@ -1,7 +1,7 @@
 //! Atomic replay of the inactive, group-indexed binary column plan.
 
 use super::*;
-use crate::binary_source::{
+use crate::binary::{
     column_nonce_widths, BinaryColumnPlan, BinaryColumnPrefix, BinaryColumnResponse,
 };
 use akita_challenges::BinaryChallenge;
