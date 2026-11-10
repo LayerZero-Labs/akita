@@ -85,7 +85,8 @@ The repository separates proving from verification on purpose.
 | `akita-pcs` | Complete setup, commitment, proving, and verification interface |
 | `akita-config` | Production configurations and trusted artifact validation |
 | `akita-schedules` | External artifact decoding, row audit, and owned catalog lookup |
-| `akita-prover` | Polynomial representations, prepared compute state, and prover kernels |
+| `akita-prover` | Protocol sequencing, proof assembly, and the backend contracts that the prover calls |
+| `akita-cpu-backend` | Polynomial representations, commitment and witness arithmetic, and prepared compute state |
 | `akita-verifier` | Verification without prover polynomial backends or planner search |
 | `akita-types` | Proofs, commitments, claims, schedules, and setup types shared across the boundary |
 | `akita-transcript` | The transcript that derives proof challenges from the public statement and prior messages |

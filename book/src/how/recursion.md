@@ -209,11 +209,12 @@ evaluation-trace openings and direct setup evaluation, and has no incoming
 setup prefix. It cannot return to quotient lifting. Both choices preserve the
 handoff in (4).
 
-The first two folds, at absolute levels zero and one, use subring coefficient
-packing for their opening relations. Every fold of a multi-chunk witness also
-uses it. A later single-chunk fold uses the method that its schedule row
-selects, either coefficient packing or evaluation trace. The terminal uses
-evaluation trace.
+A nonterminal fold at absolute level zero or one uses subring coefficient
+packing for its opening relation. A nonterminal fold whose own witness has
+more than one chunk also uses it, at any level. Every other nonterminal fold
+uses the method that its schedule row selects, either coefficient packing or
+evaluation trace. The terminal always uses evaluation trace, at whatever level
+it occurs.
 [Configuration and planning](./configuration.md) states the complete rule. In a
 proper extension field, evaluation-trace openings also run
 [extension-opening reduction](./proving/extension-opening-reduction.md).

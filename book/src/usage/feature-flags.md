@@ -139,7 +139,8 @@ changes no proof, transcript or default build.
 
 The transcript hardening tests use `logging-transcript`. They record the
 prover's transcript events and compare them with the verifier's. This command
-matches the CI job, with the Keccak transcript backend selected:
+runs one of the three test targets of the CI transcript job, with the Keccak
+transcript backend selected:
 
 ```bash
 cargo test --release -p akita-pcs \

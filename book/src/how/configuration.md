@@ -26,7 +26,7 @@ dimension selected by the fold that consumes the prefix.
 
 **Implementation map**
 
-- `crates/akita-config/src/lib.rs:54-120`.
+- The `CommitmentConfig` trait in `crates/akita-config/src/lib.rs`.
 - `crates/akita-config/src/proof_optimized/`.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner/config boundary.
 

@@ -19,6 +19,7 @@ orchestration lives in `akita-pcs`.
 | `akita-challenges` | Fiat-Shamir challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
 | `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
+| `akita-sis-estimator` | Offline lattice estimator that regenerates the SIS tables; only the offline planner depends on it, behind an optional feature |
 | `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
 | `akita-planner` | `Cfg`-free offline schedule search and artifact emission |
 | `akita-schedules` | Versioned schedule artifacts, semantic row audit, and validated owned catalogs |

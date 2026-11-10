@@ -262,8 +262,8 @@ schedules do not combine it with chunking: every multi-chunk fold must use
 subring coefficient packing, and schedule validation rejects a multi-chunk
 fold that selects evaluation trace. The chunk partition, the per-chunk
 responses, and the aggregate $\mathbf A$ relation (5) below do not depend on
-the opening method. In a real multi-chunk fold, the opening-consistency
-relation (4) takes its packed form from
+the opening method. In a real multi-chunk fold, the fold-evaluation
+consistency relation (4) takes its packed form from
 [Semantic relations in an Akita fold](./akita-fold.md#subring-coefficient-packing-consistency).
 
 Let $N$ be the number of live blocks. Let $C$ be a supported power-of-two chunk

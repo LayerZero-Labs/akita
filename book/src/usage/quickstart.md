@@ -36,6 +36,7 @@ system, the host protocol usually produces the table, point, and claimed value.
 use akita_config::proof_optimized::fp128;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_params::BasisMode;
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use std::sync::Arc;
@@ -49,8 +50,10 @@ let polynomial = DensePoly::from_field_evals(NUM_VARS, &evaluations)?;
 let evaluation = evaluate_multilinear(&evaluations, &point);
 ```
 
-The imports name the crates that the snippets in this chapter use. The later
-snippets do not repeat them. The helper that computes `evaluation` is independent of the Akita prover. It
+These are the main imports for the snippets in this chapter. The later
+snippets do not repeat them, and they write a few other items with their full
+path. The checked-in example imports `load_workspace_scheme` from its own
+support module instead of `AkitaCommitmentScheme`. The helper that computes `evaluation` is independent of the Akita prover. It
 exists to give the verifier a concrete public value to check.
 
 ## Load schedules and build reusable setup

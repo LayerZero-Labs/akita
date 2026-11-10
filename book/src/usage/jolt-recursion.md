@@ -87,8 +87,9 @@ generated schedule still chooses the dimensions used at each later fold.
 | `onehot_fp128:36:1:recursive` | fp128 | 36 | recursive | $D = 512$ |
 | `onehot_fp128_multi_group_recursive:32:4:recursive` | fp128 | 32 | recursive | $D = 512$ |
 
-The first four cases each open one structured one hot polynomial. They are the
-same cases that the CI profile catalog uses. The last case opens several
+The first four cases each open one structured one hot polynomial. Their names
+use the case syntax of the profile harness,
+`MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE]`. The last case opens several
 commitment groups in one proof. It is the default when no case is selected.
 
 Select a case with the `--case` flag of the artifact generator, or with the

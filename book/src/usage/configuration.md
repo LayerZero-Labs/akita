@@ -115,6 +115,10 @@ means no chunking. `num_activated_levels` is the number of leading folds that
 use the chunked layout. Later folds use a single chunk.
 `ChunkedWitnessCfg::default_non_chunked()` gives the single chunk case.
 
+The two fields must agree. One chunk requires `num_activated_levels = 0`. More
+than one chunk requires at least one activated level. Any other combination
+is rejected.
+
 Admission checks that the artifact was generated for the same chunking value.
 A mismatch is rejected before setup or proof work begins.
 
@@ -124,8 +128,12 @@ two folds (levels 0 and 1). `R3` extends the chunked prefix to three folds
 for example `MultiChunkProfileId::W2R3.cfg()`.
 
 The fp128 module also keeps configuration types that name the packaged
-artifacts. Each type identifies one checked-in artifact. An application does
-not need these types to select a chunking value.
+artifacts. Each type identifies one checked-in artifact. Every artifact records the
+family name of its configuration type, and admission checks that name. An
+application that loads a packaged multi chunk artifact must therefore use the
+matching type. An application that keeps a base type such as `OneHot` needs an
+artifact that was generated for that base family with the chosen chunking
+value.
 
 | Configuration type | Chunks | Chunked folds | Source |
 | --- | --- | --- | --- |
@@ -138,9 +146,11 @@ not need these types to select a chunking value.
 | `DenseMultiChunk` | 8 | 2 | dense |
 | `DenseMultiChunkW8R3` | 8 | 3 | dense |
 
-`RecursiveCommitmentConfig<Cfg>` wraps a one hot multi chunk type to combine
-chunking with recursive setup offloading. Each combination uses its own trusted
-schedule catalog.
+`RecursiveCommitmentConfig<Cfg>` combines chunking with recursive setup
+offloading. It accepts `OneHotMultiChunk`, `OneHotMultiChunkW2R3`,
+`OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3`. The `W2R2` and `W4R2` types
+have no recursive companion. Each combination uses its own trusted schedule
+catalog.
 
 Chunking is a deployment choice for measured large workloads. Begin with
 `Dense` or `OneHot` and a single chunk. Move to a chunked catalog after

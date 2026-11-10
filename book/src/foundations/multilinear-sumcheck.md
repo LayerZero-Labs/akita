@@ -262,8 +262,9 @@ $$
 
 When the verifier's challenges bind the added variables to values $s_j$, the
 factor becomes the public scalar $\prod_j(1-s_j)$. The final oracle check for
-the shorter instance evaluates $f$ at its own $n$ challenge coordinates and
-multiplies by that scalar. The prover does not build a table of length $2^N$
+the shorter instance evaluates $f$ at the first $n$ coordinates of the shared
+challenge vector and multiplies by that scalar. The added variables take the
+last $t$ coordinates. The prover does not build a table of length $2^N$
 for the shorter instance. It keeps the native table and tracks the scalar.
 
 The `akita-sumcheck` crate has no generic batching driver. Each protocol step
@@ -292,7 +293,7 @@ For a review, check these facts together:
 4. Proof decoding derives the round count and message width from trusted
    configuration.
 5. The final output claim is compared with the expected oracle evaluation.
-6. Batched instances use the same coefficients, offsets, and challenge slices
+6. Batched instances use the same coefficients and challenge slices
    on the prover and verifier paths.
 
 The next chapter explains the specialized form used when every summand contains

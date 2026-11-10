@@ -30,7 +30,7 @@ catalog to every verification call.
 
 The verifier package stays small when the consumer depends only on the crates
 above. The repository checks in CI that `akita-verifier` has no dependency on
-`akita-pcs`, `akita-prover`, `akita-planner`, or `akita-setup`.
+`akita-pcs`, `akita-prover`, `akita-cpu-backend`, or `akita-planner`.
 
 ## Inputs to verification
 
@@ -106,7 +106,7 @@ It does not run the planner. It then binds the instance descriptor, validates
 the public claims, and replays every fold through terminal verification.
 
 The repository's [quickstart example](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-pcs/examples/quickstart.rs)
-uses this verifier after producing and decoding a proof. Cargo
+uses this verifier on the proof bytes that it produces. Cargo
 compiles that call as part of the normal example checks.
 
 ## Supply verifier setup

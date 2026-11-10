@@ -56,8 +56,9 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     --input target/onehot_fp128_nv36_recursive.bin
 ```
 
-The reusable scalar OneHot cases are the exact cases from the CI profile
-catalog:
+The reusable scalar OneHot cases use the case syntax of the CI profile
+catalog (`MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE]`). Their arities differ from the
+current CI matrix in `.github/workflows/profile-bench.yml`:
 
 | Case | Guest field | Setup mode | Root envelope |
 | --- | --- | --- | --- |

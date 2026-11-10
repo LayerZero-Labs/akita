@@ -48,12 +48,12 @@ The profile output separates these phases:
 | Setup and preparation | Public setup construction and exact retained NTT prewarming |
 | Commit | Commitment to the source polynomial groups |
 | Prove | Complete opening proof generation |
-| Encode | Compressed proof serialization and size accounting |
+| Proof size | Proof byte length, compared with the planner estimate |
 | Verify | Replay with the configured multi threaded verifier pool |
 | Verify with one thread | Replay of the same proof with one verifier worker |
 
 Statement preparation belongs to the harness, not the PCS. Use the named setup,
-commit, prove, encode, and verify phases for protocol comparisons.
+commit, prove, and verify phases for protocol comparisons.
 
 ## Choose the workload
 

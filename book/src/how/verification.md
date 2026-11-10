@@ -194,7 +194,10 @@ construction and are not serialized.
 The caller may pass a `TrustedTerminalCache`, which holds the prepared terminal
 matrix as bytes that `build_riscv64_terminal_ntt_cache` produced earlier. The
 `Decode` form copies the residues and rejects any that are out of range. The
-`View` form reads the bytes in place without a copy or a range pass. This
+`View` form reads the bytes in place without a copy or a range pass. It
+requires bytes that live for the whole program and whose body is aligned for
+in-place use. A guest's own program image qualifies. Guest input qualifies
+only when the outer statement binds it. This
 avoids the transform inside a constrained verifier such as a zkVM guest.
 
 The verifier checks the cache's setup identity, schedule identity, geometry,
