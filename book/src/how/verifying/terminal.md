@@ -26,9 +26,11 @@ $$
 
 The predecessor binds the canonical coefficients of every $\mathbf t_b$
 but the last, and a digest of the last, before its ring-switch and sumcheck
-challenges. The terminal response must contain exactly those bytes. Thus the
-prover cannot choose a new collection of inner images after seeing the
-opening point handed to the terminal.
+challenges. The terminal step sends no second copy. The verifier carries the
+bound coefficients and the digest forward and uses them as the $\mathbf t_b$
+segment of the terminal response. Thus the prover cannot choose a new
+collection of inner images after seeing the opening point handed to the
+terminal.
 
 Let $Q_p$ be the position weights derived from that opening point, and
 $G_a^{\mathrm{in}}$ the inner digit recomposition weights. The honest
@@ -186,9 +188,10 @@ The verifier performs the terminal handoff in this order:
 
 1. Check that the scheduled terminal geometry matches the remaining witness
    and that there is no deferred setup-prefix opening.
-2. Absorb the incoming inner-image binding and check that the response's
-   $\mathbf t_b$ coefficients match it exactly. The last block's digest was
-   already absorbed by the predecessor.
+2. Take the inner images $\mathbf t_b$ from the carried state and check that
+   their length and encoding match the terminal layout. The predecessor
+   already absorbed these coefficients and the last block's digest, so the
+   terminal absorbs neither again.
 3. Prepare the incoming point and claim. Replay extension-opening reduction
    when required.
 4. Absorb every $E_b$ but the last and the digest of the last, consume the
@@ -222,8 +225,11 @@ proof replay. It uses the base prime profile when the signed accumulation
 bound fits and adds the signed 16 bit tail only when required. A schedule
 whose bound exceeds every supported exact profile is invalid.
 
-Prepared matrix views are derived from the coefficient setup and are never
-serialized. These execution choices compute the same relation (5).
+By default the verifier derives the prepared matrix view from the coefficient
+setup when it is constructed. A caller may instead install a view that trusted
+provisioning built earlier, as
+[Verification](../verification.md) describes.
+These execution choices compute the same relation (5).
 
 ## Recompute the last block
 

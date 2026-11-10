@@ -236,29 +236,41 @@ combination happens to cancel it.
 
 ### Instances with different numbers of variables
 
-The current implementation right-aligns every instance in the longest
-challenge vector. If the longest instance has $N$ variables and one shorter
-instance has $n$ variables, the shorter instance receives $N-n$ constant dummy
-rounds before its first real round.
+A shared sum-check needs one round count. Akita gives a shorter instance the
+missing variables and pins them to zero.
 
-A dummy polynomial for running claim $C$ is the constant $C/2$. Its two Boolean
-evaluations sum to $C$, and evaluating it at any challenge returns $C/2$.
-After all $N-n$ dummy rounds, the claim has been divided by $2^{N-n}$.
-Therefore the batch starts that instance at
+Suppose the longest instance has $N$ variables and a shorter instance $f$ has
+$n$ variables. Let $t=N-n$. The shorter instance enters the batch as the
+$N$-variable polynomial
 
 $$
-2^{N-n}T_i.
+\widetilde f(x,y)=f(x)\prod_{j=0}^{t-1}(1-y_j).
 $$
 
-The dummy rounds reduce it back to $T_i$ exactly when the instance becomes
-active. Its real variables then use the suffix
+The added factor is one when every $y_j$ is zero. It is zero at every other
+Boolean assignment of $y$. The Boolean sum of $\widetilde f$ therefore equals
+the Boolean sum of $f$, and the instance keeps its original claim $T_i$. No
+rescaling is needed.
+
+For a small example, take $t=1$. Then
 
 $$
-(r_{N-n},\ldots,r_{N-1})
+\sum_{x}\sum_{y_0\in\{0,1\}} f(x)(1-y_0)
+=\sum_x f(x)\cdot 1+\sum_x f(x)\cdot 0
+=\sum_x f(x).
 $$
 
-of the shared challenge vector. This is the `offset = max_num_rounds - n`
-rule in `batched_sumcheck.rs`.
+When the verifier's challenges bind the added variables to values $s_j$, the
+factor becomes the public scalar $\prod_j(1-s_j)$. The final oracle check for
+the shorter instance evaluates $f$ at its own $n$ challenge coordinates and
+multiplies by that scalar. The prover does not build a table of length $2^N$
+for the shorter instance. It keeps the native table and tracks the scalar.
+
+The `akita-sumcheck` crate has no generic batching driver. Each protocol step
+that batches instances forms the combined claim and the combined round
+polynomial itself. The
+[extension-opening reduction](../how/proving/extension-opening-reduction.md)
+chapter shows this rule in use for opening groups of different sizes.
 
 ## Where to inspect the implementation
 
@@ -268,8 +280,8 @@ rule in `batched_sumcheck.rs`.
 | Build equality-polynomial tables | `akita-algebra/src/eq_poly.rs` |
 | Represent and compress round polynomials | `jolt-poly/src/univariate.rs` and `jolt-poly/src/compressed_univariate.rs` |
 | Define prover and verifier instance contracts | `akita-sumcheck/src/traits.rs` |
-| Encode proofs and verify ordinary rounds | `akita-sumcheck/src/types.rs` |
-| Batch claims and right-align shorter instances | `akita-sumcheck/src/batched_sumcheck.rs` |
+| Define proof containers and proof shapes | `akita-sumcheck/src/types.rs` |
+| Drive the prover and verify ordinary rounds | `akita-sumcheck/src/proof_stream.rs` |
 
 For a review, check these facts together:
 

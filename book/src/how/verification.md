@@ -187,9 +187,24 @@ terminal prefix and the widest terminal row among its admitted schedule rows.
 A shorter product reads a prefix of that entry, and exact CRT capacity is
 monotone in the row width, so the widest row's profile is exact for every
 narrower one. The entry carries the i16 tail only when the widest row needs it.
-Prepared forms are derived from the coefficient setup and never serialized.
-Verification only reads them, and shape and setup-prefix checks happen before
-either kernel indexes prepared state.
+By default, prepared forms are derived from the coefficient setup at
+construction and are not serialized.
+
+`AkitaVerifier::for_selection` accepts one exception for a single selected row.
+The caller may pass a `TrustedTerminalCache`, which holds the prepared terminal
+matrix as bytes that `build_riscv64_terminal_ntt_cache` produced earlier. The
+`Decode` form copies the residues and rejects any that are out of range. The
+`View` form reads the bytes in place without a copy or a range pass. This
+avoids the transform inside a constrained verifier such as a zkVM guest.
+
+The verifier checks the cache's setup identity, schedule identity, geometry,
+and lengths. It cannot check that the transformed payload was derived from the
+named setup seed. The caller must therefore bind the cache bytes to trusted
+setup provisioning or to the verifier program identity. A cache that names a
+row the verifier does not admit is rejected as an invalid setup.
+
+Verification only reads prepared forms, and shape and setup-prefix checks
+happen before either kernel indexes prepared state.
 
 The verifier never constructs prover-only polynomial backends or setup expansion
 kernels.

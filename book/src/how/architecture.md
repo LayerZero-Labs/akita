@@ -51,11 +51,11 @@ Key structural facts:
 ## End-to-end lifecycle
 
 1. **Preset and trusted catalog selection.** The caller picks a `CommitmentConfig` preset and loads the matching schedule artifact from the same trusted parameter source used for setup or preprocessing. The caller constructs one `AkitaCommitmentScheme<Cfg>` with that catalog. The catalog contains complete expanded rows. Planner search remains offline. Each row selects `SubringCoefficientPacking` or `EvaluationTrace` for every nonterminal fold. EOR is present only for an evaluation trace opening over a proper extension field. See [Fold path and field geometry](./proving/fold-path.md).
-2. **Setup.** `akita-setup` scans the rows in the scheme's trusted catalog and expands the setup (Ajtai matrices and stride envelopes) to cover the requested capacity.
+2. **Setup.** `akita-setup` scans the rows in the scheme's trusted catalog and expands the setup to cover the requested capacity. The expanded setup holds one shared matrix. The Ajtai matrices for roles A, B, and D are prefix views of that matrix.
 3. **Commit.** The application consumes its polynomials into a reusable `CpuBackend` and commits the imported source using `GroupContext`. The result contains a public commitment and an opaque handle retaining the exact source and commitment parameters. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does. Explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
 5. **Prove.** `batched_prove` receives retained commitment handles and public claims. The backend checks that each claim matches its commitment before preparing a fresh proof session. The generic prover walks the schedule, absorbs backend messages, samples challenges, and assembles the proof. Source coefficients and witness arithmetic remain inside the backend.
-6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
+6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier both build the canonical instance descriptor with `transcript_instance_descriptor` and absorb it with `bind_instance` before any challenge, so Fiat-Shamir challenges match.
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/prove/root.rs`, `crates/akita-verifier/src/fold/verify.rs`.
 
@@ -85,9 +85,12 @@ generic prover has no production dependency on that crate. Source import and
 persistence are application/backend operations. Setup prefixes enter generic
 proving as ordinary reusable commitment handles with checked public metadata.
 
-A shared `ConsumerIdentity` binds all fold levels to the same setup. A
-`ProofContext` identifies an active proof, fold level, and source group before
-private preparation starts. Witness assembly checks those identities before
+A `BackendInstanceIdentity` names one backend instance. It includes the
+implementation type, so identities from different backends never compare
+equal. A `ProofContext` carries the backend identifier, the setup digest, the
+proof scope, the fold level, and the source group. It identifies an active
+proof step before private preparation starts, and it binds every fold level to
+the same setup. Witness assembly checks those identities before
 consuming its inputs, and checks that each accepted fold carries its original
 public challenges. EOR openings also bind to the exact witness operation that
 produced them. Finishing or abandoning a proof invalidates its retained scope

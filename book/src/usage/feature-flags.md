@@ -137,12 +137,16 @@ verification. Each evaluation emits one `tracing` event at `INFO` with its
 evaluation tiers and builder outcomes. It is for native diagnostic runs; it
 changes no proof, transcript or default build.
 
-The `transcript_schedule` example uses `logging-transcript`:
+The transcript hardening tests use `logging-transcript`. They record the
+prover's transcript events and compare them with the verifier's. This command
+matches the CI job, with the Keccak transcript backend selected:
 
 ```bash
-cargo run -p akita-pcs \
-  --features logging-transcript \
-  --example transcript_schedule
+cargo test --release -p akita-pcs \
+  --test transcript_hardening \
+  --no-default-features \
+  --features parallel,logging-transcript,transcript-keccak \
+  -- --test-threads=1
 ```
 
 ## Profile CI features

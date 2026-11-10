@@ -1,4 +1,4 @@
-# Recursion and proof streams
+# Recursion and proof shape
 
 A fold turns an opening of a committed source into an opening of a new digit
 witness. The schedule selects a chain of these reductions ending in a response
@@ -209,9 +209,13 @@ evaluation-trace openings and direct setup evaluation, and has no incoming
 setup prefix. It cannot return to quotient lifting. Both choices preserve the
 handoff in (4).
 
-The root and first recursive fold use subring coefficient packing for their
-opening relations. Later recursive folds use evaluation trace. In a proper
-extension field, evaluation-trace openings also run
+The first two folds, at absolute levels zero and one, use subring coefficient
+packing for their opening relations. Every fold of a multi-chunk witness also
+uses it. A later single-chunk fold uses the method that its schedule row
+selects, either coefficient packing or evaluation trace. The terminal uses
+evaluation trace.
+[Configuration and planning](./configuration.md) states the complete rule. In a
+proper extension field, evaluation-trace openings also run
 [extension-opening reduction](./proving/extension-opening-reduction.md).
 These opening methods change how the current scalar claim enters the fold,
 not which witness evaluation Stage 2 passes onward.

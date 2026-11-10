@@ -33,6 +33,13 @@ multilinear polynomial there. This value is the public claim. In a larger proof
 system, the host protocol usually produces the table, point, and claimed value.
 
 ```rust
+use akita_config::proof_optimized::fp128;
+use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
+use akita_params::BasisMode;
+use akita_prover::SelectedProverOpeningData;
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use std::sync::Arc;
+
 type Config = fp128::Dense;
 type F = fp128::Field;
 
@@ -42,7 +49,8 @@ let polynomial = DensePoly::from_field_evals(NUM_VARS, &evaluations)?;
 let evaluation = evaluate_multilinear(&evaluations, &point);
 ```
 
-The helper that computes `evaluation` is independent of the Akita prover. It
+The imports name the crates that the snippets in this chapter use. The later
+snippets do not repeat them. The helper that computes `evaluation` is independent of the Akita prover. It
 exists to give the verifier a concrete public value to check.
 
 ## Load schedules and build reusable setup
@@ -52,15 +60,30 @@ application loads approved artifact bytes from its own storage; Akita validates
 them before setup or proof work begins. `setup_prover` then sizes public matrix
 data from the exact rows in that catalog.
 
+The example runs inside the Akita workspace, so it uses a small helper that
+loads the artifact checked in at `artifacts/schedules/fp128_dense.aks`:
+
 ```rust
-let artifact_bytes = std::fs::read("parameters/fp128_dense.aks")?;
+let scheme =
+    load_workspace_scheme::<Config>(akita_params::ChunkedWitnessCfg::default_non_chunked())?;
+let setup = scheme.setup_prover(NUM_VARS, 1)?;
+let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
+```
+
+`load_workspace_scheme` is workspace tooling. It is not part of the public API.
+An application outside the workspace reads the same artifact bytes from its own
+storage and calls the public constructor. Replace the path with the location
+where your application keeps its copy of the artifact:
+
+```rust
+let artifact_bytes = std::fs::read("path/to/fp128_dense.aks")?;
 let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
     &artifact_bytes,
     akita_params::ChunkedWitnessCfg::default_non_chunked(),
 )?;
-let setup = scheme.setup_prover(NUM_VARS, 1)?;
-let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 ```
+
+Both forms validate the artifact and produce the same scheme.
 
 The prepared backend holds reproducible compute state such as transformed
 matrix prefixes. Applications should reuse it across commitments and proofs.
