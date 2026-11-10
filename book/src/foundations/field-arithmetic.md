@@ -26,7 +26,7 @@ the random evaluation points used by the protocol.
 | --- | --- | --- |
 | `fp32` | \(2^{32}-99\) | degree-4 extension |
 | `fp64` | \(2^{64}-59\) | degree-2 extension |
-| `fp128` | \(2^{128}-2^{32}+22537\) | base field |
+| `fp128` | \(2^{128}-1780711455\) | base field |
 
 All three challenge fields therefore have about 128 bits. The `fp128` modulus
 also has a smooth multiplicative subgroup used by the arithmetic library's
@@ -217,11 +217,11 @@ The field code is supplied by Akita's pinned `jolt-field` dependency.
 
 | Property | Primary source |
 | --- | --- |
-| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/1976ced1bb8777af51c706c9c2fee15b3de5a10a/crates/jolt-field/src/solinas/mod.rs) |
-| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/1976ced1bb8777af51c706c9c2fee15b3de5a10a/crates/jolt-field/src/solinas/word.rs) |
-| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/1976ced1bb8777af51c706c9c2fee15b3de5a10a/crates/jolt-field/src/solinas/fp128.rs) |
-| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/1976ced1bb8777af51c706c9c2fee15b3de5a10a/crates/jolt-field/src/solinas/unreduced.rs) |
-| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/1976ced1bb8777af51c706c9c2fee15b3de5a10a/crates/jolt-field/src/solinas/ext.rs) |
+| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/mod.rs) |
+| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/word.rs) |
+| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/fp128.rs) |
+| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/unreduced.rs) |
+| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/ext.rs) |
 | Production field selection | `crates/akita-config/src/proof_optimized/` |
 
 A field change must preserve canonical encoding, exact sampling, centered

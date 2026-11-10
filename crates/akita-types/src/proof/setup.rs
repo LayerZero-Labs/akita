@@ -711,10 +711,10 @@ mod tests {
     use super::*;
     use jolt_field::Zero;
     use jolt_field::{
-        Fp32, Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+        Fp32, Fp64, Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
     };
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const D: usize = 4;
     type SmallF = Fp64<4294967197>;
     const SMALL_D: usize = 64;
@@ -724,20 +724,20 @@ mod tests {
         d_setup: usize,
     ) -> akita_params::GroupOpenPhaseParams {
         let a_bound = *akita_params::sis::inner_coeff_linf_bounds(
-            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
             u32::try_from(d_setup).expect("test ring dimension"),
         )
         .first()
         .expect("exact prefix A bounds");
         let inner_digits = akita_params::sis::compute_num_digits_field_width(
-            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7.field_bits(),
+            akita_params::sis::SisModulusProfileId::Q128Offset6A23801F.field_bits(),
             1,
         );
         let inner_commit_matrix = akita_params::InnerCommitMatrixParams::try_new_with_min_rank(
             akita_params::SisTableKey {
                 policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: akita_params::sis::SisTableDigest::CURRENT,
-                modulus_profile: akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                modulus_profile: akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
                 role: akita_params::sis::SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
                 coeff_linf_bound: a_bound,
@@ -749,7 +749,7 @@ mod tests {
             akita_params::SisTableKey {
                 policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: akita_params::sis::SisTableDigest::CURRENT,
-                modulus_profile: akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+                modulus_profile: akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
                 role: akita_params::sis::SisMatrixRole::Outer,
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
                 coeff_linf_bound: 3,

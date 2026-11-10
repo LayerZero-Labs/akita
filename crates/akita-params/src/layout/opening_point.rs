@@ -242,10 +242,10 @@ pub fn reduce_inner_opening_to_ring_element<F: Field, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
     use jolt_field::{One, Ring};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     #[test]
     fn lagrange_weights_match_direct_multilinear_basis() {

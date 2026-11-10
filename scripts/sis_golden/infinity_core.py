@@ -35,7 +35,7 @@ assert_pr217_estimator = assert_pinned_estimator
 FAMILIES: dict[str, tuple[int, str]] = {
     "q32": ((1 << 32) - 99, "2^32 - 99"),
     "q64": ((1 << 64) - 59, "2^64 - 59"),
-    "q128": ((1 << 128) - ((1 << 32) - 22537), "2^128 - (2^32 - 22537)"),
+    "q128": ((1 << 128) - 1780711455, "2^128 - 1780711455"),
 }
 
 PROFILE = InfinityEstimatorProfile.default_optimizer().to_metadata()

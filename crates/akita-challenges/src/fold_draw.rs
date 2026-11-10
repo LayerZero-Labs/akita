@@ -6,10 +6,7 @@
 //! counts, so the message continues the squeeze run before it.
 
 use crate::sampler::SparseChallengeShell;
-use crate::{
-    Challenges, OperatorNormRejection, SparseChallenge, SparseChallengeConfig,
-    SparseChallengeStream,
-};
+use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig, SparseChallengeStream};
 use akita_error::AkitaError;
 use akita_transcript::ProofChannel;
 
@@ -114,11 +111,11 @@ pub trait FoldDraw {
     /// Squeeze one group's challenge message of exactly `len` bytes and
     /// decode it. `decode` returns `None` when an operator-norm pool runs out;
     /// the verifier adapter rejects then.
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError>;
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError>;
 
     /// Draw one group's challenges: squeeze and decode one message of the
     /// family's fixed length.
@@ -141,8 +138,19 @@ pub trait FoldDraw {
             AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
         })?;
         let stream = family.stream(total)?;
-        let challenges =
-            self.draw_message(stream.message_len(), |message| stream.decode(message))?;
+        if stream.uses_checked_quartets() && crate::checked_hint::active() {
+            return self.draw_message(stream.message_len(), |message| {
+                Ok(Some(Challenges::from_checked_quartets(
+                    stream.decode_checked_hints(message)?,
+                    num_live_blocks,
+                    num_claims,
+                )?))
+            });
+        }
+        let position_hints = crate::checked_hint::positions_active();
+        let challenges = self.draw_message(stream.message_len(), |message| {
+            stream.decode_with(message, position_hints)
+        })?;
         challenges
             .map(|challenges| {
                 Challenges::from_sampled(
@@ -194,11 +202,11 @@ impl<'a> PreviewFoldDraw<'a> {
 
 #[cfg(feature = "prover")]
 impl FoldDraw for PreviewFoldDraw<'_> {
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
         self.preview.challenge_message(len, decode)
     }
 }
@@ -227,11 +235,11 @@ impl<'a> ProverFoldDraw<'a> {
 }
 
 impl FoldDraw for ProverFoldDraw<'_> {
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
         self.state.context(fold_record(self.level, self.group, len));
         self.state.challenge_message(len, decode)
     }
@@ -261,11 +269,11 @@ impl<'a, 'proof> VerifierFoldDraw<'a, 'proof> {
 }
 
 impl FoldDraw for VerifierFoldDraw<'_, '_> {
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
         self.state.context(fold_record(self.level, self.group, len));
         self.state.challenge_message(len, |message| {
             decode(message)?.map(Some).ok_or(AkitaError::InvalidProof)
@@ -283,11 +291,11 @@ mod tests {
     }
 
     impl FoldDraw for CapturingDraw {
-        fn draw_message(
+        fn draw_message<T>(
             &mut self,
             len: usize,
-            decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-        ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+            decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+        ) -> Result<Option<T>, AkitaError> {
             self.message_lens.push(len);
             decode(&vec![7; len])
         }

@@ -53,14 +53,14 @@ fn recursive_prefix_slot_id_fixture() {
         onehot,
         (
             4,
-            "a7bbd692801b2843e5af5b13097612e5f9961fdf6071dd7f48f109ff7f6e932f".to_string(),
+            "f7c8690cdfe14b2a76ada81c0162ac7149816633152c35ff35609197e754a92f".to_string(),
         )
     );
     assert_eq!(
         multichunk,
         (
             3,
-            "836185d421459efc7f48a00ed2f6753176d40f6b0183cd70d29380ca8777979d".to_string(),
+            "77103df7310a9f3affdf8acf863324368bca6edf0f0ee1eeedc7c72f8365986d".to_string(),
         )
     );
 }

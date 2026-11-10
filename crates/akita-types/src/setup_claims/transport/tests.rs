@@ -3,7 +3,7 @@ use crate::setup_claims::{SetupClaim, SetupPolynomialId, SetupQuery};
 use crate::{AkitaExpandedSetup, AkitaSetupDescriptor};
 use jolt_field::{CanonicalBytes, One, Ring};
 mod extension;
-type F = jolt_field::Prime128OffsetA7F7;
+type F = jolt_field::Prime128Offset6A23801F;
 fn fixture() -> (SetupPolynomialId, Vec<u8>) {
     let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {

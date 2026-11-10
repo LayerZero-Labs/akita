@@ -2,7 +2,7 @@
 name = "akita-recursion-glue"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version.workspace = true
 license = "Apache-2.0 OR MIT"
 description = "Shared blob format for shipping Akita verifier inputs to a Jolt guest program."
 repository = "https://github.com/LayerZero-Labs/hachi"
@@ -27,7 +27,7 @@ trusted-benchmark-artifact = []
 akita-error = { version = "0.1.0", path = "../../../crates/akita-error" }
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
   "asm",
   "solinas",
 ] }
