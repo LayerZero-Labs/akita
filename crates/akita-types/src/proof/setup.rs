@@ -19,6 +19,9 @@ use std::sync::Arc;
 mod range;
 pub use range::derive_public_matrix_range;
 
+#[cfg(test)]
+mod page_xof_tests;
+
 /// Versioned derivation algorithm for the public field stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicMatrixDerivation {
@@ -374,8 +377,14 @@ pub fn validate_public_matrix_matches_seed<F: Field + CanonicalEncoding + Valid>
 /// Concrete SHAKE256 XOF reader for one public-matrix page.
 type SetupSeedXofReader = <Shake256 as ExtendableOutput>::Reader;
 
+// One complete SHAKE256 rate block. Read-ahead stays within this page's stream;
+// it never changes the bytes consumed by Field::random, including on rejection.
+const SETUP_XOF_RATE: usize = 136;
+
 struct SetupSeedPageXof {
     reader: SetupSeedXofReader,
+    buffer: [u8; SETUP_XOF_RATE],
+    position: usize,
 }
 
 impl SetupSeedPageXof {
@@ -396,6 +405,30 @@ impl SetupSeedPageXof {
         absorb_len_prefixed(&mut xof, b"page", &(page_index as u64).to_le_bytes());
         Self {
             reader: xof.finalize_xof(),
+            buffer: [0; SETUP_XOF_RATE],
+            position: SETUP_XOF_RATE,
+        }
+    }
+
+    // The usual field draw is served by fill_bytes' contiguous-copy fast path.
+    // Handle refills and draws crossing a rate boundary out of that hot path.
+    #[inline(never)]
+    fn fill_bytes_across_blocks(&mut self, mut dest: &mut [u8]) {
+        while !dest.is_empty() {
+            if self.position == self.buffer.len() {
+                XofReader::read(&mut self.reader, &mut self.buffer);
+                self.position = 0;
+            }
+            // position starts at the buffer length and advances by at most the
+            // remaining length. Both splits are bounded by these slice lengths.
+            let available = self.buffer.len() - self.position;
+            let count = available.min(dest.len());
+            let (head, tail) = dest.split_at_mut(count);
+            let (_, remaining) = self.buffer.split_at(self.position);
+            let (source, _) = remaining.split_at(count);
+            head.copy_from_slice(source);
+            self.position += count;
+            dest = tail;
         }
     }
 }
@@ -406,22 +439,35 @@ fn field_modulus_bytes<F: Field + CanonicalEncoding>() -> [u8; 32] {
 }
 
 impl RngCore for SetupSeedPageXof {
+    #[inline]
     fn next_u32(&mut self) -> u32 {
         let mut buf = [0u8; 4];
         self.fill_bytes(&mut buf);
         u32::from_le_bytes(buf)
     }
 
+    #[inline]
     fn next_u64(&mut self) -> u64 {
         let mut buf = [0u8; 8];
         self.fill_bytes(&mut buf);
         u64::from_le_bytes(buf)
     }
 
+    #[inline]
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        XofReader::read(&mut self.reader, dest);
+        if let Some(source) = self
+            .buffer
+            .get(self.position..)
+            .and_then(|remaining| remaining.get(..dest.len()))
+        {
+            dest.copy_from_slice(source);
+            self.position += dest.len();
+        } else {
+            self.fill_bytes_across_blocks(dest);
+        }
     }
 
+    #[inline]
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
         self.fill_bytes(dest);
         Ok(())
