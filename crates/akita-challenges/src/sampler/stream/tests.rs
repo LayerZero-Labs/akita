@@ -240,7 +240,9 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
     {
         let stream = layout(d, &config, Some(rejection), count).unwrap();
         #[cfg(feature = "parallel")]
-        assert_eq!(stream.parallel(), count == 600);
+        {
+            assert_eq!(stream.parallel(), count == 600 && !capture_enabled());
+        }
         let ChallengePolicy::OperatorNorm { threshold, table } =
             ChallengePolicy::new(d, &config, Some(rejection)).unwrap()
         else {
@@ -457,3 +459,6 @@ fn checked_subset_positions_have_the_exact_transcript_rank() {
         }
     }
 }
+
+#[path = "hint_tests.rs"]
+mod hint_tests;

@@ -246,6 +246,13 @@ jobs:
           --features parallel,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
+      - name: Run host challenge capture modes
+        if: matrix.backend == 'transcript-keccak'
+        run: |
+          env -u AKITA_CAPTURE_CHALLENGES cargo test --release -p akita-challenges --lib \
+            --no-default-features --features parallel,experiment-capture,transcript-keccak
+          AKITA_CAPTURE_CHALLENGES=1 cargo test --release -p akita-challenges --lib \
+            --no-default-features --features parallel,experiment-capture,transcript-keccak
       - name: Run Spongefish stream and mutation suites
         run: |
           cargo test --release -p akita-transcript \

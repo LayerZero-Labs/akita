@@ -1,4 +1,4 @@
-use super::{META, RANK_ONE, RANK_TWO};
+use super::{META, RANK_CONTRIBUTIONS};
 
 #[test]
 fn quartet_metadata_matches_all_base_five_coefficients() {
@@ -42,28 +42,22 @@ fn quartet_rank_tables_match_exact_pascal_contributions() {
         }
     }
 
-    for (name, table, offset_step, offset_count) in [
-        ("RANK_ONE", RANK_ONE.as_slice(), 4, 16),
-        ("RANK_TWO", RANK_TWO.as_slice(), 1, 61),
-    ] {
-        assert_eq!(table.len(), offset_count * 61 * 16, "{name} dimensions");
-        for (prefix, counts) in table.chunks_exact(61 * 16).enumerate() {
-            let offset = prefix * offset_step;
-            for (count, masks) in counts.chunks_exact(16).enumerate() {
-                for (mask, &actual) in masks.iter().enumerate() {
-                    let mut ordinal = count;
-                    let expected = (0..4)
-                        .filter(|bit| mask & (1 << bit) != 0)
-                        .map(|bit| {
-                            ordinal += 1;
-                            binomials[offset + bit][ordinal]
-                        })
-                        .sum::<u64>();
-                    assert_eq!(
-                        actual, expected,
-                        "{name}: offset {offset}, prefix count {count}, mask {mask:04b}"
-                    );
-                }
+    assert_eq!(RANK_CONTRIBUTIONS.len(), 61 * 61 * 16);
+    for (offset, counts) in RANK_CONTRIBUTIONS.chunks_exact(61 * 16).enumerate() {
+        for (count, masks) in counts.chunks_exact(16).enumerate() {
+            for (mask, &actual) in masks.iter().enumerate() {
+                let mut ordinal = count;
+                let expected = (0..4)
+                    .filter(|bit| mask & (1 << bit) != 0)
+                    .map(|bit| {
+                        ordinal += 1;
+                        binomials[offset + bit][ordinal]
+                    })
+                    .sum::<u64>();
+                assert_eq!(
+                    actual, expected,
+                    "offset {offset}, prefix count {count}, mask {mask:04b}"
+                );
             }
         }
     }
