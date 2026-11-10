@@ -52,7 +52,6 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "jolt-algebra",
- "jolt-inlines-ntt",
  "jolt-poly",
  "rayon",
  "tracing",
@@ -116,28 +115,6 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "thiserror",
-]
-
-[[package]]
-name = "akita-inline-parity-guest"
-version = "0.1.0"
-dependencies = [
- "akita-algebra",
- "jolt-algebra",
- "jolt-sdk",
- "serde",
-]
-
-[[package]]
-name = "akita-inline-parity-host"
-version = "0.1.0"
-dependencies = [
- "akita-algebra",
- "akita-inline-parity-guest",
- "jolt-inlines-ntt",
- "jolt-program",
- "jolt-sdk",
- "jolt-sdk-macros",
 ]
 
 [[package]]
@@ -1379,27 +1356,6 @@ dependencies = [
  "serde",
  "tracer",
  "tracing",
-]
-
-[[package]]
-name = "jolt-inlines-ntt"
-version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#ba7b798237e1a222decca37c70918ef3728670ab"
-dependencies = [
- "jolt-inlines-sdk",
-]
-
-[[package]]
-name = "jolt-inlines-sdk"
-version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#ba7b798237e1a222decca37c70918ef3728670ab"
-dependencies = [
- "inventory",
- "jolt-platform",
- "jolt-program",
- "jolt-riscv",
- "num-bigint 0.4.8",
- "tracer",
 ]
 
 [[package]]

@@ -31,7 +31,6 @@ dependencies = [
  "akita-serialization",
  "criterion",
  "jolt-algebra",
- "jolt-inlines-ntt",
  "jolt-poly",
  "rand 0.8.8",
  "rayon",
@@ -1329,11 +1328,6 @@ source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#ba7b798237e
 dependencies = [
  "rayon",
 ]
-
-[[package]]
-name = "jolt-inlines-ntt"
-version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?branch=whiteout%2Fpreview#ba7b798237e1a222decca37c70918ef3728670ab"
 
 [[package]]
 name = "jolt-lookup-tables"

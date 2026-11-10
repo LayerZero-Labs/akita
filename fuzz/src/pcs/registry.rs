@@ -171,6 +171,27 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    use akita_config::CommitmentConfig;
+
+    /// Whiteout's response-proof catalog. Its preset, `fp128::ResponseDigits`,
+    /// exists only under akita-config's `zk` feature, which this crate does
+    /// not enable.
+    const RESPONSE_DIGITS_CATALOG: &str = "fp128_response_digits";
+
+    /// Shipped catalogs this harness does not fuzz: the zero-knowledge
+    /// schedules and the response-proof catalog. They need the `zk` features,
+    /// and akita-pcs's zero-knowledge tests load them.
+    fn zero_knowledge_catalogs() -> BTreeSet<&'static str> {
+        [
+            <fp128::Dense as CommitmentConfig>::ZK_SCHEDULE_FAMILY_NAME,
+            <RecursiveCommitmentConfig<fp128::OneHot> as CommitmentConfig>::ZK_SCHEDULE_FAMILY_NAME,
+        ]
+        .into_iter()
+        .map(|name| name.expect("configuration declares a zero-knowledge family"))
+        .chain([RESPONSE_DIGITS_CATALOG])
+        .collect()
+    }
+
     #[test]
     fn every_shipped_catalog_loads_with_trusted_chunking() {
         let families = all_families();
@@ -178,6 +199,8 @@ mod tests {
         let artifact_targets: BTreeSet<_> =
             crate::targets::artifact::FAMILIES.into_iter().collect();
         assert_eq!(registered, artifact_targets);
+        let zero_knowledge = zero_knowledge_catalogs();
+        assert!(registered.is_disjoint(&zero_knowledge));
         let shipped: BTreeSet<_> = std::fs::read_dir(crate::env::artifacts_dir())
             .expect("shipped artifact directory")
             .map(|entry| entry.expect("artifact entry").path())
@@ -187,6 +210,7 @@ mod tests {
         assert_eq!(
             registered
                 .into_iter()
+                .chain(zero_knowledge)
                 .map(str::to_owned)
                 .collect::<BTreeSet<_>>(),
             shipped

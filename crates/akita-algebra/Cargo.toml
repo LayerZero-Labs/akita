@@ -9,7 +9,6 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-inlines-ntt = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, optional = true }
 akita-error = { version = "0.1.0", path = "../akita-error" }
 jolt-algebra = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "asm",
@@ -49,7 +48,6 @@ harness = false
 required-features = ["labinius-trinomial"]
 
 [features]
-ntt-inline = ["dep:jolt-inlines-ntt"]
 default = []
 labinius-binary = []
 parallel = ["dep:rayon", "jolt-algebra/parallel"]
