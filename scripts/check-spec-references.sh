@@ -172,6 +172,7 @@ live_specs=(
   specs/transcript-grinding.md
   specs/grinding-nonce-encoding.md
   specs/family-agnostic-cpu-backend.md
+  specs/verifier-setup-scan.md
 )
 
 missing_live=()
