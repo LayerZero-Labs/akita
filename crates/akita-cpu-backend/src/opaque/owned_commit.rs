@@ -261,12 +261,12 @@ mod tests {
                         other_descriptor.num_field_elements,
                         &other_descriptor.setup_seed,
                     );
-                    let other_backend = CpuBackend::<F, E>::new(Arc::new(
+                    let other_backend = CpuBackend::<F, E>::new(Arc::new(unsafe {
                         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                             other_descriptor,
                             other_matrix,
-                        ),
-                    ))
+                        )
+                    }))
                     .unwrap();
                     if live != 0 {
                         assert!(other_backend

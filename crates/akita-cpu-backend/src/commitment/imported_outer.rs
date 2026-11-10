@@ -41,8 +41,8 @@ impl<F: Field, E> CpuBackend<F, E> {
                 "root commitment modulus profile does not match the backend field".into(),
             ));
         }
-        if profile.group.num_vars() > expanded.descriptor.max_num_vars
-            || profile.group.num_polynomials() > expanded.descriptor.max_num_batched_polys
+        if profile.group.num_vars() > expanded.descriptor().max_num_vars
+            || profile.group.num_polynomials() > expanded.descriptor().max_num_batched_polys
         {
             return Err(AkitaError::InvalidSetup(
                 "root commitment group exceeds the backend setup limits".into(),
@@ -52,10 +52,10 @@ impl<F: Field, E> CpuBackend<F, E> {
 
         let execution = CommitmentExecutionPlan::for_root(&profile)?;
         let required_setup = execution.max_setup_field_elements()?;
-        if required_setup > expanded.descriptor.num_field_elements {
+        if required_setup > expanded.descriptor().num_field_elements {
             return Err(AkitaError::InvalidSetup(format!(
                 "root commitment requires {required_setup} setup field elements, but setup has {}",
-                expanded.descriptor.num_field_elements
+                expanded.descriptor().num_field_elements
             )));
         }
         let compression_plan = execution.compression().cloned().ok_or_else(|| {

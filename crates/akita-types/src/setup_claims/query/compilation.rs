@@ -162,15 +162,17 @@ mod tests {
 
     #[test]
     fn compilation_budget_rejects_large_index_tables_before_allocation() {
-        let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: 64,
-                setup_seed: [19; 32].into(),
-            },
-            crate::derive_public_matrix_prefix(64, &[19; 32].into()),
-        );
+        let setup = unsafe {
+            AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 0,
+                    max_num_batched_polys: 0,
+                    num_field_elements: 64,
+                    setup_seed: [19; 32].into(),
+                },
+                crate::derive_public_matrix_prefix(64, &[19; 32].into()),
+            )
+        };
         let polynomial = SetupPolynomialId::new::<F, F>(&setup, 1 << 24).unwrap();
         let query = SetupQuery::evaluation(vec![F::from_u64(3); 24]).unwrap();
         let required = query.compilation_bytes(&polynomial, 2).unwrap();

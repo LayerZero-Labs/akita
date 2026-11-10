@@ -78,6 +78,8 @@ jobs:
           scripts/check-crate-deps.sh akita-params
           scripts/check-crate-deps.sh akita-schedules
           scripts/check-crate-deps.sh akita-sis-estimator
+          scripts/check-crate-deps.sh akita-preprocess
+          scripts/check-crate-deps.sh akita-anchors
 
   machete:
     name: Unused dependencies

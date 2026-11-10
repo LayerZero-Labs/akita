@@ -134,7 +134,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".into()))?;
     let a_view = backend
         .prepared_expanded_setup(prepared)
-        .shared_matrix
+        .shared_matrix()
         .ring_view::<D>(plan.n_a, active_a_cols)?;
     let rows = column_sweep_ajtai_onehot_multi::<F, D, I>(
         &a_view,

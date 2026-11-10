@@ -1,0 +1,59 @@
+[package]
+name = "akita-preprocess"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Deterministic generator and auditor of pinned Akita preprocessing releases"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+publish = false
+
+[[bin]]
+name = "akita-preprocess"
+path = "src/main.rs"
+
+[features]
+default = ["parallel", "transcript-keccak"]
+parallel = [
+  "jolt-field/parallel",
+  "akita-cpu-backend/parallel",
+  "akita-verifier/parallel",
+]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-cpu-backend/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+  "akita-params/transcript-blake2b",
+  "akita-verifier/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-cpu-backend/transcript-keccak",
+  "akita-types/transcript-keccak",
+  "akita-params/transcript-keccak",
+  "akita-verifier/transcript-keccak",
+]
+# Keccak-256 instead of SHA3-256 digests: a release is valid for one selection.
+keccak256-digests = ["akita-params/keccak256-digests"]
+
+[dependencies]
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+akita-cpu-backend = { version = "0.1.0", path = "../akita-cpu-backend", default-features = false }
+akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-params = { version = "0.1.0", path = "../akita-params", default-features = false }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1976ced1bb8777af51c706c9c2fee15b3de5a10a", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+rayon = "1.10"
+
+[lints]
+workspace = true

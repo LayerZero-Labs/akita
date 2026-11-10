@@ -14,25 +14,34 @@ if [ "$#" -gt 0 ]; then
 else
   case "${pkg}" in
     akita-params)
-      forbidden=(akita-types akita-prover akita-verifier akita-cpu-backend akita-pcs akita-setup akita-config akita-schedules akita-planner)
+      forbidden=(akita-types akita-prover akita-verifier akita-cpu-backend akita-pcs akita-setup akita-config akita-schedules akita-planner akita-preprocess akita-anchors)
       ;;
     akita-sis-estimator)
       forbidden=(akita-types)
       ;;
     akita-verifier)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs akita-preprocess)
       ;;
     akita-prover)
-      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs)
+      forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-preprocess)
       ;;
     akita-cpu-backend)
-      forbidden=(akita-planner akita-verifier akita-setup akita-pcs)
+      forbidden=(akita-planner akita-verifier akita-setup akita-pcs akita-preprocess)
       ;;
     akita-config)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-verifier akita-pcs akita-preprocess)
       ;;
     akita-schedules)
-      forbidden=(akita-types akita-planner akita-config akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
+      forbidden=(akita-types akita-planner akita-config akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs akita-preprocess)
+      ;;
+    akita-preprocess)
+      # The generator publishes commitments from scratch: it never reads the
+      # setup cache (Invariant 2), and anchors stay outside its dependency
+      # closure so adding a release never changes a bundle_id.
+      forbidden=(akita-setup akita-anchors akita-pcs)
+      ;;
+    akita-anchors)
+      forbidden=(akita-preprocess akita-cpu-backend akita-prover akita-planner akita-pcs akita-setup)
       ;;
     akita-planner)
       # `akita-planner` is offline-only. It may use `akita-config` behind its
@@ -41,7 +50,7 @@ else
       forbidden=(akita-prover akita-cpu-backend akita-verifier akita-setup akita-pcs)
       ;;
     akita-setup)
-      forbidden=(akita-verifier akita-pcs)
+      forbidden=(akita-verifier akita-pcs akita-preprocess)
       ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2

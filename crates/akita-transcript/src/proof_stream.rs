@@ -27,7 +27,7 @@ pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, N
 
 /// Proof channel and proof-stream format version, named by [`PROTOCOL_TAG`].
 ///
-/// Version 8 fixes:
+/// Version 9 fixes:
 ///
 /// - **The challenge codec.** Jolt's pooled rejection codec, within total
 ///   variation `2^-161` of uniform per message; pools of 4-byte fields round
@@ -46,17 +46,21 @@ pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, N
 ///   absorbed in between. Its length is the candidate bits rounded up to
 ///   whole words, and candidate `c` occupies bits `[c·K, (c + 1)·K)` of the
 ///   message read as little-endian `u64` words.
+/// - **The setup-prefix binding.** Protocol Stage 3 absorbs each selected
+///   setup-prefix slot as its compressed id followed by its 32-byte prefix
+///   commitment digest, on the ordinary path and on the offloaded outer-batch
+///   path.
 ///
 /// The fold draw absorbs no payload, so these values are bound only by this
 /// version and change it when they change: the `OperatorNormRejection`
 /// constants, the pool rates that set a sparse message's length, and the
 /// meaning of the coefficient-packing draw domain.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// Akita protocol tag, absorbed first in every Akita sub-transcript: the
 /// protocol name, [`PROTOCOL_VERSION`] and the digest hash
 /// ([`jolt_transcript::DIGEST_HASH`]), zero-padded to 32 bytes:
-/// `akita-pcs/transcript/v8/sha3`, or `akita-pcs/transcript/v8/keccak` under
+/// `akita-pcs/transcript/v9/sha3`, or `akita-pcs/transcript/v9/keccak` under
 /// `keccak256-digests`.
 ///
 /// Akita absorbs it whether it runs in its own session or inside a caller's.
@@ -64,8 +68,8 @@ pub const PROTOCOL_VERSION: u32 = 8;
 /// verifying under the other. The tag does not name the sponge: a different
 /// sponge is a different hash function and already changes every output.
 pub const PROTOCOL_TAG: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
-    DigestHash::Sha3_256 => b"akita-pcs/transcript/v8/sha3".as_slice(),
-    DigestHash::Keccak256 => b"akita-pcs/transcript/v8/keccak".as_slice(),
+    DigestHash::Sha3_256 => b"akita-pcs/transcript/v9/sha3".as_slice(),
+    DigestHash::Keccak256 => b"akita-pcs/transcript/v9/keccak".as_slice(),
 });
 
 /// Spongefish session tag of a standalone Akita proof.

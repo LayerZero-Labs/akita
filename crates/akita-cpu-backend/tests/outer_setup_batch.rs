@@ -109,7 +109,7 @@ where
         num_field_elements: capacity.num_field_elements.next_power_of_two(),
     };
     let setup = AkitaProverSetup::<Cfg::Field>::generate_with_capacity(nv, 1, capacity).unwrap();
-    let backend = CpuBackend::<Cfg::Field, Cfg::ExtField>::new(setup.expanded.clone()).unwrap();
+    let backend = CpuBackend::<Cfg::Field, Cfg::ExtField>::new(setup.expanded().clone()).unwrap();
     let source = backend
         .import_source(vec![DensePoly::from_field_evals(
             nv,
@@ -155,7 +155,7 @@ where
     .unwrap();
     let mut prefixes = SetupPrefixProverRegistry::default();
     let mut public =
-        SetupPrefixVerifierRegistry::new(setup.expanded.descriptor().setup_seed.clone());
+        SetupPrefixVerifierRegistry::new(setup.expanded().descriptor().setup_seed.clone());
     for id in ids {
         let slot = backend.prepare_setup_prefix(&id).unwrap();
         public.insert(slot.public.clone()).unwrap();
@@ -173,14 +173,16 @@ where
         assert!(reduced.expanded().shared_matrix().num_field_elements() < selected.unwrap().1);
         reduced.expanded().clone()
     } else {
-        setup.expanded.clone()
+        setup.expanded().clone()
     };
-    let verifier = AkitaVerifier::<Cfg>::for_selection(
-        AkitaVerifierSetup::from_parts(verifier_matrix, public.clone()).unwrap(),
-        catalog.clone(),
-        selection,
-        None,
-    )
+    let verifier = unsafe {
+        AkitaVerifier::<Cfg>::for_selection(
+            AkitaVerifierSetup::from_parts(verifier_matrix, public.clone()).unwrap(),
+            catalog.clone(),
+            selection,
+            None,
+        )
+    }
     .unwrap();
     let prove = |batch: Option<(u32, &SetupBatchStatement<Cfg::ExtField>)>| {
         #[cfg(feature = "logging-transcript")]
@@ -190,7 +192,7 @@ where
             None => opening(),
         };
         let proof = akita_prover::batched_prove::<Cfg, _>(
-            setup.expanded.descriptor(),
+            setup.expanded().descriptor(),
             &catalog,
             &registry,
             opening,
@@ -244,7 +246,7 @@ where
         .unwrap();
     let (level, len) = selected.unwrap_or((0, capacity.num_field_elements));
     let polynomial =
-        SetupPolynomialId::new::<Cfg::Field, Cfg::ExtField>(&setup.expanded, len).unwrap();
+        SetupPolynomialId::new::<Cfg::Field, Cfg::ExtField>(setup.expanded(), len).unwrap();
     let empty = SetupBatchStatement::new(polynomial.clone(), 32, Vec::new()).unwrap();
     assert_eq!(prove(Some((level, &empty))).unwrap(), ordinary);
     let mut empty_accumulator = SetupClaimAccumulator::from_batch(level, empty);
@@ -462,12 +464,14 @@ where
     if offloaded {
         // Direct closure requires the full inherited prefix, while the offloaded
         // verifier above only stores the coefficients needed by its direct folds.
-        let direct_verifier = AkitaVerifier::<Cfg>::for_selection(
-            AkitaVerifierSetup::from_parts(setup.expanded.clone(), public).unwrap(),
-            catalog.clone(),
-            selection,
-            None,
-        )
+        let direct_verifier = unsafe {
+            AkitaVerifier::<Cfg>::for_selection(
+                AkitaVerifierSetup::from_parts(setup.expanded().clone(), public).unwrap(),
+                catalog.clone(),
+                selection,
+                None,
+            )
+        }
         .unwrap();
         // A direct suffix fold can close the same mixed collection.
         let direct = prove(Some((direct_level, &inherited))).unwrap();

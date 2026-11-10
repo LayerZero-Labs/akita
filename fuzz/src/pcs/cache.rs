@@ -133,12 +133,14 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 bytes[offset..end].copy_from_slice(&patch[..end - offset]);
             }
         }
-        let installed = AkitaVerifier::<Cfg>::for_selection(
-            fixture.setup.clone(),
-            Cfg::schedules(&self.scheme).clone(),
-            honest.proved.selection,
-            Some(akita_verifier::TrustedTerminalCache::Decode(&bytes)),
-        );
+        let installed = unsafe {
+            AkitaVerifier::<Cfg>::for_selection(
+                fixture.setup.clone(),
+                Cfg::schedules(&self.scheme).clone(),
+                honest.proved.selection,
+                Some(akita_verifier::TrustedTerminalCache::Decode(&bytes)),
+            )
+        };
         let verify = |verifier: &AkitaVerifier<Cfg>, proof: &[u8]| {
             self.verify(
                 proof,

@@ -9,7 +9,6 @@ use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::row_batch::WeightedRowBatch;
 use akita_error::AkitaError;
 use akita_params::{CommittedGroupParams, SETUP_SUMCHECK_DEGREE};
-use akita_serialization::AkitaSerialize;
 use akita_transcript::ChallengeCodec;
 #[cfg(test)]
 use akita_types::AkitaExpandedSetup;
@@ -141,7 +140,8 @@ where
 }
 
 /// Resolve the planned setup-prefix slot in the verifier setup, check that it
-/// covers the Stage 3 setup product, and absorb its public slot id.
+/// covers the Stage 3 setup product, and absorb its slot id and prefix
+/// commitment digest.
 ///
 /// The coverage length returned by [`setup_prefix_coverage_eval_len`] is not
 /// needed: it equals the projection geometry's `setup_index_len` because the
@@ -176,11 +176,12 @@ where
         ring_d,
         "verifier setup-prefix slot does not cover setup product",
     )?;
-    let mut encoded_slot = Vec::new();
-    slot.id
-        .serialize_compressed(&mut encoded_slot)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    akita_types::stage3_public_slot(grinding, level, &encoded_slot)
+    akita_types::stage3_public_slot(
+        grinding,
+        level,
+        &slot.id,
+        setup.prefix_commitment_digest(&slot.id)?,
+    )
 }
 
 #[cfg(test)]
@@ -288,14 +289,16 @@ mod tests {
             num_field_elements: setup_eval_len * RING_D,
             setup_seed: [9u8; 32].into(),
         };
-        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            descriptor,
-            akita_params::FlatMatrix::from_flat_data(
-                (0..setup_eval_len * RING_D)
-                    .map(|index| F::from_u64(11 + index as u64))
-                    .collect(),
-            ),
-        );
+        let setup = unsafe {
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                descriptor,
+                akita_params::FlatMatrix::from_flat_data(
+                    (0..setup_eval_len * RING_D)
+                        .map(|index| F::from_u64(11 + index as u64))
+                        .collect(),
+                ),
+            )
+        };
         let rho_y = (0..RING_D.trailing_zeros() as usize)
             .map(|index| F::from_u64(101 + index as u64))
             .collect::<Vec<_>>();
@@ -367,15 +370,17 @@ mod tests {
                 Ok(())
             }
         }
-        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: 1,
-                setup_seed: [43; 32].into(),
-            },
-            akita_types::derive_public_matrix_prefix::<F>(1, &[43; 32].into()),
-        );
+        let setup = unsafe {
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 0,
+                    max_num_batched_polys: 0,
+                    num_field_elements: 1,
+                    setup_seed: [43; 32].into(),
+                },
+                akita_types::derive_public_matrix_prefix::<F>(1, &[43; 32].into()),
+            )
+        };
         let value = setup.shared_matrix().as_field_slice()[0];
         let domain = SetupPolynomialId::new::<F, F>(&setup, 1).unwrap();
         let statement = SetupBatchStatement::new(

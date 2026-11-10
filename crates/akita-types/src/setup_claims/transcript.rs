@@ -130,9 +130,12 @@ where
 }
 
 /// The existing successor must open this batch's exact actual setup prefix.
+/// Binds the slot id and its prefix commitment digest as the ordinary
+/// Stage 3 path does.
 pub fn bind_outer_prefix<F, E, G>(
     statement: &SetupBatchStatement<E>,
     slot: &crate::SetupPrefixVerifierSlot<F>,
+    digest: &crate::preprocessing::PrefixCommitmentDigest,
     successor: &akita_params::CommittedGroupParams,
     grinding: &mut G,
     level: u32,
@@ -142,7 +145,6 @@ where
     E: Field,
     G: crate::GrindingReplay,
 {
-    use akita_serialization::AkitaSerialize;
     crate::setup_prefix_coverage_eval_len(
         None,
         &slot.id,
@@ -162,9 +164,5 @@ where
             "outer batch does not match the successor setup prefix".into(),
         ));
     }
-    let mut bytes = Vec::new();
-    slot.id
-        .serialize_compressed(&mut bytes)
-        .map_err(|_| AkitaError::InvalidProof)?;
-    crate::stage3_public_slot(grinding, level, &bytes)
+    crate::stage3_public_slot(grinding, level, &slot.id, digest)
 }

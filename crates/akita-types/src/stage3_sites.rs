@@ -1,7 +1,10 @@
 //! Proof-stream grammar for recursive setup-product stage 3.
 
+use crate::preprocessing::PrefixCommitmentDigest;
 use crate::GrindingReplay;
 use akita_error::AkitaError;
+use akita_params::SetupPrefixSlotId;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::{
     exchange_extension_group, public_bytes, ProtocolSiteId, SITE_FAMILY_STAGE3,
 };
@@ -21,17 +24,20 @@ fn site(level: u32, role: u32) -> ProtocolSiteId {
     }
 }
 
-/// Bind the selected public setup-prefix slot.
+/// Bind the selected setup-prefix slot:
+/// `serialize_compressed(slot id) || prefix_commitment_digest`, where the
+/// digest is computed from the commitment the fold reads.
 pub fn stage3_public_slot<G: GrindingReplay>(
     grinding: &mut G,
     level: u32,
-    encoded_slot: &[u8],
+    id: &SetupPrefixSlotId,
+    digest: &PrefixCommitmentDigest,
 ) -> Result<(), AkitaError> {
-    public_bytes(
-        grinding.state_mut(),
-        site(level, ROLE_SETUP_SLOT),
-        encoded_slot,
-    )
+    let mut bound = Vec::with_capacity(id.compressed_size() + 32);
+    id.serialize_compressed(&mut bound)
+        .map_err(|error| AkitaError::InvalidSetup(format!("setup-prefix slot id: {error}")))?;
+    bound.extend_from_slice(digest.as_bytes());
+    public_bytes(grinding.state_mut(), site(level, ROLE_SETUP_SLOT), &bound)
 }
 
 /// Exchange the setup-product input claim before sumcheck challenges.
@@ -77,25 +83,39 @@ mod tests {
     use super::*;
     use crate::{ProverGrinding, VerifierGrinding};
     use akita_params::{ChallengeFieldOrder, GrindingPlan};
-    use akita_transcript::{new_prover_channel, new_verifier_channel};
+    use akita_transcript::{ext_challenge, new_prover_channel, new_verifier_channel};
     use jolt_field::{FpExt4, Prime32Offset99, Ring, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
 
-    #[test]
-    fn stage3_public_slot_and_late_prefix_eval_roundtrip() {
-        let plan = GrindingPlan::new(
+    fn plan() -> GrindingPlan {
+        GrindingPlan::new(
             Vec::new(),
             ChallengeFieldOrder::from_full_capacity(128).unwrap(),
         )
-        .unwrap();
-        let slot = b"canonical setup slot";
+        .unwrap()
+    }
+
+    fn slot_id() -> SetupPrefixSlotId {
+        akita_params::scheduled_setup_prefix(
+            64,
+            crate::proof::setup::tests::prefix_commitment_params(64, 64),
+        )
+        .slot_id()
+        .unwrap()
+    }
+
+    #[test]
+    fn stage3_public_slot_and_late_prefix_eval_roundtrip() {
+        let plan = plan();
+        let id = slot_id();
+        let digest = PrefixCommitmentDigest::from_bytes([7; 32]);
         let claim = E::from_u64(17);
         let prefix_eval = E::from_u64(29);
         let mut state = new_prover_channel(b"native-stage3");
         let mut prover = ProverGrinding::new(&mut state, &plan);
-        stage3_public_slot(&mut prover, 3, slot).unwrap();
+        stage3_public_slot(&mut prover, 3, &id, &digest).unwrap();
         stage3_claim::<F, E, _>(&mut prover, 3, claim).unwrap();
         stage3_prefix_eval::<F, E, _>(&mut prover, 3, prefix_eval).unwrap();
         prover.finish().unwrap();
@@ -103,7 +123,7 @@ mod tests {
 
         let mut state = new_verifier_channel(b"native-stage3", &proof);
         let mut verifier = VerifierGrinding::new(&mut state, &plan);
-        stage3_public_slot(&mut verifier, 3, slot).unwrap();
+        stage3_public_slot(&mut verifier, 3, &id, &digest).unwrap();
         assert_eq!(
             stage3_claim::<F, E, _>(&mut verifier, 3, E::zero()).unwrap(),
             claim
@@ -113,5 +133,27 @@ mod tests {
             prefix_eval
         );
         verifier.finish().unwrap().check_eof(state).unwrap();
+    }
+
+    /// The next challenge depends on the prefix commitment digest, not only
+    /// on the slot id, so a proof names the commitments it was made against.
+    #[test]
+    fn stage3_slot_binding_depends_on_the_prefix_commitment_digest() {
+        let plan = plan();
+        let id = slot_id();
+        let draw = |digest: [u8; 32]| {
+            let mut state = new_prover_channel(b"native-stage3");
+            let mut prover = ProverGrinding::new(&mut state, &plan);
+            stage3_public_slot(
+                &mut prover,
+                3,
+                &id,
+                &PrefixCommitmentDigest::from_bytes(digest),
+            )
+            .unwrap();
+            ext_challenge::<E, _>(prover.state_mut(), site(3, ROLE_INPUT_CLAIM)).unwrap()
+        };
+        assert_eq!(draw([1; 32]), draw([1; 32]));
+        assert_ne!(draw([1; 32]), draw([2; 32]));
     }
 }

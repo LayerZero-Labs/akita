@@ -10,7 +10,7 @@ fn dense_group_commit_freezes_scalar_s_profile() {
         workspace_scheme::<DenseGroupCfg>(akita_params::ChunkedWitnessCfg::default_non_chunked())
             .expect("workspace schedule artifact");
     let setup = scheme.setup_prover(NUM_VARS, 1).expect("dense group setup");
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
 
     let evals = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64((3 * index + 7) as u64))

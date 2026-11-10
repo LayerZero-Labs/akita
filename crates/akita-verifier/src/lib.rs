@@ -27,6 +27,7 @@ mod benchmark_support;
 mod coefficient_packing_relation;
 mod fold;
 mod prepared_cache;
+pub mod preprocessing;
 mod relation;
 mod setup_contribution;
 mod stages;

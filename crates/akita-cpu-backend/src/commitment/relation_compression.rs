@@ -53,7 +53,7 @@ impl<F: Field + CanonicalEncoding + 'static, E> CpuBackend<F, E> {
     ) -> Result<PortableCompressionOutput<F>, AkitaError> {
         let prepared = self.prepared()?;
         let expanded = prepared.expanded();
-        if plan.max_setup_field_elements()? > expanded.descriptor.num_field_elements {
+        if plan.max_setup_field_elements()? > expanded.descriptor().num_field_elements {
             return Err(AkitaError::InvalidSetup(
                 "relation compression exceeds setup capacity".into(),
             ));
