@@ -87,9 +87,11 @@ unsafe fn page_streams<F: Field + CanonicalEncoding>(
             position = 0;
         }
     }
-    for lane in 0..4 {
-        state[position / 8][lane] ^= 0x1f << (8 * (position % 8));
-        state[SETUP_XOF_RATE / 8 - 1][lane] ^= 1 << 63;
+    for word in &mut state[position / 8] {
+        *word ^= 0x1f << (8 * (position % 8));
+    }
+    for word in &mut state[SETUP_XOF_RATE / 8 - 1] {
+        *word ^= 1 << 63;
     }
     let mut blocks: [Vec<[u8; SETUP_XOF_RATE]>; 4] =
         std::array::from_fn(|_| Vec::with_capacity(block_count));
