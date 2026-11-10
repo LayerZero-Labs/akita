@@ -298,13 +298,14 @@ file_hash   = H(tag("akita/preprocessing/file/v1") || str(name) || bytes(content
 | `hints/<hex(stream_id)>/<hex(profile_key)>` | optional; the hint part of the exported `SetupPrefixSlot<F>`, serialized with `Compress::No`, without the slot id and public commitment | CPU reference prover |
 | `catalog/<set>` | catalog artifact bytes | Both |
 | `catalog-view/<set>/<hex(row digest)>` | selected-row verifier view | Guest, guest producer checks |
-| `terminal-cache/<hex(stream_id)>/<hex(row digest)>/<target>/<capacity>` | prepared terminal cache with its binding header | Guest |
+| `terminal-cache/<hex(stream_id)>/<hex(row digest)>/<target>` | prepared terminal cache with its binding header | Guest |
 | `certificate/<hex(stream_id)>/<hex(profile_key)>` | reserved for a future proof of derivation | None yet |
 
 In file names, `row digest` is the row's `ScheduleRowDigest` (the
-`row_digest` of `OpeningScheduleSelection`); `<capacity>` is ASCII decimal
-without leading zeros; `<target>` is a guest target name exactly as listed in
-the manifest's `target` list.
+`row_digest` of `OpeningScheduleSelection`); `<target>` is a guest target
+name exactly as listed in the manifest's `target` list. A terminal cache
+binds the setup seed digest, the row digest, and the row's exact terminal
+footprint, so its row names it whatever the verifier's setup mode.
 
 The matrix is not shipped. Every host consumer derives it from the seed, and
 a guest embeds its prefix in an approved image, which the approval step
@@ -873,7 +874,11 @@ approved guest image
 
 At startup the guest runs the same loader as a host on the small embedded
 files, as a single-row load (A1–A4), except that A3 takes the embedded matrix
-prefix instead of deriving it. The registry entries MUST be embedded as
+prefix instead of deriving it. The loader sizes that prefix for the guest's
+setup mode (`SetupMode`): in `Check` the verifier evaluates direct setup
+queries against it; in `Defer` it exports them as obligations, so the prefix
+holds only the compression-map coefficients and the verifier MUST take its
+row's terminal cache, which a `Defer` verifier without one rejects. The registry entries MUST be embedded as
 release files and checked by the loader; the build step MUST NOT embed a
 combined verifier key whose commitments came from anywhere else, which
 replaces Jolt's current single prepared-key payload. A guest verifying
@@ -887,7 +892,8 @@ covers one inner program.
 Files that depend on program rows cannot be release files, since the rows
 are planned after publication: the selected-row view of the merged catalog,
 and the terminal cache of a program row (`TerminalNttCache::install_trusted`
-binds the setup seed digest, the exact row digest, and the setup capacity).
+binds the setup seed digest, the exact row digest, and the row's terminal
+footprint).
 The guest build step MUST
 derive them from the anchored release and the inner program preprocessing:
 it runs the host loader for the program, takes `to_verifier_view` of the
