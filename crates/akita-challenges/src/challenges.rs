@@ -5,6 +5,7 @@ use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{ExtField, Field, Ring};
+use std::sync::{Arc, OnceLock};
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
@@ -18,11 +19,18 @@ const PARALLEL_FINE_LEAF_TERMS: usize = 1 << 13;
 // The fine tier starts above the largest measured coarse-leaf sweet spot.
 const PARALLEL_FINE_TOTAL_TERMS: usize = 1 << 17;
 
+#[derive(Debug, Clone)]
+enum ChallengeStorage {
+    Sparse(Arc<[SparseChallenge]>),
+    // Retain the decoded buffer rather than copying it into another allocation.
+    Quartets(Arc<Vec<[u64; 4]>>),
+}
+
 /// Stage-1 fold challenges in claim-major block order.
 #[derive(Debug, Clone)]
 pub struct Challenges {
-    /// Per-(claim, block) sparse challenges.
-    challenges: std::sync::Arc<[SparseChallenge]>,
+    /// Per-(claim, block) challenges, with the representation explicit.
+    storage: ChallengeStorage,
     /// Exact number of live blocks packed into one claim.
     num_live_blocks_per_claim: usize,
     /// Number of claims represented by this vector.
@@ -30,8 +38,7 @@ pub struct Challenges {
     // Only the private sampler or an injective embedding may set this cache.
     sampled_family: Option<(usize, SparseChallengeConfig)>,
     embedding_stride: usize,
-    materialized: std::sync::Arc<std::sync::OnceLock<Vec<SparseChallenge>>>,
-    quartet_codes: std::sync::Arc<std::sync::OnceLock<Vec<[u64; 4]>>>,
+    materialized: Arc<OnceLock<Vec<SparseChallenge>>>,
 }
 
 impl PartialEq for Challenges {
@@ -39,9 +46,13 @@ impl PartialEq for Challenges {
         self.num_live_blocks_per_claim == other.num_live_blocks_per_claim
             && self.num_claims == other.num_claims
             && ((self.embedding_stride == other.embedding_stride
-                && std::sync::Arc::ptr_eq(&self.challenges, &other.challenges)
-                && (!self.challenges.is_empty()
-                    || std::sync::Arc::ptr_eq(&self.quartet_codes, &other.quartet_codes)))
+                && match (&self.storage, &other.storage) {
+                    (ChallengeStorage::Sparse(a), ChallengeStorage::Sparse(b)) => Arc::ptr_eq(a, b),
+                    (ChallengeStorage::Quartets(a), ChallengeStorage::Quartets(b)) => {
+                        Arc::ptr_eq(a, b)
+                    }
+                    _ => false,
+                })
                 || self.as_slice() == other.as_slice())
     }
 }
@@ -67,12 +78,11 @@ impl Challenges {
         if blocks.checked_mul(claims) != Some(packed.len()) {
             return Err(AkitaError::InvalidProof);
         }
-        let cache = std::sync::OnceLock::new();
-        cache.get_or_init(|| packed);
         Ok(Self {
-            challenges: Vec::new().into(),
+            storage: ChallengeStorage::Quartets(Arc::new(packed)),
             num_live_blocks_per_claim: blocks,
             num_claims: claims,
+            // The authenticated quartet format is exactly D64/31/10.
             sampled_family: Some((
                 64,
                 SparseChallengeConfig {
@@ -81,8 +91,7 @@ impl Challenges {
                 },
             )),
             embedding_stride: 1,
-            materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
-            quartet_codes: std::sync::Arc::new(cache),
+            materialized: Arc::new(OnceLock::new()),
         })
     }
     /// Whether immutable challenge storage was generated in this checked family.
@@ -114,13 +123,12 @@ impl Challenges {
             });
         }
         Ok(Self {
-            challenges: challenges.into(),
+            storage: ChallengeStorage::Sparse(challenges.into()),
             num_live_blocks_per_claim,
             num_claims,
             sampled_family: None,
             embedding_stride: 1,
-            materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
-            quartet_codes: std::sync::Arc::new(std::sync::OnceLock::new()),
+            materialized: Arc::new(OnceLock::new()),
         })
     }
 
@@ -128,75 +136,77 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn as_slice(&self) -> &[SparseChallenge] {
-        if self.challenges.is_empty() && self.quartet_codes.get().is_some() {
-            return self.materialized.get_or_init(|| {
-                self.quartet_codes
-                    .get()
-                    .into_iter()
-                    .flatten()
-                    .map(|words| {
-                        let mut p1 = crate::SparseChallengePositions::new();
-                        let mut p2 = crate::SparseChallengePositions::new();
-                        let mut c1 = crate::SparseChallengeCoefficients::new();
-                        let mut c2 = crate::SparseChallengeCoefficients::new();
-                        for q in 0..16 {
-                            let mut code = (words[q / 4] >> (10 * (q % 4))) & 1023;
-                            for i in 0..4 {
-                                let c = (code % 5) as i8 - 2;
-                                code /= 5;
-                                let p = ((4 * q + i) * self.embedding_stride) as u32;
-                                if c.unsigned_abs() == 1 {
-                                    p1.push(p);
-                                    c1.push(c);
-                                }
-                                if c.unsigned_abs() == 2 {
-                                    p2.push(p);
-                                    c2.push(c);
+        match &self.storage {
+            ChallengeStorage::Quartets(codes) => self
+                .materialized
+                .get_or_init(|| {
+                    codes
+                        .iter()
+                        .map(|words| {
+                            let mut p1 = crate::SparseChallengePositions::new();
+                            let mut p2 = crate::SparseChallengePositions::new();
+                            let mut c1 = crate::SparseChallengeCoefficients::new();
+                            let mut c2 = crate::SparseChallengeCoefficients::new();
+                            for q in 0..16 {
+                                let mut code = (words[q / 4] >> (10 * (q % 4))) & 1023;
+                                for i in 0..4 {
+                                    let c = (code % 5) as i8 - 2;
+                                    code /= 5;
+                                    let p = ((4 * q + i) * self.embedding_stride) as u32;
+                                    if c.unsigned_abs() == 1 {
+                                        p1.push(p);
+                                        c1.push(c);
+                                    }
+                                    if c.unsigned_abs() == 2 {
+                                        p2.push(p);
+                                        c2.push(c);
+                                    }
                                 }
                             }
-                        }
-                        p1.extend(p2);
-                        c1.extend(c2);
-                        SparseChallenge {
-                            positions: p1,
-                            coeffs: c1,
-                        }
+                            p1.extend(p2);
+                            c1.extend(c2);
+                            SparseChallenge {
+                                positions: p1,
+                                coeffs: c1,
+                            }
+                        })
+                        .collect()
+                })
+                .as_slice(),
+            ChallengeStorage::Sparse(challenges) if self.embedding_stride == 1 => challenges,
+            ChallengeStorage::Sparse(challenges) => {
+                self.materialized
+                    .get_or_init(|| {
+                        challenges
+                            .iter()
+                            .map(|challenge| {
+                                // The checked embedding constructor bounds every product by u32::MAX.
+                                SparseChallenge {
+                                    positions: challenge
+                                        .positions
+                                        .iter()
+                                        .map(|&p| ((p as usize) * self.embedding_stride) as u32)
+                                        .collect(),
+                                    coeffs: crate::SparseChallengeCoefficients::from_slice(
+                                        &challenge.coeffs,
+                                    ),
+                                }
+                            })
+                            .collect()
                     })
-                    .collect()
-            });
+                    .as_slice()
+            }
         }
-        if self.embedding_stride == 1 {
-            return &self.challenges;
-        }
-        self.materialized
-            .get_or_init(|| {
-                self.challenges
-                    .iter()
-                    .map(|challenge| {
-                        // The checked embedding constructor bounds every product by u32::MAX.
-                        SparseChallenge {
-                            positions: challenge
-                                .positions
-                                .iter()
-                                .map(|&p| ((p as usize) * self.embedding_stride) as u32)
-                                .collect(),
-                            coeffs: crate::SparseChallengeCoefficients::from_slice(
-                                &challenge.coeffs,
-                            ),
-                        }
-                    })
-                    .collect()
-            })
-            .as_slice()
     }
 
     /// Number of block challenges represented by this value.
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        self.quartet_codes
-            .get()
-            .map_or(self.challenges.len(), Vec::len)
+        match &self.storage {
+            ChallengeStorage::Sparse(challenges) => challenges.len(),
+            ChallengeStorage::Quartets(codes) => codes.len(),
+        }
     }
 
     /// Whether this challenge set is empty.
@@ -235,7 +245,7 @@ impl Challenges {
             .ok_or_else(|| {
                 AkitaError::InvalidInput(format!(
                     "challenge index {index} out of range for {} challenges",
-                    self.challenges.len()
+                    self.len()
                 ))
             })?
             .eval_at_pows::<F, E>(alpha_pows)
@@ -251,16 +261,11 @@ impl Challenges {
         F: Field + Ring,
         E: Field + ExtField<F>,
     {
-        if self.quartet_codes.get().is_some()
-            && self.len() >= 1024
-            && self.sampled_family.as_ref().is_some_and(|(d, config)| {
-                *d == alpha_pows.len()
-                    && *d / self.embedding_stride == 64
-                    && config.count_pm1 == 31
-                    && config.count_pm2 == 10
-            })
-        {
-            return self.evaluate_quartets::<F, E>(alpha_pows);
+        match (&self.storage, self.sampled_family) {
+            (ChallengeStorage::Quartets(codes), Some((d, _))) if d == alpha_pows.len() => {
+                return self.evaluate_quartets::<F, E>(codes, alpha_pows);
+            }
+            _ => {}
         }
         let sampled = self
             .sampled_family
@@ -271,10 +276,9 @@ impl Challenges {
         } else {
             Vec::new()
         };
-        let source = if sampled.is_some() && !self.challenges.is_empty() {
-            self.challenges.as_ref()
-        } else {
-            self.as_slice()
+        let source = match (&self.storage, sampled) {
+            (ChallengeStorage::Sparse(challenges), Some(_)) => challenges.as_ref(),
+            _ => self.as_slice(),
         };
         let evaluate = |challenge: &SparseChallenge| {
             if sampled.is_some() {
@@ -304,7 +308,7 @@ impl Challenges {
             // Same M4 Max benchmark above: smaller batches never amortized
             // the initial Rayon dispatch, independent of sparse weight.
             const MIN_PARALLEL_CHALLENGES: usize = 1 << 9;
-            self.challenges.len() >= MIN_PARALLEL_CHALLENGES
+            source.len() >= MIN_PARALLEL_CHALLENGES
         };
         #[cfg(feature = "parallel")]
         if parallel_candidate {
@@ -324,15 +328,13 @@ impl Challenges {
             // Production batches have a uniform sparse weight. Pricing leaves
             // from the exact average also keeps arbitrary valid batches linear
             // without rescanning their terms at every recursive fork.
-            let average_terms = sparse_terms.div_ceil(self.challenges.len());
+            let average_terms = sparse_terms.div_ceil(source.len());
             let leaf_challenges = (leaf_terms / average_terms).max(1);
             let mut evaluations = Vec::new();
-            evaluations
-                .try_reserve_exact(self.challenges.len())
-                .map_err(|_| {
-                    AkitaError::InvalidInput("challenge evaluation allocation failed".into())
-                })?;
-            evaluations.resize(self.challenges.len(), E::zero());
+            evaluations.try_reserve_exact(source.len()).map_err(|_| {
+                AkitaError::InvalidInput("challenge evaluation allocation failed".into())
+            })?;
+            evaluations.resize(source.len(), E::zero());
             evaluations
                 .par_chunks_mut(leaf_challenges)
                 .zip(source.par_chunks(leaf_challenges))
@@ -351,9 +353,9 @@ impl Challenges {
 
     fn evaluate_quartets<F: Field + Ring, E: Field + ExtField<F>>(
         &self,
+        codes: &[[u64; 4]],
         powers: &[E],
     ) -> Result<Vec<E>, AkitaError> {
-        let codes = self.quartet_codes.get().ok_or(AkitaError::InvalidProof)?;
         let mut tables = Vec::with_capacity(16 * 625);
         {
             for q in 0..16 {
@@ -436,7 +438,7 @@ impl Challenges {
             selected.extend_from_slice(self.as_slice().get(start..end).ok_or(
                 AkitaError::InvalidSize {
                     expected: end,
-                    actual: self.challenges.len(),
+                    actual: self.len(),
                 },
             )?);
         }
@@ -497,7 +499,7 @@ impl Challenges {
                     AkitaError::InvalidInput("subring embedding stride overflow".into())
                 })?;
             return Ok(Self {
-                challenges: std::sync::Arc::clone(&self.challenges),
+                storage: self.storage.clone(),
                 num_live_blocks_per_claim: self.num_live_blocks_per_claim,
                 num_claims: self.num_claims,
                 sampled_family: self
@@ -505,8 +507,7 @@ impl Challenges {
                     .as_ref()
                     .map(|(_, config)| (ambient_ring_dimension, *config)),
                 embedding_stride: stride,
-                materialized: std::sync::Arc::new(std::sync::OnceLock::new()),
-                quartet_codes: std::sync::Arc::clone(&self.quartet_codes),
+                materialized: Arc::new(OnceLock::new()),
             });
         }
         let source = self.as_slice();
@@ -753,7 +754,12 @@ mod embedding_view_tests {
         let source = Challenges::from_sampled(values, 1, 1024, 64, config).unwrap();
         let once = source.embed_subring_positions(64, 4, 256).unwrap();
         assert!(once.materialized.get().is_none());
-        assert!(std::sync::Arc::ptr_eq(&source.challenges, &once.challenges));
+        let (ChallengeStorage::Sparse(a), ChallengeStorage::Sparse(b)) =
+            (&source.storage, &once.storage)
+        else {
+            panic!("sampled sparse storage expected");
+        };
+        assert!(Arc::ptr_eq(a, b));
         let powers: Vec<F> = (0..256).map(|i| F::from_u64(i as u64 * 7 + 11)).collect();
         let result = once.evals_at_pows::<F, F>(&powers).unwrap();
         assert!(once.materialized.get().is_none());
@@ -778,3 +784,6 @@ mod embedding_view_tests {
 
 #[cfg(test)]
 mod sampled_evaluation_tests;
+
+#[cfg(test)]
+mod quartet_storage_tests;

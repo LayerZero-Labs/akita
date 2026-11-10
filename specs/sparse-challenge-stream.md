@@ -582,7 +582,11 @@ magnitude 1, 10 of magnitude 2, and at least 1024 challenges. Each challenge
 consumes four little-endian `u64` words. Each word packs four 10-bit quartet
 codes into its low 40 bits; its upper 24 bits MUST be zero. A code is below 625
 and encodes four coefficients as base-five digits `coefficient + 2`, with the
-lowest-position coefficient in the least significant digit. Validation checks
+lowest-position coefficient in the least significant digit. For zero-based
+quartet index `q` in `0..16`, the code covers positions `4q..4q+3` and is stored
+in zero-based word `q / 4` of that challenge's record, starting at bit
+`10 * (q % 4)`: the lowest quartet occupies the lowest bits. Challenge records
+follow draw order, then candidate index. Validation checks
 the magnitude counts, exact combined position rank, and all 41 transcript sign
 bits. These draws consume no position records.
 
