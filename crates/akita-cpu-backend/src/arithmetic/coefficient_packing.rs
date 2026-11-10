@@ -284,8 +284,8 @@ mod tests {
     };
     use jolt_algebra::CyclotomicRing;
     use jolt_algebra::{
-        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128Offset6A23801F, Prime32Offset99,
-        Prime64Offset59, Ring,
+        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128Offset6A23801F,
+        Prime32Offset99, Prime64Offset59, Ring,
     };
 
     type F = Prime32Offset99;

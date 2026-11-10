@@ -1,7 +1,9 @@
 use super::super::*;
 use crate::{AkitaExpandedSetup, AkitaSetupDescriptor, FpExtEncoding};
 use akita_params::FlatMatrix;
-use jolt_algebra::{Ext2, FpExt4, FpExt8, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{
+    Ext2, FpExt4, FpExt8, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
+};
 use jolt_crypto::lattice::derive_public_matrix_prefix;
 
 fn round_trip<F, E>()

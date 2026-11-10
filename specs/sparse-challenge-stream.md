@@ -1,5 +1,9 @@
 # Spec: One stream per sparse fold group
 
+> Branch note: preview delegates this sampler to `jolt-crypto`. The checked-rank
+> advice implementation described below is main-only until the shared sampler
+> exposes it. Preview's opt-in host capture records fold messages, not ranks.
+
 | Field         | Value                          |
 |---------------|--------------------------------|
 | Author(s)     | Quang Dao, Claude              |

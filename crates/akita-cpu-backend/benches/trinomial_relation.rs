@@ -9,9 +9,9 @@ use akita_algebra::{MinusTrinomial, Prime64Offset23703, TrinomialField, Trinomia
 
 use jolt_algebra::Field;
 
+use akita_algebra::TrinomialAuxiliary;
 use akita_cpu_backend::benchmark_support::TrinomialRelationQuotientBuilder;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_algebra::Prime128OffsetA7F7;
 
 fn input<F: Field, const D: usize>(seed: u64) -> TrinomialRing<F, D, MinusTrinomial> {
     TrinomialRing::from_coefficients(std::array::from_fn(|index| {
@@ -108,8 +108,8 @@ fn profile<F: TrinomialField + Debug, const D: usize>(c: &mut Criterion, name: &
 fn benchmarks(c: &mut Criterion) {
     profile::<Prime64Offset23703, 324>(c, "p64");
     profile::<Prime64Offset23703, 648>(c, "p64");
-    profile::<Prime128OffsetA7F7, 324>(c, "p128");
-    profile::<Prime128OffsetA7F7, 648>(c, "p128");
+    profile::<TrinomialAuxiliary, 324>(c, "p128");
+    profile::<TrinomialAuxiliary, 648>(c, "p128");
 }
 
 criterion_group!(benches, benchmarks);

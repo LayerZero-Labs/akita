@@ -307,9 +307,9 @@ impl RelationCoefficientLayout {
 mod tests {
     use super::*;
     use jolt_algebra::ring::scalar_powers;
-    use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{One, Prime128Offset6A23801F, Ring, Zero};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     #[test]
     fn polynomial_evaluation_matches_cached_powers_for_all_families() {

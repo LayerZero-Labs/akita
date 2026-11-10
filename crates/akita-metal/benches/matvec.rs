@@ -18,12 +18,12 @@ mod bench {
     use akita_types::{prepare_ntt_cache, NttCacheMode, PreparedNttCache};
     use criterion::{BenchmarkId, Criterion};
     use jolt_algebra::tables::q128_primes;
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
     use jolt_algebra::{CanonicalEncoding, CrtNttParamSet, CyclotomicRing, One};
     use jolt_metal::runtime::DeviceBuffer;
     use rayon::prelude::*;
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     fn matrix<const D: usize>(cols: usize) -> Vec<CyclotomicRing<F, D>> {
         (0..cols)

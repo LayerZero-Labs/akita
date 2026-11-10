@@ -11,7 +11,7 @@
 use akita_error::AkitaError;
 
 use jolt_algebra::checked;
-use jolt_algebra::{CanonicalEncoding, Field, One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{CanonicalEncoding, Field, One, Ring, Zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -19,7 +19,7 @@ use super::{internal, TrinomialAdjoint};
 use crate::trinomial::TrinomialModulus;
 use jolt_algebra::fft::{primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
 
-type Auxiliary = Prime128OffsetA7F7;
+use crate::trinomial::TrinomialAuxiliary as Auxiliary;
 
 /// Per-worker transform buffers.
 struct Scratch {

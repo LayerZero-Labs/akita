@@ -22,8 +22,11 @@ use jolt_algebra::cfg_into_iter;
 use jolt_algebra::solinas::parallel::*;
 use jolt_algebra::{Field, Ring, Zero};
 use jolt_crypto::lattice::derive_public_matrix_prefix;
-use jolt_zk::whiteout::test_support::{CheckingResponseProver, SyntheticSigma};
+mod sigma_fixture;
+mod sigma_support;
+mod sigma_transport;
 use jolt_zk::whiteout::{ResponseProver, ResponseSegment, ResponseWitness};
+use sigma_support::{CheckingResponseProver, SyntheticSigma};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
@@ -569,7 +572,7 @@ fn chain_relation_matches_its_rows_and_vanishes_on_the_executor_witness() {
                 image
             );
             let chunks = compression::chunks(profile, image_len).unwrap();
-            // Over A7F7 every map's digits fill its ring rows: no padding.
+            // Over 6A23801F every map's digits fill its ring rows: no padding.
             assert!(chunks.iter().all(|chunk| chunk
                 .plan
                 .maps()

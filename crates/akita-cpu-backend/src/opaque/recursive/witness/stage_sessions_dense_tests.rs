@@ -1,7 +1,7 @@
 use super::*;
-use jolt_algebra::{One, Prime128OffsetA7F7, Zero};
+use jolt_algebra::{One, Prime128Offset6A23801F, Zero};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 fn boolean_weight(address: usize, point: &[F]) -> F {
     point

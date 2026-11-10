@@ -6,7 +6,9 @@ use akita_params::*;
 use akita_prover::backend::*;
 use akita_sumcheck::SumcheckKernel;
 use akita_types::*;
-use jolt_algebra::{CanonicalEncoding, Ext2, ExtField, Field, One, Prime128Offset6A23801F, Ring, Zero};
+use jolt_algebra::{
+    CanonicalEncoding, Ext2, ExtField, Field, One, Prime128Offset6A23801F, Ring, Zero,
+};
 use jolt_poly::UnivariatePoly;
 use std::sync::Arc;
 type F = Prime128Offset6A23801F;

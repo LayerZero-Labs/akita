@@ -3,8 +3,9 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use akita_algebra::{
-    MinusTrinomial, PlusTrinomial, Prime64Offset23703, TrinomialField, TrinomialI8Lut,
-    TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace, TrinomialRing,
+    MinusTrinomial, PlusTrinomial, Prime64Offset23703, TrinomialAuxiliary, TrinomialField,
+    TrinomialI8Lut, TrinomialModulus, TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace,
+    TrinomialRing,
 };
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use jolt_algebra::tables::{q128_primes, Q128_NUM_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES};
@@ -12,7 +13,7 @@ use jolt_algebra::{
     CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, Field,
     MontCoeff,
 };
-use jolt_algebra::{Prime128OffsetA7F7, WithPacking};
+use jolt_algebra::{Prime128Offset6A23801F, WithPacking};
 
 #[path = "ntt_comparison/ifma.rs"]
 mod ifma;
@@ -688,11 +689,23 @@ fn benches(criterion: &mut Criterion) {
     bench_trinomial::<Prime64Offset23703, 648, MinusTrinomial>(criterion, "p64_23703", "minus");
 
     let q128 = q128_primes();
-    bench_crt::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 128>(criterion, "p128_a7f7", q128);
-    bench_crt::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 256>(criterion, "p128_a7f7", q128);
-    bench_trinomial::<Prime128OffsetA7F7, 162, PlusTrinomial>(criterion, "p128_a7f7", "plus");
-    bench_trinomial::<Prime128OffsetA7F7, 324, MinusTrinomial>(criterion, "p128_a7f7", "minus");
-    bench_trinomial::<Prime128OffsetA7F7, 648, MinusTrinomial>(criterion, "p128_a7f7", "minus");
+    bench_crt::<Prime128Offset6A23801F, Q128_NUM_PRIMES, 128>(criterion, "p128_6a23801f", q128);
+    bench_crt::<Prime128Offset6A23801F, Q128_NUM_PRIMES, 256>(criterion, "p128_6a23801f", q128);
+    bench_trinomial::<TrinomialAuxiliary, 162, PlusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
+        "plus",
+    );
+    bench_trinomial::<TrinomialAuxiliary, 324, MinusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
+        "minus",
+    );
+    bench_trinomial::<TrinomialAuxiliary, 648, MinusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
+        "minus",
+    );
 
     bench_crt_matvec::<Prime64Offset23703, Q64_NUM_PRIMES, 256>(criterion, "p64_23703", Q64_PRIMES);
     bench_trinomial_matvec::<Prime64Offset23703, 162, PlusTrinomial>(
@@ -711,20 +724,24 @@ fn benches(criterion: &mut Criterion) {
         "minus",
     );
 
-    bench_crt_matvec::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 256>(criterion, "p128_a7f7", q128);
-    bench_trinomial_matvec::<Prime128OffsetA7F7, 162, PlusTrinomial>(
+    bench_crt_matvec::<Prime128Offset6A23801F, Q128_NUM_PRIMES, 256>(
         criterion,
-        "p128_a7f7",
+        "p128_6a23801f",
+        q128,
+    );
+    bench_trinomial_matvec::<TrinomialAuxiliary, 162, PlusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
         "plus",
     );
-    bench_trinomial_matvec::<Prime128OffsetA7F7, 324, MinusTrinomial>(
+    bench_trinomial_matvec::<TrinomialAuxiliary, 324, MinusTrinomial>(
         criterion,
-        "p128_a7f7",
+        "trinomial_auxiliary",
         "minus",
     );
-    bench_trinomial_matvec::<Prime128OffsetA7F7, 648, MinusTrinomial>(
+    bench_trinomial_matvec::<TrinomialAuxiliary, 648, MinusTrinomial>(
         criterion,
-        "p128_a7f7",
+        "trinomial_auxiliary",
         "minus",
     );
     ifma::bench(criterion);

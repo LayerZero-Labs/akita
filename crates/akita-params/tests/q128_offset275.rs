@@ -1,7 +1,7 @@
 //! `SisModulusProfileId::Q128Offset275`: identity, wire tags, and row sharing.
 //!
 //! The profile owns no generated SIS rows. Every lookup resolves
-//! `SisModulusProfileId::row_owner` first and reads the `Q128OffsetA7F7`
+//! `SisModulusProfileId::row_owner` first and reads the `Q128Offset6A23801F`
 //! rows. `specs/sis-quantum128-scalar-n-table.md` states why.
 
 #![allow(missing_docs)]
@@ -17,7 +17,7 @@ use akita_params::{
     DEFAULT_SIS_SECURITY_POLICY,
 };
 
-const OWNER: SisModulusProfileId = SisModulusProfileId::Q128OffsetA7F7;
+const OWNER: SisModulusProfileId = SisModulusProfileId::Q128Offset6A23801F;
 const ADDED: SisModulusProfileId = SisModulusProfileId::Q128Offset275;
 
 #[test]
@@ -39,11 +39,11 @@ fn adding_the_profile_moves_no_existing_identity_or_tag() {
             "Q64Offset59",
         ),
         (
-            SisModulusProfileId::Q128OffsetA7F7,
-            u128::MAX - ((1u128 << 32) - 22_537) + 1,
+            SisModulusProfileId::Q128Offset6A23801F,
+            u128::MAX - 0x6a23_801e,
             3,
             2,
-            "Q128OffsetA7F7",
+            "Q128Offset6A23801F",
         ),
     ];
     for (profile, modulus, tag, descriptor_tag, name) in existing {

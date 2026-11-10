@@ -51,7 +51,7 @@ use akita_types::{
     RingVec, VerifierGrinding,
 };
 use akita_verifier::{AkitaVerifier, SetupPolicy, Stage1Verifier};
-use jolt_algebra::{One, Prime128OffsetA7F7};
+use jolt_algebra::{One, Prime128Offset6A23801F};
 use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::{
     CompressedImage, ImageCompression, ResponseLayout, ResponseStatement, ResponseVerifier,
@@ -78,7 +78,7 @@ use rows::{
 };
 
 /// The response statement's field.
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 /// The `zk` feature makes the CPU backend a masked-prefix backend: it exports
 /// the residual opening at the cut (`ResidualExportKernel`); `zk-prover` adds
@@ -238,8 +238,12 @@ where
         for row in rows {
             let layout = row.profiles().opening_layout()?;
             needed = needed.max(
-                verifier_setup_matrix_capacity_for_schedule(row.schedule(), &layout)?
-                    .num_field_elements,
+                verifier_setup_matrix_capacity_for_schedule(
+                    row.schedule(),
+                    &layout,
+                    akita_params::SetupMode::Check,
+                )?
+                .num_field_elements,
             );
         }
         Ok(needed)

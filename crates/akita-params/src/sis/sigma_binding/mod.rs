@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn the_binding_rank_grows_with_width_and_covers_no_empty_matrix() {
-        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        let profile = SisModulusProfileId::Q128Offset6A23801F;
         assert_eq!(sigma_binding_min_rank(profile, 64, 0), None);
         assert_eq!(sigma_binding_min_rank(profile, 32, 1), None);
         for d in [64, 128, 256, 512] {

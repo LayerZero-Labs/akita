@@ -2,13 +2,13 @@ use std::fmt::Debug;
 use std::hint::black_box;
 use std::time::Duration;
 
+use akita_algebra::TrinomialAuxiliary;
 use akita_algebra::{
     MinusTrinomial, PlusTrinomial, Prime64Offset23703, TrinomialField, TrinomialModulus,
     TrinomialNttDomain, TrinomialRing,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_algebra::Field;
-use jolt_algebra::Prime128OffsetA7F7;
 
 fn input<F: Field, const D: usize, M: TrinomialModulus>(seed: u64) -> TrinomialRing<F, D, M> {
     TrinomialRing::from_coefficients(std::array::from_fn(|index| {
@@ -88,10 +88,26 @@ fn benches(criterion: &mut Criterion) {
     bench_profile::<Prime64Offset23703, 324, MinusTrinomial>(criterion, "p64_23703", "minus");
     bench_profile::<Prime64Offset23703, 648, MinusTrinomial>(criterion, "p64_23703", "minus");
 
-    bench_profile::<Prime128OffsetA7F7, 162, PlusTrinomial>(criterion, "p128_a7f7", "plus");
-    bench_profile::<Prime128OffsetA7F7, 324, MinusTrinomial>(criterion, "p128_a7f7", "minus");
-    bench_profile::<Prime128OffsetA7F7, 648, MinusTrinomial>(criterion, "p128_a7f7", "minus");
-    bench_profile::<Prime128OffsetA7F7, 486, PlusTrinomial>(criterion, "p128_a7f7", "plus");
+    bench_profile::<TrinomialAuxiliary, 162, PlusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
+        "plus",
+    );
+    bench_profile::<TrinomialAuxiliary, 324, MinusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
+        "minus",
+    );
+    bench_profile::<TrinomialAuxiliary, 648, MinusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
+        "minus",
+    );
+    bench_profile::<TrinomialAuxiliary, 486, PlusTrinomial>(
+        criterion,
+        "trinomial_auxiliary",
+        "plus",
+    );
 }
 
 criterion_group!(trinomial_ntt, benches);

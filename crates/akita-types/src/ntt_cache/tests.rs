@@ -223,7 +223,7 @@ fn field_crt_bases_admit_the_selected_base() {
     assert_field_crt_bases_admit_selector::<Prime56Offset27>([false, true, false], 1);
     assert_field_crt_bases_admit_selector::<Prime64Offset59>([false, true, false], 1);
     assert_field_crt_bases_admit_selector::<Prime128Offset275>([false, false, true], 2);
-    assert_field_crt_bases_admit_selector::<Prime128OffsetA7F7>([false, false, true], 2);
+    assert_field_crt_bases_admit_selector::<Prime128Offset6A23801F>([false, false, true], 2);
 }
 
 #[test]

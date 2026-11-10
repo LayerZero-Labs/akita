@@ -240,9 +240,14 @@ was chosen in part because \(q-1\) contains the smooth factor
 337500000=2^5\cdot 3^3\cdot 5^8.
 \]
 
-The configured `fp128` subgroup is this whole smooth factor. Its largest
-power-of-two subgroup has order only 32, so useful transform sizes mix the
-radices 2, 3, and 5.
+Main configures this whole smooth factor. Preview carries the same order and
+generator through `akita_algebra::TrinomialField`; its pinned Jolt version has
+not yet added `SmoothFftField` for the new protocol prime. Call
+`TrinomialField::primitive_root` to obtain a checked root for the generic
+`SmoothDomain`. The largest power-of-two subgroup has order only 32, so useful
+transform sizes mix the radices 2, 3, and 5. Preview’s larger trinomial domains
+use the separate `TrinomialAuxiliary` field described in
+[trinomial ring arithmetic](trinomial-ring-arithmetic.md).
 
 `primitive_nth_root::<F>(n)` checks that `n` is positive and divides the
 configured smooth subgroup order, then derives a root of order `n` from the

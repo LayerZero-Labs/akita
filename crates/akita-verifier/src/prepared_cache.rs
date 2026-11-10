@@ -159,7 +159,7 @@ impl TerminalNttCache {
                 |error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")),
             )?,
             schedule_row_digest,
-            setup_field_elements: akita_error::checked::product([
+            setup_field_elements: jolt_algebra::checked::product([
                 requirement.prefix_len,
                 requirement.ring_dimension,
             ])
@@ -243,7 +243,7 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
     let binding = PreparedVerifierNttCacheBinding {
         setup_seed_digest,
         schedule_row_digest,
-        setup_field_elements: akita_error::checked::product([
+        setup_field_elements: jolt_algebra::checked::product([
             requirement.prefix_len,
             requirement.ring_dimension,
         ])

@@ -13,7 +13,7 @@ use akita_metal::AkitaMetal;
 use jolt_algebra::ntt::butterfly::{forward_ntt, inverse_ntt};
 use jolt_algebra::tables::{q128_primes, Q64_PRIMES};
 use jolt_algebra::{CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, MontCoeff, NttPrime};
-use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::{Prime128Offset6A23801F, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};
@@ -145,9 +145,9 @@ where
 #[test]
 fn fp128_reconstructs_from_q128_like_cpu() {
     let test = gpu();
-    check::<Prime128OffsetA7F7, 6, 64>(&test.metal, q128_primes());
-    check::<Prime128OffsetA7F7, 6, 256>(&test.metal, q128_primes());
-    check::<Prime128OffsetA7F7, 6, 1024>(&test.metal, q128_primes());
+    check::<Prime128Offset6A23801F, 6, 64>(&test.metal, q128_primes());
+    check::<Prime128Offset6A23801F, 6, 256>(&test.metal, q128_primes());
+    check::<Prime128Offset6A23801F, 6, 1024>(&test.metal, q128_primes());
 }
 
 #[test]

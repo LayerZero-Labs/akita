@@ -367,10 +367,10 @@ impl RootCoefficientRepacking {
 mod tests {
     use super::*;
     use akita_params::RelationPolynomial;
-    use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{Prime128Offset6A23801F, Ring, Zero};
     use std::collections::BTreeSet;
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     fn plan() -> RootCoefficientRepacking {
         RootCoefficientRepacking::new(

@@ -75,14 +75,14 @@ dense_config!(
 dense_config!(
     Offset275FieldWithA7f7Profile,
     Prime128Offset275,
-    Q128OffsetA7F7,
-    "test_q128_offset275_field_a7f7_profile"
+    Q128Offset6A23801F,
+    "test_q128_offset275_field_6a23801f_profile"
 );
 dense_config!(
     A7f7FieldWithOffset275Profile,
     fp128::Field,
     Q128Offset275,
-    "test_q128_a7f7_field_offset275_profile"
+    "test_q128_6a23801f_field_offset275_profile"
 );
 
 type Cfg = Offset275Dense;
@@ -240,21 +240,21 @@ fn commitment_binds_the_profile_to_the_exact_field_modulus() {
         assert_decode_rejects_profile(
             &offset275,
             SisModulusProfileId::Q128Offset275,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
         );
-        assert_check_rejects_profile(&offset275, SisModulusProfileId::Q128OffsetA7F7);
-        // Tag 5 on the A7F7 field.
-        let a7f7 = committed_group!(
+        assert_check_rejects_profile(&offset275, SisModulusProfileId::Q128Offset6A23801F);
+        // Tag 5 on the 6A23801F field.
+        let q128 = committed_group!(
             fp128::Dense,
             akita_config::test_support::workspace_schedule_catalog::<fp128::Dense>(CHUNKING)
                 .unwrap()
         );
         assert_decode_rejects_profile(
-            &a7f7,
-            SisModulusProfileId::Q128OffsetA7F7,
+            &q128,
+            SisModulusProfileId::Q128Offset6A23801F,
             SisModulusProfileId::Q128Offset275,
         );
-        assert_check_rejects_profile(&a7f7, SisModulusProfileId::Q128Offset275);
+        assert_check_rejects_profile(&q128, SisModulusProfileId::Q128Offset275);
     });
 }
 

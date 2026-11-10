@@ -181,7 +181,7 @@ mod tests {
         );
 
         let mut other_modulus = row.clone();
-        other_modulus.modulus_profile = AkitaModulusProfileId::Q128OffsetA7F7;
+        other_modulus.modulus_profile = AkitaModulusProfileId::Q128Offset6A23801F;
         let mut zero = row.clone();
         zero.max_width = 0;
         zero.hit_cap = false;

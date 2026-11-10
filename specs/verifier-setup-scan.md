@@ -59,7 +59,7 @@ setup entry. Each fold reads the prefix `[0, required)` of the same matrix.
 In `onehot_fp128` at 33 variables the six folds read 110,592 rings against
 65,536 distinct ones.
 
-For fp128 (`E = F = Prime128OffsetA7F7`) a coefficient costs one
+For fp128 (`E = F = Prime128Offset6A23801F`) a coefficient costs one
 128 × 128-bit schoolbook product accumulated into an unreduced
 `Fp128ProductAccum`. The `d` coefficient products per ring are a lower bound
 for a uniformly random setup: every coefficient carries an independent

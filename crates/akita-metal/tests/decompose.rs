@@ -9,7 +9,7 @@ use akita_metal::decompose::decompose;
 use akita_metal::{AkitaMetal, AkitaMetalError};
 use jolt_algebra::ring::cyclotomic::{decompose_centering_threshold, BalancedDecomposePow2Params};
 use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Field};
-use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime64Offset59, Ring};
+use jolt_algebra::{Prime128Offset275, Prime128Offset6A23801F, Prime64Offset59, Ring};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};
@@ -111,11 +111,11 @@ fn fp128_digits_match_cpu() {
     // The outer commitment's base-8 digits, 8-bit digits spanning exactly
     // 128 bits (the asymmetric centering threshold), and single bits.
     for (levels, log_basis) in [(43, 3), (16, 8), (32, 4), (128, 1), (1, 3)] {
-        check_i8::<Prime128OffsetA7F7>(&test.metal, levels, log_basis);
+        check_i8::<Prime128Offset6A23801F>(&test.metal, levels, log_basis);
     }
     // Dense inner digits: 8 x 16 bits (asymmetric) and 12 x 11 bits.
     for (levels, log_basis) in [(8, 16), (12, 11), (9, 15)] {
-        check_i16::<Prime128OffsetA7F7>(&test.metal, levels, log_basis);
+        check_i16::<Prime128Offset6A23801F>(&test.metal, levels, log_basis);
     }
 }
 

@@ -6,7 +6,7 @@
 //! resets, block traversal, and nested slot and job sums.
 
 use super::*;
-use jolt_field::{FpExt4, Prime32Offset99, Ring, Unreduced};
+use jolt_algebra::{FpExt4, Prime32Offset99, Ring, Unreduced};
 
 type P = Prime32Offset99;
 type E = FpExt4<P>;

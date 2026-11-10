@@ -13,7 +13,7 @@ This note is a design only. Paper labels refer to
 `akita-paper/sections/whiteout/` as read on 2026-10-21. Akita references are to
 this repository at `87b4ca046` (`whiteout/dev`); jolt references are to jolt
 `whiteout/dev` at `591fc9d65`, written `jolt:`. The headline instance is Jolt
-at T = 2^24 with `F = Prime128OffsetA7F7` (q = 2^128 − 2^32 + 22537).
+at T = 2^24 with `F = Prime128Offset6A23801F` (q = 2^128 − 0x6A23801F).
 
 **Indexing.** The paper's fold j is Akita's **level ℓ = j − 1**; the root is
 level 0. The paper's witness w_j is the output witness of level j − 1. This
@@ -2274,7 +2274,7 @@ code does, and why.
   real ones, and nothing enforces it: padding digits stay inside `I_bin`,
   so they are in `{−1, 0}`, and inside the map's input width, which is the
   width Akita's SIS sizing covers; they change `cm`, not `t`, so binding is
-  untouched. Over A7F7 every chain map's digits fill its ring rows, so the
+  untouched. Over `Prime128Offset6A23801F` every chain map's digits fill its ring rows, so the
   padding is empty (asserted in `chain_relation_matches_its_rows…`). `K₁`
   and `K₂` are the shared matrix's offset-0 prefix, as in Akita's own
   compression; the response setup is sized to cover them
@@ -2293,7 +2293,7 @@ code does, and why.
   so Items 2 and 3, the chain rows and the `[−8, 7]` range all pass. The
   range cannot stand in for it: Lemma `wo:lem:compressed-binding` needs
   `{−1, 0}` digits, and Akita certifies compression SIS only at `ℓ∞ = 1`
-  (`compression_sis_cell(A7F7, 8, 2)` is `None`). The test
+  (`compression_sis_cell(Q128Offset6A23801F, 8, 2)` is `None`). The test
   `rejects_prover_chosen_compressions` sends that forgery and the verifier
   rejects at the fused sumcheck; with `ζ` zeroed it accepts.
 - **The statement's compression check is canonical.** jolt-zk's

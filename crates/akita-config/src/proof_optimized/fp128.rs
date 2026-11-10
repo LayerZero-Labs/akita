@@ -256,7 +256,7 @@ impl_proof_optimized_preset!(
     ResponseDigits,
     Field,
     Field,
-    akita_params::SisModulusProfileId::Q128OffsetA7F7,
+    akita_params::SisModulusProfileId::Q128Offset6A23801F,
     128,
     4,
     source = balanced_digits,

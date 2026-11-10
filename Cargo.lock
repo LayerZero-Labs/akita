@@ -241,6 +241,7 @@ dependencies = [
  "p3-mersenne-31",
  "proptest",
  "rand 0.8.8",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",

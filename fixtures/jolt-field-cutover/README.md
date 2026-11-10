@@ -4,7 +4,7 @@ These files were emitted by Akita's pre-cutover field serializers and
 deterministic proof/setup constructors at commit
 `03e3f2f96988c251f40608fd8735d011377c37b4`, the second parent of cutover
 merge `7d8fca7554f2942cf7b4321a20f2051d6c0b108c`. At that commit the
-production 128-bit field was `Prime128OffsetA7F7`.
+production 128-bit field was `Prime128Offset6A23801F`.
 
 ## Fixtures that tests read
 
@@ -32,7 +32,7 @@ the random representatives remain canonical and unchanged.
 ## Historical fixtures
 
 No test reads these files. They record pre-cutover outputs under
-`Prime128OffsetA7F7` and the label schedule of that time, and they are not
+`Prime128Offset6A23801F` and the label schedule of that time, and they are not
 evidence that current code rejects old proofs, setups, or transcripts:
 
 - `proof.hex`: the uncompressed `AkitaBatchedProof` from

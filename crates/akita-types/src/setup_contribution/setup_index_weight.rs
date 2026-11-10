@@ -622,7 +622,7 @@ fn push_projected_tensor<E: Field>(
 mod affine_family_tests {
     use super::*;
     use akita_algebra::offset_eq::eval_boolean_pair_tensor_families;
-    use jolt_field::{One, Prime128Offset6A23801F as F, Ring};
+    use jolt_algebra::{One, Prime128Offset6A23801F as F, Ring};
 
     #[test]
     fn inherited_query_grid_compacts_without_changing_its_weight() {

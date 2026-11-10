@@ -64,11 +64,11 @@ squeezing. Message length, pool size, binomial tables and decoding use checked
 arithmetic and fallible allocation. A message whose operator-norm pool runs
 out returns `AkitaError::InvalidProof` and poisons the verifier state.
 
-Checked sparse-challenge advice is bounded before copying by a trusted byte
-budget supplied to `install_checked_hints`. Duplicate sessions and malformed
-frames reject before tape allocation; allocation failure returns `AkitaError`.
-See [checked challenge advice](../book/src/how/verification.md#checked-challenge-advice)
-for the caller contract and cleanup requirements.
+Preview's shared Jolt sampler accepts no checked sparse-challenge advice.
+If an advice ingress is added, it must enforce a trusted byte budget before
+copying or allocating and authenticate every supplied rank against the
+transcript. See [checked challenge advice](../book/src/how/verification.md#checked-challenge-advice)
+for the branch distinction and resource contract.
 
 ## Rules
 

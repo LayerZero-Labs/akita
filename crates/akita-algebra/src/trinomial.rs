@@ -18,8 +18,8 @@ const HALF_TRANSFORM_SIZED: &str = "trinomial plan sizes every half transform to
 
 mod fields;
 pub use fields::{
-    Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, TrinomialField,
-    PRIME64_OFFSET_23703_MODULUS,
+    Prime64Offset23703, Prime64Offset23703Ext2, Prime64Offset23703Nr5, TrinomialAuxiliary,
+    TrinomialField, PRIME64_OFFSET_23703_MODULUS,
 };
 
 pub mod adjoint;

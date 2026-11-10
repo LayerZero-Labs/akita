@@ -2,9 +2,9 @@ use super::*;
 use crate::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
 use crate::root_repacking::RootRepackingSegment;
 use akita_params::RelationRowGeometry;
-use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset6A23801F, Ring, Zero};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 #[test]
 fn weight_merge_preserves_order_claim_and_evaluation_while_reusing_storage() {

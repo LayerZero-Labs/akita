@@ -268,7 +268,8 @@ impl<'a, E: Field> ScanGroup<'a, E> {
         weights: &'a DirectScanWeights<E>,
         projections: [&'a RoleProjection<E>; 3],
     ) -> Result<Self, AkitaError> {
-        if group.d_col_range().len() != weights.e.len() {
+        // The physical D width includes preview’s hiding-randomness columns.
+        if group.d_column_len() != weights.e.len() {
             return Err(AkitaError::InvalidSetup(
                 "cached setup scan geometry is malformed".into(),
             ));

@@ -27,7 +27,7 @@ jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch
 criterion = "0.8"
 shake = "0.1.0"
 [features]
-# Host-only recursion-hint capture; also requires AKITA_CAPTURE_CHALLENGES.
+# Host-only public fold-message capture; also requires AKITA_CAPTURE_CHALLENGES.
 experiment-capture = []
 default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]

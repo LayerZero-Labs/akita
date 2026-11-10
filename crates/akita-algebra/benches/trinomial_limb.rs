@@ -7,13 +7,13 @@
 use std::hint::black_box;
 use std::time::Duration;
 
+use akita_algebra::TrinomialAuxiliary;
 use akita_algebra::{
     MinusTrinomial, TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots,
     TrinomialNttDomain, TrinomialRing,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_algebra::Field;
-use jolt_algebra::Prime128OffsetA7F7;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 
 const D: usize = 648;
@@ -30,8 +30,8 @@ const COMPARISON_ROWS: usize = 2;
 const SEED: u64 = 0x215_197;
 
 type Bits = [u64; WORDS];
-type BaselineDomain = TrinomialNttDomain<Prime128OffsetA7F7, D, MinusTrinomial>;
-type BaselineRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
+type BaselineDomain = TrinomialNttDomain<TrinomialAuxiliary, D, MinusTrinomial>;
+type BaselineRing = TrinomialRing<TrinomialAuxiliary, D, MinusTrinomial>;
 
 struct LimbColumn {
     domain: TrinomialLimbDomain,
@@ -292,7 +292,7 @@ fn baseline_benchmark(criterion: &mut Criterion, source: &[Bits]) {
     let mut workspace = domain.workspace();
     let matrix = (0..M)
         .map(|_| {
-            let coefficients = std::array::from_fn(|_| Prime128OffsetA7F7::random(&mut rng));
+            let coefficients = std::array::from_fn(|_| TrinomialAuxiliary::random(&mut rng));
             let ring =
                 BaselineRing::from_coefficients(coefficients).expect("valid benchmark ring degree");
             domain.forward_with_workspace(&ring, &mut workspace)

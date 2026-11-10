@@ -275,29 +275,15 @@ commitment, direct witness, or transcript input must be rejected with
 
 ### Checked challenge advice
 
-Recursive verification can use untrusted advice for sparse challenge decoding.
-Install it with `akita_challenges::install_checked_hints(bytes, max_bytes)`.
-Choose `max_bytes` from trusted schedule configuration or an application memory
-budget, independently of the supplied advice's length or header. The bound
-covers the entire input, including its frame header. The previous one-argument
-installer is replaced by this explicit resource contract.
+Preview delegates sparse challenge decoding to `jolt-crypto`. Its selected
+sampler does not expose main's checked-advice installation API, so preview
+recomputes sparse challenges from the transcript and accepts no advice tape.
 
-Position advice includes a record for every in-range candidate examined, even
-when the operator-norm predicate rejects it. Its size therefore varies with the
-transcript. A captured honest proof's size is not a safe general bound; use the
-schedule's full candidate pools and the
-[schedule-derived budget formula](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame).
-A smaller application budget can reject otherwise valid proofs.
-
-An existing session, an oversized input, or malformed framing is rejected before
-any tape allocation. Tape storage uses fallible allocation; failures return
-`AkitaError::InvalidProof` without installing a partial session. Decoding borrows
-bounded slices from the installed storage and still checks every supplied rank
-and sign against the transcript. Finish a successful session with
-`finish_checked_hints` to require complete consumption, or discard a failed one
-with `abort_checked_hints` before retrying. The
+Any future advice ingress must enforce a trusted byte budget before allocation,
+independent of the input's declared length, and authenticate every supplied
+rank and sign against the transcript. The
 [advice frame specification](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame)
-defines the binary layout and consumption order.
+records main's design; it is not an enabled preview feature.
 
 ### Crates in scope
 

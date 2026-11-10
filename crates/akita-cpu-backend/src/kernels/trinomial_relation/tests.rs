@@ -1,6 +1,7 @@
 use super::*;
+use akita_algebra::TrinomialAuxiliary;
 use akita_algebra::{MinusTrinomial, PlusTrinomial, Prime64Offset23703};
-use jolt_algebra::{Field, Prime128OffsetA7F7};
+use jolt_algebra::Field;
 
 fn sample<F: Field, const D: usize, M: TrinomialModulus>(seed: u64) -> TrinomialRing<F, D, M> {
     TrinomialRing::from_coefficients(std::array::from_fn(|i| {
@@ -90,7 +91,7 @@ fn check<F: TrinomialField + Debug, const D: usize, M: TrinomialModulus>() {
 fn trinomial_quotients_match_independent_coefficients() {
     check::<Prime64Offset23703, 162, PlusTrinomial>();
     check::<Prime64Offset23703, 324, MinusTrinomial>();
-    check::<Prime128OffsetA7F7, 648, MinusTrinomial>();
+    check::<TrinomialAuxiliary, 648, MinusTrinomial>();
 }
 
 #[test]

@@ -15,7 +15,7 @@ use akita_types::{
 };
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Field, Zero};
-use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::{Prime128Offset6A23801F, Prime64Offset59};
 use jolt_metal::runtime::DeviceBuffer;
 use jolt_metal::MetalField;
 use support::{gpu, SplitMix64};
@@ -192,11 +192,12 @@ fn fp128_i8_matches_cpu_and_schoolbook() {
     let mut rng = SplitMix64::new(0x128);
     for (blocks, rows, cols) in SHAPES {
         for log_basis in [3, 8] {
-            let a = matrix::<Prime128OffsetA7F7, 64>(rows, cols, &mut rng);
+            let a = matrix::<Prime128Offset6A23801F, 64>(rows, cols, &mut rng);
             let cache = prepare(&a, rows, cols);
             let device = device_matrix!(&test.metal, cache, q128_base, rows, cols);
             let x = planes::<64>(blocks, cols, log_basis, &mut rng);
-            let got = device_i8::<Prime128OffsetA7F7, 6, 64>(&test.metal, &device, &x, log_basis);
+            let got =
+                device_i8::<Prime128Offset6A23801F, 6, 64>(&test.metal, &device, &x, log_basis);
             assert_eq!(
                 got,
                 schoolbook(&a, rows, cols, &x),
@@ -204,7 +205,7 @@ fn fp128_i8_matches_cpu_and_schoolbook() {
             );
             assert_eq!(
                 got,
-                cpu_i8::<Prime128OffsetA7F7, 64>(&cache, rows, cols, &x, log_basis)
+                cpu_i8::<Prime128Offset6A23801F, 64>(&cache, rows, cols, &x, log_basis)
             );
         }
     }
@@ -212,13 +213,13 @@ fn fp128_i8_matches_cpu_and_schoolbook() {
 
 fn fp128_i8_degree<const D: usize>(metal: &AkitaMetal, rng: &mut SplitMix64) {
     for (blocks, rows, cols) in SHAPES {
-        let a = matrix::<Prime128OffsetA7F7, D>(rows, cols, rng);
+        let a = matrix::<Prime128Offset6A23801F, D>(rows, cols, rng);
         let cache = prepare(&a, rows, cols);
         let device = device_matrix!(metal, cache, q128_base, rows, cols);
         let x = planes::<D>(blocks, cols, 8, rng);
         assert_eq!(
-            device_i8::<Prime128OffsetA7F7, 6, D>(metal, &device, &x, 8),
-            cpu_i8::<Prime128OffsetA7F7, D>(&cache, rows, cols, &x, 8),
+            device_i8::<Prime128Offset6A23801F, 6, D>(metal, &device, &x, 8),
+            cpu_i8::<Prime128Offset6A23801F, D>(&cache, rows, cols, &x, 8),
             "D={D} {blocks}x{rows}x{cols}"
         );
     }
@@ -239,7 +240,7 @@ fn fp128_i16_matches_cpu() {
     let test = gpu();
     let mut rng = SplitMix64::new(0x16);
     for (rows, cols) in [(1, 1), (3, 17), (5, 64)] {
-        let a = matrix::<Prime128OffsetA7F7, 256>(rows, cols, &mut rng);
+        let a = matrix::<Prime128Offset6A23801F, 256>(rows, cols, &mut rng);
         // The CPU's i16 matvec reads the exact negacyclic cache.
         let cache = prepare_with(
             &a,
@@ -253,13 +254,13 @@ fn fp128_i16_matches_cpu() {
         let device = device_matrix!(&test.metal, cache, q128_base, rows, cols);
         let x = planes::<256>(1, cols, 16, &mut rng);
         let expected = cache
-            .mat_vec_i16::<Prime128OffsetA7F7>(16, rows, &x)
+            .mat_vec_i16::<Prime128Offset6A23801F>(16, rows, &x)
             .expect("cpu matvec")
             .into_iter()
             .flat_map(|ring| *ring.coefficients())
             .collect::<Vec<_>>();
         assert_eq!(
-            device_i16::<Prime128OffsetA7F7, 6, 256>(&test.metal, &device, &x, 16),
+            device_i16::<Prime128Offset6A23801F, 6, 256>(&test.metal, &device, &x, 16),
             expected
         );
     }
@@ -482,7 +483,7 @@ fn unsupported_field_and_crt_profile_reject_at_matrix_construction() {
 fn one_column_fits<const K: usize>(limbs: usize, degree: usize, log_basis: u32) -> bool {
     use jolt_algebra::tables::q128_primes;
     use jolt_algebra::{CrtCapacity, One};
-    let q = (-Prime128OffsetA7F7::one())
+    let q = (-Prime128Offset6A23801F::one())
         .to_u128_checked()
         .expect("u128")
         + 1;
@@ -509,14 +510,14 @@ fn limb_matrix<const K: usize, const D: usize>(
         if !one_column_fits::<K>(limbs, D, log_basis) {
             continue;
         }
-        let a = matrix::<Prime128OffsetA7F7, D>(1, cols, rng);
+        let a = matrix::<Prime128Offset6A23801F, D>(1, cols, rng);
         let cache = prepare(&a, 1, cols);
         let device =
             DeviceNttMatrix::from_rings(metal, &params, &a, 1, cols, limbs).expect("limb matrix");
         let x = planes::<D>(blocks, cols, log_basis, rng);
         assert_eq!(
-            device_i8::<Prime128OffsetA7F7, K, D>(metal, &device, &x, log_basis),
-            cpu_i8::<Prime128OffsetA7F7, D>(&cache, 1, cols, &x, log_basis),
+            device_i8::<Prime128Offset6A23801F, K, D>(metal, &device, &x, log_basis),
+            cpu_i8::<Prime128Offset6A23801F, D>(&cache, 1, cols, &x, log_basis),
             "i8 K={K} limbs={limbs} D={D} {blocks}x{cols}"
         );
     }
@@ -525,7 +526,7 @@ fn limb_matrix<const K: usize, const D: usize>(
         return;
     }
     let cols = 4;
-    let a = matrix::<Prime128OffsetA7F7, D>(1, cols, rng);
+    let a = matrix::<Prime128Offset6A23801F, D>(1, cols, rng);
     let cache = prepare_with(
         &a,
         1,
@@ -539,13 +540,13 @@ fn limb_matrix<const K: usize, const D: usize>(
         DeviceNttMatrix::from_rings(metal, &params, &a, 1, cols, limbs).expect("limb matrix");
     let x = planes::<D>(1, cols, 16, rng);
     let expected = cache
-        .mat_vec_i16::<Prime128OffsetA7F7>(16, 1, &x)
+        .mat_vec_i16::<Prime128Offset6A23801F>(16, 1, &x)
         .expect("cpu matvec")
         .into_iter()
         .flat_map(|ring| *ring.coefficients())
         .collect::<Vec<_>>();
     assert_eq!(
-        device_i16::<Prime128OffsetA7F7, K, D>(metal, &device, &x, 16),
+        device_i16::<Prime128Offset6A23801F, K, D>(metal, &device, &x, 16),
         expected,
         "i16 K={K} limbs={limbs} D={D}"
     );
@@ -608,16 +609,16 @@ fn fp128_centering_boundary_limb_matrices_match_constant_multiplication() {
 
     const DEGREE: usize = 64;
     let test = gpu();
-    let modulus = (-Prime128OffsetA7F7::one())
+    let modulus = (-Prime128Offset6A23801F::one())
         .to_u128_checked()
         .expect("u128")
         + 1;
     let matrix = [CyclotomicRing::from_coefficients(std::array::from_fn(
         |coefficient| match coefficient {
-            0 => Prime128OffsetA7F7::from_u128_reduced(modulus / 2),
-            1 => Prime128OffsetA7F7::from_u128_reduced(modulus / 2 - 1),
-            2 => Prime128OffsetA7F7::from_u128_reduced(modulus / 2 + 1),
-            _ => Prime128OffsetA7F7::zero(),
+            0 => Prime128Offset6A23801F::from_u128_reduced(modulus / 2),
+            1 => Prime128Offset6A23801F::from_u128_reduced(modulus / 2 - 1),
+            2 => Prime128Offset6A23801F::from_u128_reduced(modulus / 2 + 1),
+            _ => Prime128Offset6A23801F::zero(),
         },
     ))];
     let primes = std::array::from_fn(|index| q128_primes()[index]);
@@ -628,7 +629,7 @@ fn fp128_centering_boundary_limb_matrices_match_constant_multiplication() {
         let device = DeviceNttMatrix::from_rings(&test.metal, &params, &matrix, 1, 1, limbs)
             .expect("centering-boundary matrix");
         assert_eq!(
-            device_i8::<Prime128OffsetA7F7, 6, DEGREE>(&test.metal, &device, &constant_one, 2,),
+            device_i8::<Prime128Offset6A23801F, 6, DEGREE>(&test.metal, &device, &constant_one, 2,),
             matrix[0].coefficients(),
             "limbs={limbs}",
         );
@@ -641,7 +642,7 @@ fn plans_fewer_primes_with_limbs() {
     use akita_metal::matvec::{plan_matvec, MatvecPlan};
     use jolt_algebra::tables::q128_primes;
     use jolt_algebra::One;
-    let q = (-Prime128OffsetA7F7::one())
+    let q = (-Prime128Offset6A23801F::one())
         .to_u128_checked()
         .expect("u128")
         + 1;

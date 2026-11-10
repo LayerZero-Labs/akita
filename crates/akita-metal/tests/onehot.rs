@@ -14,7 +14,7 @@ use akita_metal::onehot::{
 use akita_metal::{AkitaMetal, ErrorClass};
 use akita_params::FlatMatrix;
 use jolt_algebra::CyclotomicRing;
-use jolt_algebra::{Field, One, Prime128OffsetA7F7, Prime64Offset59, Zero};
+use jolt_algebra::{Field, One, Prime128Offset6A23801F, Prime64Offset59, Zero};
 use jolt_metal::MetalField;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -320,7 +320,7 @@ where
 #[test]
 fn fp128_commitments_match_cpu_words() {
     let test = gpu();
-    check_all_degrees::<Prime128OffsetA7F7>(&test.metal, 0xe4e1);
+    check_all_degrees::<Prime128Offset6A23801F>(&test.metal, 0xe4e1);
 }
 
 /// fp64 also has kernels at D = 1024, where its columns still fit a tile.
@@ -340,10 +340,10 @@ fn narrow_indices_match_wide_ones() {
         .map(|i| (i % 3 != 0).then_some(i * 7 % 256))
         .collect();
     let narrow: Vec<Option<u8>> = wide.iter().map(|hot| hot.map(|hot| hot as u8)).collect();
-    let matrix: Vec<Prime128OffsetA7F7> = {
+    let matrix: Vec<Prime128Offset6A23801F> = {
         let mut rng = StdRng::seed_from_u64(3);
         (0..64 * 256)
-            .map(|_| Prime128OffsetA7F7::random(&mut rng))
+            .map(|_| Prime128Offset6A23801F::random(&mut rng))
             .collect()
     };
     let shape = OneHotCommitShape {
@@ -354,7 +354,7 @@ fn narrow_indices_match_wide_ones() {
     let device_matrix = DeviceFlatMatrix::new(metal, &matrix).expect("upload A");
     let mut workspace = OneHotWorkspace::new(metal);
     let mut rows = |sources: &DeviceOneHotSources| {
-        let schedule = OneHotSchedule::new::<Prime128OffsetA7F7, 256>(metal, sources, shape)
+        let schedule = OneHotSchedule::new::<Prime128Offset6A23801F, 256>(metal, sources, shape)
             .expect("schedule");
         let (rows, _) = workspace
             .commit::<256>(&device_matrix, sources, shape, schedule)
@@ -497,7 +497,7 @@ fn rejects_unsupported_shapes_before_encoding() {
         ErrorClass::Setup
     );
     let error =
-        OneHotSchedule::max_lanes::<Prime128OffsetA7F7, 1024>(metal).expect_err("no kernel");
+        OneHotSchedule::max_lanes::<Prime128Offset6A23801F, 1024>(metal).expect_err("no kernel");
     assert_eq!(error.class(), ErrorClass::Setup);
     // Hot indices outside their chunk, and chunk sizes that are not powers
     // of two.
@@ -713,7 +713,7 @@ fn workspace_overwrites_and_resizes_across_calls() {
 fn no_sources_commit_to_no_rows() {
     let test = gpu();
     let metal = &test.metal;
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     let matrix = DeviceFlatMatrix::new(metal, &[F::one(); 8 * 128]).expect("upload A");
     let sources = DeviceOneHotSources::new(metal, &[] as &[OneHotSource<'_, u32>]).expect("upload");
     let shape = OneHotCommitShape {
