@@ -683,11 +683,11 @@ mod tests {
         RelationGroupRows, RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout,
         WitnessUnitLayout,
     };
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
 
     #[test]
     fn l2_virtual_batch_reserves_the_constant_coefficient() {
-        type E = Prime128OffsetA7F7;
+        type E = Prime128Offset6A23801F;
         let eta = E::from_u64(3);
         let evaluations = [E::from_u64(5), E::from_u64(7), E::from_u64(11)];
 
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn l2_virtual_batch_cannot_cancel_the_stage2_constant_at_eta_zero() {
-        type E = Prime128OffsetA7F7;
+        type E = Prime128Offset6A23801F;
         let relation_opening_residual = E::from_u64(17);
         let virtual_residuals = [-relation_opening_residual, E::from_u64(29)];
         let zero = E::from_u64(0);

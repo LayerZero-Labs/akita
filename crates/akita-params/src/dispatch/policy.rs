@@ -460,7 +460,7 @@ mod tests {
         for (tier, profile) in [
             (
                 ProtocolRingDispatchTierId::Fp128,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
             ),
             (
                 ProtocolRingDispatchTierId::Fp64,

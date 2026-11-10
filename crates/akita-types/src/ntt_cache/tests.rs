@@ -141,17 +141,17 @@ fn quotient_tail_planning_and_runtime_selectors_agree_for_all_fields() {
     assert_quotient_tail_selectors_agree::<Prime64Offset59, 64>(SisModulusProfileId::Q64Offset59);
     assert_quotient_tail_selectors_agree::<Prime64Offset59, 128>(SisModulusProfileId::Q64Offset59);
     assert_quotient_tail_selectors_agree::<Prime64Offset59, 256>(SisModulusProfileId::Q64Offset59);
-    assert_quotient_tail_selectors_agree::<Prime128OffsetA7F7, 64>(
-        SisModulusProfileId::Q128OffsetA7F7,
+    assert_quotient_tail_selectors_agree::<Prime128Offset6A23801F, 64>(
+        SisModulusProfileId::Q128Offset6A23801F,
     );
-    assert_quotient_tail_selectors_agree::<Prime128OffsetA7F7, 128>(
-        SisModulusProfileId::Q128OffsetA7F7,
+    assert_quotient_tail_selectors_agree::<Prime128Offset6A23801F, 128>(
+        SisModulusProfileId::Q128Offset6A23801F,
     );
 }
 
 #[test]
 fn dense_i8_exact_ifma52_requires_q128_tail_capacity() {
-    let q128 = SisModulusProfileId::Q128OffsetA7F7.modulus();
+    let q128 = SisModulusProfileId::Q128Offset6A23801F.modulus();
     let base_max = CrtCapacity::from_prime_moduli(IFMA52_PRIMES.map(u128::from))
         .max_safe_width_for_modulus(512, q128, 64)
         .expect("three-prime IFMA base capacity");
@@ -190,9 +190,9 @@ fn dense_i8_exact_ifma52_requires_q128_tail_capacity() {
 }
 
 #[test]
-fn q128_a7f7_selector_accepts_d512() {
+fn q128_6a23801f_selector_accepts_d512() {
     assert!(matches!(
-        select_crt_ntt_params::<Prime128OffsetA7F7, 512>(),
+        select_crt_ntt_params::<Prime128Offset6A23801F, 512>(),
         Ok(ProtocolCrtNttParams::Q128(_))
     ));
 }
@@ -354,7 +354,7 @@ fn q32_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
 fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     const ROWS: usize = 2;
     const COLS: usize = 3;
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     let modulus = u128::MAX - (<F as PseudoMersenne>::OFFSET - 1);
     let matrix = (0..ROWS * COLS)
         .map(|entry| {
@@ -453,18 +453,18 @@ fn q128_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
 #[test]
 fn compression_selector_admits_only_q128_ladder_dimensions() {
     assert!(matches!(
-        select_crt_ntt_params::<Prime128OffsetA7F7, 8>(),
+        select_crt_ntt_params::<Prime128Offset6A23801F, 8>(),
         Err(AkitaError::InvalidSetup(_))
     ));
     assert!(matches!(
-        select_compression_crt_ntt_params::<Prime128OffsetA7F7, 8>(),
+        select_compression_crt_ntt_params::<Prime128Offset6A23801F, 8>(),
         Err(AkitaError::InvalidSetup(_))
     ));
     assert!(matches!(
-        select_compression_crt_ntt_params::<Prime128OffsetA7F7, 16>(),
+        select_compression_crt_ntt_params::<Prime128Offset6A23801F, 16>(),
         Ok(ProtocolCrtNttParams::Q128(_))
     ));
-    let flat = flat_zeros::<Prime128OffsetA7F7, 16>(1);
+    let flat = flat_zeros::<Prime128Offset6A23801F, 16>(1);
     let cache = prepare_compression_ntt_cache(flat.ring_view::<16>(1, 1).expect("matrix view"))
         .expect("terminal D16 compression cache");
     assert!(cache.has_cyclic());

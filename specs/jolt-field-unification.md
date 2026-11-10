@@ -127,7 +127,7 @@ both repositories importing the same Rust types and traits directly.
   bootstrap features/dependencies are deleted after the coordinated cutover.
 - [x] No field wrapper, pass-through implementation, or re-export facade remains
   in Akita or `jolt-akita`. The public `jolt_akita::AkitaField` name is a
-  transparent alias for `jolt_field::Prime128OffsetA7F7`, not a facade.
+  transparent alias for `jolt_field::Prime128Offset6A23801F`, not a facade.
 - [x] `AkitaError` remains Akita-owned and is moved out of the deleted field
   crate without introducing a dependency cycle.
 - [x] `jolt-field` does not depend on `akita-serialization`. Existing
@@ -385,7 +385,7 @@ from `jolt-field` to it.
 It must not own field traits, field types, arithmetic implementations, or
 pass-through field helpers. It retains `jolt_akita::AkitaField` as the public
 semantic name for the field fixed by `AkitaScheme`; that name is transparently
-identical to `jolt_field::Prime128OffsetA7F7` and carries no implementation.
+identical to `jolt_field::Prime128Offset6A23801F` and carries no implementation.
 Once both sides use the same `jolt-field` types, field compatibility code in
 `jolt-akita` is deleted rather than simplified into another forwarding layer.
 

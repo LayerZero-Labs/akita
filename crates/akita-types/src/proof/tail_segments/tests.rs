@@ -4,9 +4,9 @@ use akita_params::golomb_rice::golomb_rice_encode_vec;
 use akita_params::tail_golomb_rice_low_bits::wire_rice_low_bits;
 use akita_params::test_fixtures::test_lp;
 use akita_params::CommittedGroupParams;
-use jolt_field::{Prime128OffsetA7F7, Zero};
+use jolt_field::{Prime128Offset6A23801F, Zero};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 const TEST_ADMISSION_CAP: u128 = 127;
 
 fn scalar_group_layout(lp: &CommittedGroupParams) -> Result<TailSegmentLayout, AkitaError> {

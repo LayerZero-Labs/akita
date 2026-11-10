@@ -22,8 +22,8 @@ pub struct CompressionSisCell {
 
 /// Six rank-one cells: `(profile, ring_dimension, sis_max_width)`.
 const COMPRESSION_SIS_CELLS: &[(SisModulusProfileId, u32, u64)] = &[
-    (SisModulusProfileId::Q128OffsetA7F7, 16, 2_400),
-    (SisModulusProfileId::Q128OffsetA7F7, 32, 60_460),
+    (SisModulusProfileId::Q128Offset6A23801F, 16, 2_400),
+    (SisModulusProfileId::Q128Offset6A23801F, 32, 60_460),
     (SisModulusProfileId::Q64Offset59, 32, 1_200),
     (SisModulusProfileId::Q64Offset59, 64, 30_230),
     (SisModulusProfileId::Q32Offset99, 64, 600),
@@ -96,15 +96,15 @@ mod tests {
             assert!(compression_sis_cell(profile, d, 1).is_some());
         }
 
-        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 64, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 8, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q128Offset6A23801F, 64, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q128Offset6A23801F, 8, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 16, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 128, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 32, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 256, 1).is_none());
-        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 16, 2).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q128Offset6A23801F, 16, 2).is_none());
         assert_eq!(
-            compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 32, 1)
+            compression_sis_cell(SisModulusProfileId::Q128Offset6A23801F, 32, 1)
                 .expect("first q128 map")
                 .sis_max_width,
             60_460

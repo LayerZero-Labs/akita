@@ -16,7 +16,7 @@ use akita_types::{
 };
 use akita_verifier::{decide_setup_accumulator, verify_setup_batch_deferred};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Zero};
-use jolt_field::{FpExt4, One, Prime128OffsetA7F7 as F, Prime32Offset99};
+use jolt_field::{FpExt4, One, Prime128Offset6A23801F as F, Prime32Offset99};
 use std::sync::Arc;
 
 fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>> {

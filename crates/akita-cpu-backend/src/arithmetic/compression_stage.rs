@@ -219,14 +219,14 @@ mod tests {
     use crate::opaque::{CommitInnerPlan, ComputeBackendSetup};
     use crate::AkitaProverSetup;
     use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
-    use jolt_field::{Prime128OffsetA7F7, Ring};
+    use jolt_field::{Prime128Offset6A23801F, Ring};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     #[test]
     fn cpu_compression_retains_mode_specific_relation_state() {
         let plan =
-            CompressionChainPlan::for_complete_source(SisModulusProfileId::Q128OffsetA7F7, 64)
+            CompressionChainPlan::for_complete_source(SisModulusProfileId::Q128Offset6A23801F, 64)
                 .unwrap();
         let capacity = plan
             .maps()

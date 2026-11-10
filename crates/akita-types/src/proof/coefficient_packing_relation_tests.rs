@@ -2,7 +2,7 @@ use super::*;
 
 use akita_algebra::poly::multilinear_eval;
 use jolt_field::{
-    CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
+    CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128Offset6A23801F, Prime32Offset99,
     Prime64Offset59, Ring, Zero,
 };
 
@@ -726,9 +726,9 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
 
 #[test]
 fn production_extension_degrees_include_exact_overlap_and_h_greater_than_one() {
-    type F1 = Prime128OffsetA7F7;
+    type F1 = Prime128Offset6A23801F;
     let overlap = fixture::<F1, F1>(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         64,
         64,

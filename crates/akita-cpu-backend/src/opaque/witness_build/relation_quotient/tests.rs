@@ -1,6 +1,6 @@
 use super::*;
 use akita_challenges::SparseChallenge;
-use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::Prime128Offset6A23801F as F;
 use jolt_field::Zero;
 
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {

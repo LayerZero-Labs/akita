@@ -43,7 +43,7 @@ fn runs_match_scalar_equality_across_carries_and_domain_end() {
 
 #[test]
 fn fp128_runs_match_scalar_equality_across_carries_and_domain_end() {
-    check_runs::<jolt_field::solinas::Prime128OffsetA7F7>();
+    check_runs::<jolt_field::solinas::Prime128Offset6A23801F>();
 }
 
 fn check_runs<F: Field>() {

@@ -270,7 +270,7 @@ impl_extension_serialization!(FpExt8, 8);
 mod tests {
     use jolt_field::{CanonicalEncoding, Ext2, Ring};
     use jolt_field::{
-        Fp64, FpExt4, FpExt8, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99,
+        Fp64, FpExt4, FpExt8, Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99,
         Prime64Offset59,
     };
 
@@ -366,35 +366,35 @@ mod tests {
                 serialized(&Prime64Offset59::from_u64(0x03db_45b0_675b_9f54)),
             ),
             (
-                "prime128_a7f7_zero",
-                serialized(&Prime128OffsetA7F7::from_u64(0)),
+                "prime128_6a23801f_zero",
+                serialized(&Prime128Offset6A23801F::from_u64(0)),
             ),
             (
-                "prime128_a7f7_one",
-                serialized(&Prime128OffsetA7F7::from_u64(1)),
+                "prime128_6a23801f_one",
+                serialized(&Prime128Offset6A23801F::from_u64(1)),
             ),
             (
-                "prime128_a7f7_max",
+                "prime128_6a23801f_max",
                 serialized(
-                    &Prime128OffsetA7F7::from_u128_checked(
-                        0xffff_ffff_ffff_ffff_ffff_ffff_0000_5808,
+                    &Prime128Offset6A23801F::from_u128_checked(
+                        0xffff_ffff_ffff_ffff_ffff_ffff_95dc_7fe0,
                     )
                     .unwrap(),
                 ),
             ),
             (
-                "prime128_a7f7_random_a",
+                "prime128_6a23801f_random_a",
                 serialized(
-                    &Prime128OffsetA7F7::from_u128_checked(
+                    &Prime128Offset6A23801F::from_u128_checked(
                         0x59c9_f049_a454_d1c9_2917_8971_d900_881d,
                     )
                     .unwrap(),
                 ),
             ),
             (
-                "prime128_a7f7_random_b",
+                "prime128_6a23801f_random_b",
                 serialized(
-                    &Prime128OffsetA7F7::from_u128_checked(
+                    &Prime128Offset6A23801F::from_u128_checked(
                         0x97ca_5c79_1111_19c2_d65b_7558_6cc1_d87a,
                     )
                     .unwrap(),
@@ -443,7 +443,7 @@ mod tests {
     fn bulk_prime_decoding_matches_single_word_decoding() {
         let p32 = u32::MAX - 98;
         let p64 = u64::MAX - 58;
-        let p128 = u128::MAX - 0xffff_a7f6;
+        let p128 = u128::MAX - 0x6a23_801e;
         let words32 = [0, 1, p32 - 1, p32, p32 + 1, u32::MAX];
         let words64 = [0, 1, p64 - 1, p64, p64 + 1, u64::MAX];
         let words128 = [0, 1, p128 - 1, p128, p128 + 1, u128::MAX];
@@ -462,9 +462,9 @@ mod tests {
                 .iter()
                 .flat_map(|w| w.to_le_bytes())
                 .collect();
-            assert_bulk_matches_single::<Prime128OffsetA7F7>(&bytes128, valid);
+            assert_bulk_matches_single::<Prime128Offset6A23801F>(&bytes128, valid);
         }
-        assert!(Prime128OffsetA7F7::deserialize_many_with_mode(
+        assert!(Prime128Offset6A23801F::deserialize_many_with_mode(
             &[0u8; 31][..],
             Compress::No,
             Validate::No,
@@ -479,7 +479,7 @@ mod tests {
         // A header claiming `usize::MAX` elements with no payload must fail as
         // a truncated read, not after reserving or zero-filling the claimed run.
         let forged = usize::MAX;
-        let err = Prime128OffsetA7F7::deserialize_many_with_mode(
+        let err = Prime128Offset6A23801F::deserialize_many_with_mode(
             &[0u8; 16][..],
             Compress::No,
             Validate::Yes,
@@ -518,15 +518,15 @@ mod tests {
             decode_fixture_hex(encoded)
         };
 
-        let invalid_scalar = fixture("invalid_prime128_a7f7_modulus");
-        assert!(Prime128OffsetA7F7::deserialize_with_mode(
+        let invalid_scalar = fixture("invalid_prime128_6a23801f_modulus");
+        assert!(Prime128Offset6A23801F::deserialize_with_mode(
             &invalid_scalar[..],
             Compress::No,
             Validate::Yes,
             &(),
         )
         .is_err());
-        let scalar = Prime128OffsetA7F7::deserialize_with_mode(
+        let scalar = Prime128Offset6A23801F::deserialize_with_mode(
             &invalid_scalar[..],
             Compress::No,
             Validate::No,
@@ -535,7 +535,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             serialized(&scalar),
-            fixture("unvalidated_prime128_a7f7_modulus")
+            fixture("unvalidated_prime128_6a23801f_modulus")
         );
 
         let invalid_ext2 = fixture("invalid_fp_ext2_prime64_second_modulus");
