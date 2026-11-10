@@ -397,14 +397,15 @@ pub struct RingMatrixView<'a, F: Field, const D: usize> {
 
 impl<'a, F: Field, const D: usize> RingMatrixView<'a, F, D> {
     /// Borrow a row-major prefix without copying its field coefficients.
-    /// Rejects zero ring dimensions and insufficient or overflowing footprints.
+    /// Rejects zero columns or ring dimensions, and insufficient or overflowing
+    /// footprints.
     pub fn from_field_slice(
         data: &'a [F],
         num_rows: usize,
         num_cols: usize,
     ) -> Result<Self, AkitaError> {
         let row_field_len = akita_error::checked::product([num_cols, D])
-            .filter(|_| D > 0)
+            .filter(|_| D > 0 && num_cols > 0)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("matrix row length overflow or zero dimension".into())
             })?;
@@ -580,6 +581,24 @@ mod tests {
         assert_eq!(view_a.row(1).unwrap()[0], elements[16]);
         assert_eq!(view_b.row(0).unwrap()[0], elements[0]);
         assert_eq!(view_b.row(1).unwrap()[0], elements[8]);
+    }
+
+    #[test]
+    fn borrowed_view_rejects_zero_columns_before_row_iteration() {
+        for rows in [0, 1, 5] {
+            let result = RingMatrixView::<F, 64>::from_field_slice(&[], rows, 0)
+                .map(|view| view.rows().count());
+            assert!(matches!(result, Err(AkitaError::InvalidSetup(_))));
+        }
+        let zero_dimension =
+            RingMatrixView::<F, 0>::from_field_slice(&[], 1, 1).map(|view| view.rows().count());
+        assert!(matches!(zero_dimension, Err(AkitaError::InvalidSetup(_))));
+
+        // An empty set of rows with a nonzero stride iterates safely.
+        let empty = RingMatrixView::<F, 64>::from_field_slice(&[], 0, 1).unwrap();
+        assert_eq!(empty.rows().count(), 0);
+        let flat = FlatMatrix::<F>::from_flat_data(Vec::new());
+        assert!(flat.ring_view::<64>(1, 0).is_err());
     }
 
     #[test]
