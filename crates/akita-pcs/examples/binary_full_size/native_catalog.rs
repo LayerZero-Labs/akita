@@ -1,6 +1,10 @@
 //! Trusted local fixture admission of the exact native-root transition.
+//!
+//! The measured sizes plan through this builder. The 2^10 smoke uses the
+//! oversized ordinary carrier in `catalog.rs`: no ordinary suffix admits its
+//! exact native transition.
 
-use super::{catalog, config::FullSize, metrics::hex};
+use super::{catalog, claims, metrics::hex, FullSize, NAME};
 use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupBatchProfile, FoldSchedule, PolynomialGroupLayout,
@@ -16,11 +20,27 @@ use std::path::Path;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type Row = (CommittedGroupBatchProfile, FoldSchedule);
+type Key = ScheduleLookupKey;
+
+/// Source size of the smoke, which plans an oversized ordinary carrier.
+pub(super) const SMOKE: usize = 10;
+
+fn singleton(log: usize) -> Key {
+    ScheduleLookupKey::single(PolynomialGroupLayout::singleton(producer_vars(log)))
+}
+
+/// Variables of the ordinary producer and binary carrier profile. The smoke
+/// keeps the 18-variable ordinary producer: a 10-variable mixed search has no
+/// admitted schedule.
+pub(super) fn producer_vars(log: usize) -> usize {
+    log.max(18)
+}
 
 /// Request and planner identity a fixture catalog was planned for.
 #[derive(Serialize, Deserialize, PartialEq)]
 struct CatalogIdentity {
     dev_protocol: bool,
+    field: String,
     log_carriers: usize,
     shape: String,
     family: String,
@@ -33,6 +53,7 @@ impl CatalogIdentity {
         let (policy, direct_policy) = policies();
         Self {
             dev_protocol: akita_params::DEV_PROTOCOL,
+            field: NAME.to_owned(),
             log_carriers,
             shape: shape.to_owned(),
             family: FullSize::schedule_family_name().to_owned(),
@@ -43,8 +64,9 @@ impl CatalogIdentity {
 
     fn describe(&self) -> String {
         format!(
-            "dev_protocol={} log_carriers={} shape={} family={} policy_digest={} direct_policy_digest={}",
+            "dev_protocol={} field={} log_carriers={} shape={} family={} policy_digest={} direct_policy_digest={}",
             self.dev_protocol,
+            self.field,
             self.log_carriers,
             self.shape,
             self.family,
@@ -110,12 +132,23 @@ impl FixtureCatalog {
         Ok(())
     }
 
-    fn admit(self, log: usize, shape: &str) -> Result<TrustedScheduleCatalog<FullSize>> {
+    /// The one admission boundary for planned, cached and loaded catalogs:
+    /// the request identity, the repriced rows, then the native transition.
+    fn admit(self, log: usize, shape: &str) -> Result<(TrustedScheduleCatalog<FullSize>, Key)> {
         self.identity.check(&CatalogIdentity::new(log, shape))?;
+        self.check_rows(log, shape)?;
+        let key = match self.ordinary.first() {
+            Some((profiles, _)) => ScheduleLookupKey {
+                final_group: profiles.final_group.group,
+                precommitteds: vec![profiles.final_group],
+                root_accumulated_setup_prefix_len: 0,
+            },
+            None => singleton(log),
+        };
         let chunking = ChunkedWitnessCfg::default_non_chunked();
         let policy = policy_of::<FullSize>(chunking);
         let transition = NativeRootTransition::new(self.physical_cells, 3, self.prefix_cells)?;
-        Ok(TrustedScheduleCatalog::new(
+        let catalog = TrustedScheduleCatalog::new(
             ValidatedScheduleCatalog::try_new_native_root(
                 FullSize::schedule_family_name(),
                 self.ordinary,
@@ -124,25 +157,35 @@ impl FixtureCatalog {
                 FullSize::ring_challenge_config,
             )?,
             chunking,
-        )?)
+        )?;
+        Ok((catalog, key))
     }
 }
 
 /// Reuse a planned fixture catalog from `BINARY_SOURCE_CATALOG_CACHE`.
 ///
 /// Planning is deterministic, so a cached catalog planned for the same
-/// protocol, size, shape and planner policies is the catalog that planning
-/// would produce. Repeated prover measurements use it to skip planning; it is
-/// never a supported artifact. An entry is admitted by the identity and rows
-/// it contains, never by its filename, and a mismatch is an error.
+/// protocol, field, size, shape and planner policies is the catalog that
+/// planning would produce. Repeated prover measurements use it to skip
+/// planning; it is never a supported artifact. An entry is admitted by the
+/// identity and rows it contains, never by its filename, and a mismatch is an
+/// error.
 pub(super) fn build(
     log: usize,
     shape: &str,
     directory: &Path,
-) -> Result<(TrustedScheduleCatalog<FullSize>, ScheduleLookupKey)> {
+) -> Result<(TrustedScheduleCatalog<FullSize>, Key)> {
+    if log == SMOKE {
+        let (catalog, key) = catalog::build(log, shape)?;
+        std::fs::write(
+            directory.join("catalog.aks"),
+            catalog.catalog().to_artifact_bytes()?,
+        )?;
+        return Ok((catalog, key));
+    }
     let cache = std::env::var_os("BINARY_SOURCE_CATALOG_CACHE").map(|cache| {
         Path::new(&cache).join(format!(
-            "native-catalog-{}-{log}-{shape}.json",
+            "native-catalog-{}-{NAME}-{log}-{shape}.json",
             if akita_params::DEV_PROTOCOL {
                 "dev"
             } else {
@@ -163,24 +206,13 @@ pub(super) fn build(
         std::fs::write(directory.join("native-catalog.json"), &bytes)?;
         let fixture: FixtureCatalog =
             serde_json::from_slice(&bytes).map_err(|e| rejected(e.into()))?;
-        fixture
-            .identity
-            .check(&CatalogIdentity::new(log, shape))
-            .map_err(rejected)?;
-        fixture.check_rows(log, shape).map_err(rejected)?;
-        let key = match fixture.ordinary.first() {
-            Some((profiles, _)) => ScheduleLookupKey {
-                final_group: profiles.final_group.group,
-                precommitteds: vec![profiles.final_group],
-                root_accumulated_setup_prefix_len: 0,
-            },
-            None => ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log)),
-        };
         println!(
             "native_transition physical_cells={} prefix_cells={} catalog_cache=hit",
             fixture.physical_cells, fixture.prefix_cells
         );
-        return Ok((fixture.admit(log, shape).map_err(rejected)?, key));
+        return fixture
+            .admit(log, shape)
+            .map_err(|error| rejected(error).into());
     }
     let (catalog, key) = plan(log, shape, directory)?;
     if let Some(path) = cache {
@@ -206,9 +238,9 @@ fn plan(
     log: usize,
     shape: &str,
     directory: &Path,
-) -> Result<(TrustedScheduleCatalog<FullSize>, ScheduleLookupKey)> {
+) -> Result<(TrustedScheduleCatalog<FullSize>, Key)> {
     let (policy, direct_policy) = policies();
-    let singleton = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(log));
+    let singleton = singleton(log);
     let contract = FullSize::committed_source_contract()?;
     let mut ordinary = Vec::new();
     let producer = if shape == "binary-and-prime-claims-plus-ordinary" {
@@ -290,7 +322,11 @@ fn plan(
         directory.join("native-catalog.json"),
         serde_json::to_vec(&fixture)?,
     )?;
-    Ok((fixture.admit(log, shape)?, key))
+    let (catalog, admitted) = fixture.admit(log, shape)?;
+    if admitted != key {
+        return Err("native catalog key differs from the planned key".into());
+    }
+    Ok((catalog, key))
 }
 
 pub(super) fn load(
@@ -298,9 +334,57 @@ pub(super) fn load(
     shape: &str,
     directory: &Path,
 ) -> Result<TrustedScheduleCatalog<FullSize>> {
+    if log == SMOKE {
+        return Ok(TrustedScheduleCatalog::from_artifact_bytes(
+            &std::fs::read(directory.join("catalog.aks"))?,
+            ChunkedWitnessCfg::default_non_chunked(),
+        )?);
+    }
     let fixture: FixtureCatalog =
         serde_json::from_slice(&std::fs::read(directory.join("native-catalog.json"))?)?;
-    fixture.admit(log, shape)
+    Ok(fixture.admit(log, shape)?.0)
+}
+
+/// Plan the fixture catalog and print the root grinding plan it selects,
+/// without committing or proving.
+pub(super) fn plan_only(log: usize, shape: &str, directory: &Path) -> Result<()> {
+    let (catalog, key) = build(log, shape, directory)?;
+    let selected = catalog.resolve_key(&key)?;
+    let schedule = selected.schedule();
+    let ordinary = akita_config::derive_transcript_grinding_plan::<FullSize>(
+        schedule,
+        &selected.profiles().opening_layout()?,
+        None,
+    )?;
+    let next = schedule
+        .recursive_folds
+        .first()
+        .ok_or("missing ordinary successor")?;
+    let domain_len = akita_params::witness_commitment_domain_len(
+        schedule.root.output_witness_len,
+        next.params.d_a(),
+    )?;
+    let descriptor = claims::descriptor(log)?;
+    let coordinates = descriptor.index_map().columns() * descriptor.polynomials().len();
+    let plan = akita_types::binary::binary_root_grinding_plan(
+        &ordinary,
+        super::FIELD,
+        &[coordinates],
+        domain_len,
+        648,
+    )?;
+    println!("root_grinding field={NAME} domain_len={domain_len} column_coordinates={coordinates}");
+    for run in plan.runs().iter().filter(|run| run.site().level() == 0) {
+        println!(
+            "root_grinding_site site={:?} kind={:?} loss={} grind_bits={}",
+            run.site(),
+            run.kind(),
+            run.loss_factor(),
+            run.grind_bits()
+        );
+    }
+    println!("plan_only=true proof_measured=false");
+    Ok(())
 }
 
 #[cfg(test)]

@@ -217,12 +217,13 @@ pub(super) fn proof(
     proof: &[u8],
     log_carriers: usize,
     word: bool,
+    field: akita_params::binary_setup::BinaryFieldProfile,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use akita_error::checked;
 
     let digest = akita_params::descriptor_bytes::digest_descriptor_bytes(proof);
     println!(
-        "proof bytes={} digest_algorithm=blake2b256 digest={}",
+        "proof bytes={} digest_algorithm=blake2b256 digest={} field={field:?}",
         proof.len(),
         hex(&digest)
     );
@@ -236,8 +237,9 @@ pub(super) fn proof(
         .ok_or("missing outgoing payload range")?;
     let projection_start = checked::sum([outgoing.start, outgoing.len]).ok_or("range overflow")?;
     let mut coverage = Vec::new();
-    // The binary frontend and integer projections use raw channel exchanges,
-    // so the generic field-message range logger does not classify them.
+    // The binary frontend and P128 integer projections use raw channel
+    // exchanges, so the generic field-message range logger does not classify
+    // them. The P64 root commits its quotients and sends no projections.
     let frontend_round_bytes = checked::product([42, log_carriers]).ok_or("frontend overflow")?;
     let terminal_start = checked::sum([2048, frontend_round_bytes]).ok_or("frontend overflow")?;
     for (name, start, bytes, atoms) in [
@@ -263,7 +265,16 @@ pub(super) fn proof(
             if word { 21 } else { 0 },
             usize::from(word),
         ),
-        ("integer_projections", projection_start, 84, 7),
+        (
+            "integer_projections",
+            projection_start,
+            if field == akita_params::binary_setup::BinaryFieldProfile::P128 {
+                84
+            } else {
+                0
+            },
+            7,
+        ),
     ] {
         if bytes != 0 {
             let end = checked::sum([start, bytes]).ok_or("range overflow")?;
