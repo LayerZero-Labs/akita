@@ -223,6 +223,7 @@ fn p64_prime_claim_u_coordinates_bind_the_opening() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let opened = super::p64::p64_round_trip(true);
+        opened.verify(&opened.proof, opened.prime.clone());
         let prime = opened.prime.clone().unwrap();
         for point in [false, true] {
             let mut changed = prime.clone();
@@ -233,7 +234,7 @@ fn p64_prime_claim_u_coordinates_bind_the_opening() {
             };
             let [base, u]: [u128; 2] = value.coordinates().try_into().unwrap();
             *value = [base, (u + 1) % BinaryFieldProfile::P64.modulus()].into();
-            opened.rejects(&opened.proof, Some(changed));
+            let _ = opened.rejects(&opened.proof, Some(changed));
         }
     });
 }
