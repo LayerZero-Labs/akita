@@ -18,7 +18,6 @@ keywords = [
   "post-quantum",
 ]
 categories = ["cryptography", "algorithms"]
-# One integration test binary; see tests/integration.rs.
 autotests = false
 include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 

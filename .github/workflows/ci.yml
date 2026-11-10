@@ -214,15 +214,10 @@ jobs:
           cargo run --release -p akita-planner \
             --features catalog-security \
             --example catalog_security -- --check
-      # The Test job runs the catalog-backed PCS e2e tests (`akita_fp128_e2e`
-      # and akita-config `bounded_dense_source`), so this job does not rebuild
-      # them. They once needed schedule-table features that only this job set.
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
-    # Cold release builds span several logging-transcript test binaries and
-    # can exceed 40 minutes before the final protocol suites finish compiling.
     timeout-minutes: 60
     strategy:
       matrix:
@@ -232,8 +227,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Run semantic transcript suites
         run: |
-          # akita-pcs integration suites share one test binary. Run each suite
-          # in its own process, as before they were merged.
           for suite in transcript_hardening transcript_hardening_proptest embedded_transcript; do
             cargo test --release -p akita-pcs --test integration \
               --no-default-features \
@@ -263,8 +256,6 @@ jobs:
             selective_l2_proof_rejects_transcript_mutations --lib
       - name: Run protocol suites with proof channel tracing
         run: |
-          # akita-pcs integration suites share one test binary. Run each suite
-          # in its own process, as before they were merged.
           for suite in protocol_soundness fold_linf; do
             cargo test --release -p akita-pcs --test integration \
               --no-default-features \

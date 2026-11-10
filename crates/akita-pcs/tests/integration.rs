@@ -1,8 +1,4 @@
-//! akita-pcs integration tests, built as one test binary.
-//!
-//! Each module is one former test binary. One binary compiles the shared
-//! prover, verifier, and backend generics once instead of once per suite.
-//! Select a suite with a name filter, for example
+//! akita-pcs integration tests. Select a suite with a name filter, for example
 //! `cargo test -p akita-pcs --test integration -- fold_linf::`.
 
 #![allow(missing_docs)]

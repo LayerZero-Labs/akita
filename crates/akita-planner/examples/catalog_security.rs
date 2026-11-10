@@ -132,8 +132,6 @@ fn main() -> Result<(), String> {
         }
     }
 
-    // Load every selected catalog first, so the rows can be estimated in
-    // parallel and still print in catalog order.
     let mut catalogs = Vec::new();
     for family in selected_families(&names)? {
         let policy = (family.policy)();
@@ -194,7 +192,6 @@ fn main() -> Result<(), String> {
     }
     let matched_rows = rows.len();
 
-    // Each row's estimate is independent and CPU bound.
     let workers = std::thread::available_parallelism().map_or(1, |count| count.get());
     let estimates = bounded_parallel_filter_map(&rows, workers, |row| {
         estimate_schedule_security(row.resolved.schedule())
