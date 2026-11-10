@@ -46,3 +46,9 @@ pub use sampler::{
     sample_challenge_ct, sample_challenge_ct_counted, sample_indexed_challenges_from_seed,
     SparseChallengeStream,
 };
+
+mod checked_hint;
+pub use checked_hint::{abort_checked_hints, finish_checked_hints, install_checked_hints};
+
+#[cfg(test)]
+mod checked_hints_tests;

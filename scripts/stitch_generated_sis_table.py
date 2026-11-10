@@ -202,7 +202,7 @@ def stitch_mod() -> str:
         "    match family {\n",
         "        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, collision_l2_sq),\n",
         "        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, collision_l2_sq),\n",
-        "        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, collision_l2_sq),\n",
+        "        SisModulusProfileId::Q128Offset6A23801F => q128::sis_max_widths(d, collision_l2_sq),\n",
         "    }\n",
         "}\n",
     ]

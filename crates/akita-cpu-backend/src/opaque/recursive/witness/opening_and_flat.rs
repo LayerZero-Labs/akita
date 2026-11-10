@@ -821,13 +821,13 @@ where
 #[cfg(test)]
 mod shape_tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
 
     #[test]
     fn view_constructor_rejects_rounded_ring_extent_overflow() {
         let digits = PackedSignedDigits::default();
         let view = digits.zero_padded(usize::MAX).unwrap();
-        let error = SuffixWitnessView::<Prime128OffsetA7F7, 1>::from_recursive_witness(view, 0)
+        let error = SuffixWitnessView::<Prime128Offset6A23801F, 1>::from_recursive_witness(view, 0)
             .err()
             .unwrap();
         assert!(matches!(error, AkitaError::Internal(message)
@@ -838,7 +838,7 @@ mod shape_tests {
     fn view_constructor_rejects_ring_times_dimension_overflow() {
         let digits = PackedSignedDigits::default();
         let view = digits.zero_padded(usize::MAX - 1).unwrap();
-        let error = SuffixWitnessView::<Prime128OffsetA7F7, 2>::from_recursive_witness(view, 0)
+        let error = SuffixWitnessView::<Prime128Offset6A23801F, 2>::from_recursive_witness(view, 0)
             .err()
             .unwrap();
         assert!(matches!(error, AkitaError::Internal(message)
