@@ -499,9 +499,9 @@ mod tests {
     use crate::opaque::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
     use akita_params::{SetupMatrixCapacity, SisModulusProfileId};
-    use jolt_field::{Prime128OffsetA7F7, Ring};
+    use jolt_field::{Prime128Offset6A23801F, Ring};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     fn prepared_context(
         max_source_coefficients: usize,
@@ -510,7 +510,7 @@ mod tests {
         <CpuBackend<F, F> as ComputeBackendSetup<F>>::PreparedSetup,
     ) {
         let plan = CompressionChainPlan::for_complete_source(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             max_source_coefficients,
         )
         .unwrap();
@@ -538,7 +538,7 @@ mod tests {
         CompressionExecutionInput {
             id,
             plan: CompressionChainPlan::for_complete_source(
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 coefficients,
             )
             .unwrap(),

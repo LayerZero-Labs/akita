@@ -30,6 +30,11 @@ The fixture sources are intentionally independent of the post-cutover
   `label_schedule::schedule_is_replayable_with_akita_labels` under the
   Blake2b transcript backend.
 
+The 128-bit scalar rows (`prime128_6a23801f_*` in `fields.txt` and `malformed.txt`)
+were re-pinned for the `Prime128Offset6A23801F` field switch (akita#326): the
+maximum canonical representative and the non-canonical modulus encoding are
+the new field's; the random representatives remain canonical and unchanged.
+
 Post-cutover tests consume these literal bytes and values. Do not regenerate
 them from the current implementation. An intentional wire or transcript
 change must replace this fixture set with a newly named protocol-epoch fixture

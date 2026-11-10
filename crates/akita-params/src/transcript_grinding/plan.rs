@@ -530,7 +530,7 @@ mod tests {
 
     fn params(ring_dimension: usize) -> CommittedGroupParams {
         CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             ring_dimension,
             3,
             2,
@@ -706,7 +706,7 @@ mod tests {
         let key = crate::sis::sis_l2_table_key_for_collision_sq(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             SisL2TableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             64,
             1u128 << 50,
         )
@@ -1028,7 +1028,7 @@ mod tests {
             let challenge_order = ChallengeFieldOrder::from_field(
                 128,
                 extension_degree,
-                SisModulusProfileId::Q128OffsetA7F7.modulus(),
+                SisModulusProfileId::Q128Offset6A23801F.modulus(),
             )
             .unwrap();
             let mut runs = Vec::new();

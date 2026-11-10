@@ -58,7 +58,7 @@ fn sis_modulus_profile_tag(family: akita_params::SisModulusProfileId) -> u64 {
     match family {
         akita_params::SisModulusProfileId::Q32Offset99 => 0,
         akita_params::SisModulusProfileId::Q64Offset59 => 1,
-        akita_params::SisModulusProfileId::Q128OffsetA7F7 => 2,
+        akita_params::SisModulusProfileId::Q128Offset6A23801F => 2,
     }
 }
 

@@ -47,7 +47,7 @@ const REPRESENTATIVE_CASES: &[RepresentativeCase] = &[
         coeff_linf_bound: 15,
     },
     RepresentativeCase {
-        family: AkitaModulusProfileId::Q128OffsetA7F7,
+        family: AkitaModulusProfileId::Q128Offset6A23801F,
         d: 32,
         rank: 1,
         width: 8,
@@ -350,7 +350,7 @@ fn family_label(family: AkitaModulusProfileId) -> &'static str {
     match family {
         AkitaModulusProfileId::Q32Offset99 => "q32",
         AkitaModulusProfileId::Q64Offset59 => "q64",
-        AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
+        AkitaModulusProfileId::Q128Offset6A23801F => "q128",
     }
 }
 

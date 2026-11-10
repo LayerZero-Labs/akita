@@ -218,9 +218,9 @@ mod tests {
     use crate::commitment::{CommitmentStateBinding, StateOwnerCapability};
     use akita_params::SisModulusProfileId;
     use akita_types::{AkitaSetupDescriptor, AkitaSetupSeed};
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     fn compression_state(relation_mode: RingRelationMode) -> BackendStateRef<CompressionState> {
         let owner = StateOwnerCapability::<CompressionState>::new();
@@ -251,7 +251,7 @@ mod tests {
     fn compression_output_rejects_wrong_terminal_shape_and_mode() {
         let mode = RingRelationMode::QuotientLift;
         let plan =
-            CompressionChainPlan::for_complete_source(SisModulusProfileId::Q128OffsetA7F7, 64)
+            CompressionChainPlan::for_complete_source(SisModulusProfileId::Q128Offset6A23801F, 64)
                 .unwrap();
         let terminal_dimension = plan.maps().last().unwrap().ring_dimension();
         let correct = RingVec::from_coeffs_with_ring_dim(

@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{Prime128OffsetA7F7 as F, Zero};
+use jolt_field::{Prime128Offset6A23801F as F, Zero};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]

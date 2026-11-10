@@ -87,6 +87,8 @@ until maintainers explicitly mark the paper as published and stable.
 Verifier-reachable code must reject malformed input with `AkitaError` or `SerializationError`, never panic.
 Do not add verifier-reachable `panic!`, `assert!`, `unwrap`, unchecked indexing, or unbounded allocation without prior validation at a boundary.
 Full contract: [`book/src/how/verification.md`](book/src/how/verification.md) and [`docs/verifier-contract.md`](docs/verifier-contract.md).
+Checked challenge advice requires a trusted byte budget before allocation; see
+[advice ingress](book/src/how/verification.md#checked-challenge-advice).
 
 ## Single source of truth (no wrapper slop)
 
