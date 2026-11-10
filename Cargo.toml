@@ -3,6 +3,7 @@ members = [
   "crates/akita-algebra",
   "crates/akita-challenges",
   "crates/akita-config",
+  "crates/akita-constant-time",
   "crates/akita-cpu-backend",
   "crates/akita-error",
   "crates/akita-pcs",
@@ -24,6 +25,12 @@ members = [
 # workspace's resolution graph.
 exclude = ["profile/akita-recursion", "fuzz"]
 resolver = "2"
+
+[workspace.dependencies]
+akita-constant-time = { version = "0.1.0", path = "crates/akita-constant-time" }
+aarch64-dit = "0.1"
+rayon = "1.10"
+tracing = "0.1"
 
 [workspace.metadata.cargo-machete]
 ignored = []

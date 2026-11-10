@@ -13,14 +13,17 @@ if [ "$#" -gt 0 ]; then
   forbidden=("$@")
 else
   case "${pkg}" in
+    akita-error | akita-types)
+      forbidden=(akita-constant-time)
+      ;;
     akita-params)
-      forbidden=(akita-types akita-prover akita-verifier akita-cpu-backend akita-pcs akita-setup akita-config akita-schedules akita-planner)
+      forbidden=(akita-types akita-prover akita-verifier akita-cpu-backend akita-pcs akita-setup akita-config akita-schedules akita-planner akita-constant-time)
       ;;
     akita-sis-estimator)
       forbidden=(akita-types)
       ;;
     akita-verifier)
-      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs)
+      forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs akita-constant-time)
       ;;
     akita-prover)
       forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs)
