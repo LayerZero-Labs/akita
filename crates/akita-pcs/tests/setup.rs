@@ -145,9 +145,12 @@ where
     let verifier_setup = scheme
         .setup_verifier_for_schedule(&verifier_setup_source, &schedule, &opening_layout)
         .expect("schedule-scoped verifier setup from a larger covering public prefix");
-    let verifier_capacity =
-        akita_params::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
-            .expect("verifier capacity");
+    let verifier_capacity = akita_params::verifier_setup_matrix_capacity_for_schedule(
+        &schedule,
+        &opening_layout,
+        akita_params::SetupMode::Check,
+    )
+    .expect("verifier capacity");
     assert_eq!(
         verifier_setup
             .expanded()
@@ -166,6 +169,7 @@ where
                 undersized.expanded().as_ref(),
                 &schedule,
                 &opening_layout,
+                akita_params::SetupMode::Check
             )
             .expect("fit check"),
             "one-field-short verifier setup must not fit"
@@ -284,9 +288,12 @@ where
     let verifier_setup = scheme
         .setup_verifier_for_schedule(&verifier_setup_source, &schedule, &opening_layout)
         .expect("schedule-scoped verifier setup from a larger covering public prefix");
-    let verifier_capacity =
-        akita_params::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
-            .expect("verifier capacity");
+    let verifier_capacity = akita_params::verifier_setup_matrix_capacity_for_schedule(
+        &schedule,
+        &opening_layout,
+        akita_params::SetupMode::Check,
+    )
+    .expect("verifier capacity");
     assert_eq!(
         verifier_setup
             .expanded()
