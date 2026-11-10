@@ -7,7 +7,7 @@ use akita_sumcheck::{
 use akita_transcript::{
     ext_challenge, ProtocolSiteId, ProverChannel, VerifierChannel, SITE_FAMILY_SUMCHECK,
 };
-use jolt_field::{ExtField, Field, Prime128OffsetA7F7 as F};
+use jolt_field::{ExtField, Field, Prime128Offset6A23801F as F};
 use jolt_poly::OmittedConstantPoly;
 use rand::{rngs::StdRng, SeedableRng};
 

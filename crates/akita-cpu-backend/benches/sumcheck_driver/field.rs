@@ -1,7 +1,7 @@
 //! Count operations at the Field API, with unchanged underlying field arithmetic.
 
 use super::counts;
-use jolt_field::{ExtField, Field, Prime128OffsetA7F7 as F, Ring};
+use jolt_field::{ExtField, Field, Prime128Offset6A23801F as F, Ring};
 use rand::RngCore;
 use std::fmt::{Display, Formatter};
 

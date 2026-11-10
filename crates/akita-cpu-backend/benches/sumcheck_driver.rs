@@ -24,7 +24,7 @@ use akita_transcript::{new_prover_channel, new_verifier_channel};
 use criterion::{BatchSize, Criterion};
 use field::Counted;
 use instance::{Instance, Prover, Verifier, ROUNDS, SESSION, WIDTH};
-use jolt_field::{ExtField, Prime128OffsetA7F7 as F};
+use jolt_field::{ExtField, Prime128Offset6A23801F as F};
 use std::hint::black_box;
 
 #[global_allocator]

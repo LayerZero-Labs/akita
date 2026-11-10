@@ -8,7 +8,7 @@ use akita_cpu_backend::benchmark_support::{
 use akita_params::DigitRangePlan;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, SumcheckInstanceProver};
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use jolt_field::{Field, One, Prime128OffsetA7F7 as F, Ring, Zero};
+use jolt_field::{Field, One, Prime128Offset6A23801F as F, Ring, Zero};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::hint::black_box;
 

@@ -5,12 +5,16 @@
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::split_eq::GruenSplitEq;
 use criterion::{BatchSize, BenchmarkId, Criterion};
-use jolt_field::{Field, FpExt4, Fr, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Ring};
+use jolt_field::{
+    Field, FpExt4, Fr, Prime128Offset275, Prime128Offset6A23801F, Prime128OffsetA7F7,
+    Prime32Offset99, Ring,
+};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::hint::black_box;
 
-type F = Prime128OffsetA7F7;
+/// Akita's production 128-bit field (`proof_optimized::fp128::Field`).
+type F = Prime128Offset6A23801F;
 
 fn point<E: Field>(n: usize, seed: u64) -> Vec<E> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
@@ -131,7 +135,8 @@ fn main() {
     }
     let mut c = Criterion::default().configure_from_args();
     orders::<Fr>(&mut c, "Fr");
-    orders::<F>(&mut c, "Prime128OffsetA7F7");
+    orders::<Prime128OffsetA7F7>(&mut c, "Prime128OffsetA7F7");
+    orders::<F>(&mut c, "Prime128Offset6A23801F");
     orders::<FpExt4<Prime32Offset99>>(&mut c, "FpExt4");
     builders::<Fr>(&mut c, "Fr");
     builders::<Prime128Offset275>(&mut c, "Prime128Offset275");
