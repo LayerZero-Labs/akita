@@ -17,7 +17,8 @@
 //!
 //! ```text
 //! cargo run --release -p akita-pcs --no-default-features \
-//!     --features parallel,test-support,logging --example zk_distinguisher -- [N] [trials]
+//!     --features parallel,test-support,logging-transcript,transcript-keccak \
+//!     --example zk_distinguisher -- [N] [trials]
 //! ```
 
 #![allow(missing_docs, dead_code)]

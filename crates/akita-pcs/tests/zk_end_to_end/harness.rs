@@ -48,19 +48,52 @@ pub(crate) fn v_stream() -> Vec<F> {
     public_stream(1 << 21, 31)
 }
 
-/// `A_p`'s hiding randomness columns over the residual's ring.
+/// `A_p`'s randomness must hide both its pad image and row `L`'s 64 coefficients.
 pub(crate) fn pad_randomness_columns<C: CommitmentConfig>(shape: &ResidualShape) -> usize {
-    akita_params::zk::hiding_randomness_columns(
-        akita_params::zk::ImageShape {
-            rows: PAD_RANK,
-            ring_dim: shape.ring_dim(),
-            modulus: C::sis_modulus_profile(),
-        },
-        akita_params::zk::DigitAlphabet {
-            log_basis: PAD_RANDOMNESS_LOG_BASIS,
-        },
+    use jolt_algebra::checked;
+    use jolt_crypto::lattice::required_randomness_columns;
+
+    C::validate_sis_modulus_profile().unwrap();
+    let ring_dim = shape.ring_dim();
+    let image_coeffs = checked::product([PAD_RANK, ring_dim]).unwrap();
+    let columns = required_randomness_columns::<C::Field>(
+        image_coeffs,
+        64,
+        ring_dim,
+        PAD_RANDOMNESS_LOG_BASIS,
+        8,
     )
-    .unwrap()
+    .unwrap();
+
+    // Check the joint-image ceiling independently of the sizing API, including
+    // the 2λ + 8 margin and whole-column minimality.
+    let field_bits = usize::try_from(C::sis_modulus_profile().field_bits()).unwrap();
+    let image_bits =
+        checked::product([checked::sum([image_coeffs, 64]).unwrap(), field_bits]).unwrap();
+    let margin = checked::mul_add(2, 128, 8).unwrap();
+    let required_bits = checked::sum([image_bits, margin]).unwrap();
+    let per_column =
+        checked::product([ring_dim, usize::try_from(PAD_RANDOMNESS_LOG_BASIS).unwrap()]).unwrap();
+    assert_eq!(
+        columns,
+        checked::div_ceil(required_bits, per_column).unwrap()
+    );
+    let entropy = checked::product([columns, per_column]).unwrap();
+    assert!(entropy.checked_sub(image_bits).unwrap() >= margin);
+    let previous = columns.checked_sub(1).unwrap();
+    assert!(checked::product([previous, per_column]).unwrap() < required_bits);
+
+    // The previous image-only width does not hide the joint image with L.
+    let old_columns = required_randomness_columns::<C::Field>(
+        image_coeffs,
+        0,
+        ring_dim,
+        PAD_RANDOMNESS_LOG_BASIS,
+        8,
+    )
+    .unwrap();
+    assert!(checked::product([old_columns, per_column]).unwrap() < required_bits);
+    columns
 }
 
 /// The Σ setup's public inputs besides the residual matrices: the residual
