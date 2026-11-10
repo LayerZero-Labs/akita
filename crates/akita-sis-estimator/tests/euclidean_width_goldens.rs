@@ -61,7 +61,7 @@ fn euclidean_width_goldens_match_checked_in_l2_table() {
         let profile = match row.family {
             AkitaModulusProfileId::Q32Offset99 => SisModulusProfileId::Q32Offset99,
             AkitaModulusProfileId::Q64Offset59 => SisModulusProfileId::Q64Offset59,
-            AkitaModulusProfileId::Q128OffsetA7F7 => SisModulusProfileId::Q128OffsetA7F7,
+            AkitaModulusProfileId::Q128Offset6A23801F => SisModulusProfileId::Q128Offset6A23801F,
         };
         let key = sis_l2_table_key_for_collision_sq(
             DEFAULT_SIS_SECURITY_POLICY,
@@ -119,7 +119,7 @@ fn parse_family_from_q(q: &str) -> AkitaModulusProfileId {
     match q {
         "4294967197" => AkitaModulusProfileId::Q32Offset99,
         "18446744073709551557" => AkitaModulusProfileId::Q64Offset59,
-        "340282366920938463463374607427473266697" => AkitaModulusProfileId::Q128OffsetA7F7,
+        "340282366920938463463374607429987500001" => AkitaModulusProfileId::Q128Offset6A23801F,
         _ => panic!("unknown q in golden CSV: {q}"),
     }
 }

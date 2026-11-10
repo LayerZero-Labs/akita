@@ -476,14 +476,11 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn draw_message(
+        fn draw_message<T>(
             &mut self,
             len: usize,
-            decode: impl FnOnce(
-                &[u8],
-            )
-                -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError>,
-        ) -> Result<Option<Vec<akita_challenges::SparseChallenge>>, AkitaError> {
+            decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+        ) -> Result<Option<T>, AkitaError> {
             self.draws += 1;
             decode(&vec![11; len])
         }
@@ -492,7 +489,7 @@ mod tests {
     #[test]
     fn packing_draw_has_one_subring_value_and_derived_a_view() {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             128,
             2,
             1,
@@ -538,7 +535,7 @@ mod tests {
     #[test]
     fn packing_draw_rejects_unaudited_family_before_squeeze() {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             128,
             2,
             1,

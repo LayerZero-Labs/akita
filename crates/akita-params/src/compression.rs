@@ -242,7 +242,7 @@ pub const COMPRESSION_POLICY: CompressionPolicyId =
 #[must_use]
 pub const fn compression_ring_dimensions(profile: SisModulusProfileId) -> [usize; 2] {
     match profile {
-        SisModulusProfileId::Q128OffsetA7F7 => [32, 16],
+        SisModulusProfileId::Q128Offset6A23801F => [32, 16],
         SisModulusProfileId::Q64Offset59 => [64, 32],
         SisModulusProfileId::Q32Offset99 => [128, 64],
     }
@@ -649,7 +649,7 @@ impl<F: Field + CanonicalEncoding> CompressionTerminalPayload<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero};
+    use jolt_field::{One, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59, Ring, Zero};
 
     fn round_trip<F: Field + CanonicalEncoding>(profile: SisModulusProfileId) {
         let field_bytes = usize::try_from(F::MODULUS_BITS).unwrap().div_ceil(8);
@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn q128_q64_q32_round_trip_in_bit_major_order() {
-        round_trip::<Prime128OffsetA7F7>(SisModulusProfileId::Q128OffsetA7F7);
+        round_trip::<Prime128Offset6A23801F>(SisModulusProfileId::Q128Offset6A23801F);
         round_trip::<Prime64Offset59>(SisModulusProfileId::Q64Offset59);
         round_trip::<Prime32Offset99>(SisModulusProfileId::Q32Offset99);
     }
@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn ladder_geometry_and_complete_image_bound_are_checked() {
         for (profile, field_bytes, dimensions) in [
-            (SisModulusProfileId::Q128OffsetA7F7, 16, [32, 16]),
+            (SisModulusProfileId::Q128Offset6A23801F, 16, [32, 16]),
             (SisModulusProfileId::Q64Offset59, 8, [64, 32]),
             (SisModulusProfileId::Q32Offset99, 4, [128, 64]),
         ] {
@@ -776,7 +776,7 @@ mod tests {
 
     #[test]
     fn payload_geometry_canonically_selects_wire_count_and_ring_dimension() {
-        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        let profile = SisModulusProfileId::Q128Offset6A23801F;
         let compressed =
             CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Compressed, profile, 4, 64)
                 .unwrap();
@@ -807,7 +807,7 @@ mod tests {
         // Each ladder rebuilds source ring elements from whole first-map digit
         // blocks: q128 starts at D=32 and q32 at D=128.
         for (profile, rejected, admitted) in [
-            (SisModulusProfileId::Q128OffsetA7F7, 16, 64),
+            (SisModulusProfileId::Q128Offset6A23801F, 16, 64),
             (SisModulusProfileId::Q64Offset59, 32, 64),
             (SisModulusProfileId::Q32Offset99, 64, 128),
         ] {
@@ -826,16 +826,18 @@ mod tests {
             );
         }
         // An over-cap source stays a soft rejection, not an error.
-        assert!(
-            CompressionChainPlan::try_for_image(SisModulusProfileId::Q128OffsetA7F7, 1024, 64)
-                .unwrap()
-                .is_none()
-        );
+        assert!(CompressionChainPlan::try_for_image(
+            SisModulusProfileId::Q128Offset6A23801F,
+            1024,
+            64
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
     fn malformed_maps_chains_witnesses_and_payloads_reject() {
-        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        let profile = SisModulusProfileId::Q128Offset6A23801F;
         assert!(CompressionMapPlan::new(profile, 0, 16, 1).is_err());
         assert!(CompressionMapPlan::new(profile, 64, 16, 2).is_err());
         assert!(CompressionMapPlan::new(profile, 10_000, 16, 1).is_err());
@@ -848,9 +850,9 @@ mod tests {
             CompressionChainPlan::new(profile, 64, [plan.maps()[0], wrong_continuation]).is_err()
         );
         assert!(CompressionChainWitness::new(plan.clone(), Vec::new()).is_err());
-        assert!(CompressionTerminalPayload::<Prime128OffsetA7F7>::new(
+        assert!(CompressionTerminalPayload::<Prime128Offset6A23801F>::new(
             plan.clone(),
-            vec![Prime128OffsetA7F7::zero(); plan.terminal_coefficients() - 1]
+            vec![Prime128Offset6A23801F::zero(); plan.terminal_coefficients() - 1]
         )
         .is_err());
     }
