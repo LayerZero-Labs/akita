@@ -18,7 +18,7 @@
 #![cfg(feature = "profile-ci")]
 #![allow(missing_docs)]
 
-mod common;
+use crate::common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};

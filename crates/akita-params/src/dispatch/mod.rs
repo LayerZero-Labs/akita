@@ -126,7 +126,7 @@ pub fn field_modulus<F: Field + CanonicalEncoding>() -> Result<u128, AkitaError>
 
 /// Classify `F` into a dispatch tier from its modulus (Q32 / Q64 / Q128 CRT bands).
 #[inline]
-pub fn protocol_dispatch_tier<F: Field + CanonicalEncoding>() -> ProtocolRingDispatchTierId {
+pub const fn protocol_dispatch_tier<F: Field + CanonicalEncoding>() -> ProtocolRingDispatchTierId {
     if F::MODULUS_BITS <= 32 {
         ProtocolRingDispatchTierId::Fp32
     } else if F::MODULUS_BITS <= 64 {
