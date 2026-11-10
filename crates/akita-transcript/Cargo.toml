@@ -8,6 +8,10 @@ description = "Fiat-Shamir transcripts for the Akita polynomial commitment schem
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
+# The self dev-dependency enables `prover` for this crate's tests, which machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["akita-transcript"]
+
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "25d87ba68bde9f4a85ac986f5487b2e7b7db2699", default-features = false, features = [
