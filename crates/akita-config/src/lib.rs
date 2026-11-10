@@ -262,6 +262,7 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
     pub fn verifier_admits(
         setup: &akita_types::AkitaExpandedSetup<Cfg::Field>,
         row: &ResolvedScheduleRow,
+        mode: akita_params::SetupMode,
     ) -> Result<bool, AkitaError> {
         let descriptor = setup.descriptor();
         Ok(row_fits_setup_capacity(
@@ -272,6 +273,7 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
             setup,
             row.schedule(),
             &row.profiles().opening_layout()?,
+            mode,
         )?)
     }
 
@@ -283,10 +285,11 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
     pub fn verifier_admitted_rows(
         &self,
         setup: &akita_types::AkitaExpandedSetup<Cfg::Field>,
+        mode: akita_params::SetupMode,
     ) -> Result<Vec<&ResolvedScheduleRow>, AkitaError> {
         let mut rows = Vec::new();
         for row in self.rows() {
-            if Self::verifier_admits(setup, row)? {
+            if Self::verifier_admits(setup, row, mode)? {
                 rows.push(row);
             }
         }

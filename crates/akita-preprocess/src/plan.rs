@@ -11,7 +11,7 @@ use akita_error::AkitaError;
 use akita_params::sis::SisModulusProfileId;
 use akita_params::{
     verifier_setup_matrix_capacity_for_schedule, ChunkedWitnessCfg, FoldSchedule,
-    ScheduleRowDigest, SetupPrefixSlotId,
+    ScheduleRowDigest, SetupMode, SetupPrefixSlotId,
 };
 use akita_serialization::{AkitaDeserialize, Valid};
 use akita_types::preprocessing::{profile_key, ProfileKey, SetRecord, StreamIdentity};
@@ -119,6 +119,7 @@ where
                 verifier_capacity: verifier_setup_matrix_capacity_for_schedule(
                     row.schedule(),
                     &row.profiles().opening_layout()?,
+                    SetupMode::Check,
                 )?
                 .num_field_elements,
             })

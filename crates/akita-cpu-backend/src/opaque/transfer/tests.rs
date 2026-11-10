@@ -172,6 +172,7 @@ fn run(signed: bool) {
             catalog,
             selection,
             None,
+            akita_verifier::SetupMode::Check,
         )
     }
     .unwrap();

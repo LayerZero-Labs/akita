@@ -272,8 +272,12 @@ where
     let backend = CpuBackend::new(setup.expanded().clone()).expect("backend");
     let verifier = self_derived_verifier(scheme, &setup);
     assert!(
-        akita_config::TrustedScheduleCatalog::<Cfg>::verifier_admits(setup.expanded(), row)
-            .expect("admission"),
+        akita_config::TrustedScheduleCatalog::<Cfg>::verifier_admits(
+            setup.expanded(),
+            row,
+            akita_params::SetupMode::Check
+        )
+        .expect("admission"),
         "setup sized from the row must admit it"
     );
 

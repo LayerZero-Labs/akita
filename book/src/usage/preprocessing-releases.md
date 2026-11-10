@@ -129,7 +129,7 @@ The files are named by kind:
 | `hints/<stream>/<profile>` | The CPU prover's hint for that commitment. |
 | `catalog/<set>` | The set's catalog artifact. |
 | `catalog-view/<set>/<row>` | A selected-row view of the catalog, for a guest. |
-| `terminal-cache/<stream>/<row>/<target>/<capacity>` | A guest's prepared terminal cache. |
+| `terminal-cache/<stream>/<row>/<target>` | A guest's prepared terminal cache. It binds the row's exact terminal footprint, so one file serves a verifier in either setup mode. |
 
 `generate` rejects a release with a file larger than the cap of the loader
 that reads it. Writing a release removes any stored copy or part of each
@@ -208,12 +208,17 @@ Either way every commitment must match its manifest digest.
 **Guest.** A recursion guest embeds its files in an approved image and
 never reads preprocessing from its input.
 `load_guest_verifier_setup::<Cfg>(&release, &files, set, selection,
-program, matrix)` is the same single-row load over the embedded registry
-files and catalog view, except that it takes the embedded matrix prefix,
-issued with the guest-only `PinnedMatrixPrefix::embedded_unchecked`. The
-row's terminal cache comes from `load_terminal_cache` or, embedded, from
+program, matrix, mode)` is the same single-row load over the embedded
+registry files and catalog view, except that it takes the embedded matrix
+prefix, issued with the guest-only `PinnedMatrixPrefix::embedded_unchecked`.
+The prefix must be exactly the row's verifier capacity under `mode`. In
+`SetupMode::Check` the verifier evaluates direct setup queries itself. In
+`SetupMode::Defer` it exports them as obligations, so the guest embeds only
+the compression-map coefficients, and the verifier needs the row's terminal
+cache. The cache comes from `load_terminal_cache` or, embedded, from
 `PinnedTerminalCache::embedded_unchecked`;
-`AkitaVerifier::from_pinned_with_terminal_cache` uses it. The two
+`AkitaVerifier::from_pinned_with_terminal_cache` uses it, and
+`AkitaVerifier::from_pinned` rejects a `Defer` setup. The two
 `embedded_unchecked` issuers are `unsafe fn`s: their contract is that the
 bytes are embedded in an approved image, and an integration denies them
 outside its guest crate with `clippy::disallowed_methods`.

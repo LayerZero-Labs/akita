@@ -9,7 +9,7 @@ use akita_config::MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES;
 use akita_cpu_backend::{CpuBackend, MAX_HINT_FILE_BYTES};
 use akita_error::AkitaError;
 use akita_params::sis::SisModulusProfileId;
-use akita_params::{FlatMatrix, SetupPrefixSlotId};
+use akita_params::SetupPrefixSlotId;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::preprocessing::{
     bundle_id, catalog_file_name, catalog_view_file_name, file_hash, hints_file_name,
@@ -299,39 +299,30 @@ where
         }
     }
 
-    // The RISC-V guest's scalar terminal caches exist for Q128 only. A row
-    // shared between sets is built once per target, and rows of one verifier
-    // capacity share one setup, built in ascending capacity order and
-    // dropped before the next.
+    // The RISC-V guest's scalar terminal caches exist for Q128 only. A cache
+    // binds its row's terminal footprint, not the setup's capacity, so every
+    // cache is built from the derived stream itself, once per row and target.
     if field == SisModulusProfileId::Q128Offset6A23801F && !description.targets.is_empty() {
         let mut rows = BTreeMap::new();
         for plan in plans {
             for row in &plan.rows {
-                rows.entry((row.verifier_capacity, row.digest))
-                    .or_insert(row);
+                rows.entry(row.digest).or_insert(row);
             }
         }
-        let matrix = expanded.shared_matrix().as_field_slice();
-        let mut setup = None;
-        for ((capacity, digest), row) in rows {
-            if setup.as_ref().is_none_or(|(built, _)| *built != capacity) {
-                // Free the previous prefix before copying the next.
-                drop(setup.take());
-                setup = Some((
-                    capacity,
-                    terminal_cache_setup::<F>(stream, matrix, capacity)?,
-                ));
-            }
-            let Some((_, verifier_setup)) = setup.as_ref() else {
-                return Err(AkitaError::Internal(
-                    "terminal cache setup is missing".into(),
-                ));
-            };
+        // SAFETY: the matrix this generator derived from the seed; the cache
+        // reads no setup-prefix commitment.
+        let setup = unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::clone(&expanded),
+                SetupPrefixVerifierRegistry::new(stream.setup_seed().clone()),
+            )?
+        };
+        for (digest, row) in rows {
             for target in &description.targets {
                 files.insert(
-                    terminal_cache_file_name(&stream_id, &digest, target, capacity),
+                    terminal_cache_file_name(&stream_id, &digest, target),
                     akita_verifier::build_riscv64_terminal_ntt_cache(
-                        verifier_setup,
+                        &setup,
                         &row.schedule,
                         digest,
                     )?,
@@ -340,39 +331,6 @@ where
         }
     }
     Ok(element_count as u64)
-}
-
-/// The verifier setup a terminal cache of verifier capacity `capacity` is
-/// built from: that prefix of the derived stream, with no commitments.
-fn terminal_cache_setup<F>(
-    stream: &StreamIdentity,
-    matrix: &[F],
-    capacity: usize,
-) -> Result<AkitaVerifierSetup<F>, AkitaError>
-where
-    F: Field + CanonicalEncoding + Valid + AkitaSerialize,
-{
-    let prefix = matrix
-        .get(..capacity)
-        .ok_or_else(|| AkitaError::Internal("terminal cache exceeds the derived stream".into()))?;
-    // SAFETY: a prefix of the matrix this generator derived from the seed;
-    // the cache reads no setup-prefix commitment.
-    unsafe {
-        AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars: 1,
-                        max_num_batched_polys: 1,
-                        num_field_elements: prefix.len(),
-                        setup_seed: stream.setup_seed().clone(),
-                    },
-                    FlatMatrix::from_flat_data(prefix.to_vec()),
-                ),
-            ),
-            SetupPrefixVerifierRegistry::new(stream.setup_seed().clone()),
-        )
-    }
 }
 
 /// Write the files of `role` and the manifest, splitting a file larger than

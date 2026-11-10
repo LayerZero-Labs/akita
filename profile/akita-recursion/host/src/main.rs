@@ -165,6 +165,7 @@ macro_rules! strict_decode_and_verify {
                 schedules.clone(),
                 decoded.schedule_selection,
                 None,
+                akita_verifier::SetupMode::Check,
             )
         }
         .map_err(|err| format!("strict host verifier setup failed: {err}"))?
@@ -200,6 +201,7 @@ macro_rules! strict_fp128_preflight {
                 schedules.clone(),
                 decoded.schedule_selection,
                 Some(TrustedTerminalCache::Decode(&cache)),
+                akita_verifier::SetupMode::Check,
             )
         }
         .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?

@@ -17,7 +17,7 @@ use akita_error::AkitaError;
 use akita_params::{
     verifier_setup_matrix_capacity_for_schedule, CommittedGroupBatchProfile, FoldSchedule,
     GroupCommitPhaseParams, OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
-    SetupPrefixSlotId,
+    SetupMode, SetupPrefixSlotId,
 };
 use akita_schedules::ResolvedScheduleRow;
 use akita_types::preprocessing::{
@@ -503,7 +503,8 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
     }
 
     /// A2 for a verifier: the largest verifier matrix capacity over the rows
-    /// it will verify.
+    /// it will verify under `mode`. A `Defer` verifier holds only the
+    /// compression-map coefficients.
     ///
     /// # Errors
     ///
@@ -511,12 +512,14 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
     pub fn verifier_matrix_capacity(
         &self,
         selection: Option<OpeningScheduleSelection>,
+        mode: SetupMode,
     ) -> Result<SetupMatrixCapacity, AkitaError> {
         let mut capacity = SetupMatrixCapacity::minimum();
         for row in self.resolved(selection)? {
             let needed = verifier_setup_matrix_capacity_for_schedule(
                 row.schedule(),
                 &row.profiles().opening_layout()?,
+                mode,
             )?;
             capacity.num_field_elements =
                 capacity.num_field_elements.max(needed.num_field_elements);
@@ -585,20 +588,28 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
     }
 
     /// A4: a full load's setup admits exactly the A1 rows, and a single-row
-    /// load's setup admits its selection.
+    /// load's setup admits its selection under `mode`. A full load verifies
+    /// in `Check` mode.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] when admission disagrees.
+    /// Returns [`AkitaError::InvalidSetup`] when admission disagrees, or for
+    /// a full load in `Defer` mode.
     pub fn check_verifier_setup(
         &self,
         setup: &AkitaExpandedSetup<Cfg::Field>,
         selection: Option<OpeningScheduleSelection>,
+        mode: SetupMode,
     ) -> Result<(), AkitaError> {
         let agrees = match selection {
+            None if mode != SetupMode::Check => {
+                return Err(AkitaError::InvalidSetup(
+                    "a full load verifies in Check mode".into(),
+                ))
+            }
             None => {
                 self.catalog
-                    .verifier_admitted_rows(setup)?
+                    .verifier_admitted_rows(setup, mode)?
                     .into_iter()
                     .map(ResolvedScheduleRow::selection)
                     .collect::<Vec<_>>()
@@ -607,6 +618,7 @@ impl<Cfg: CommitmentConfig> Admission<Cfg> {
             Some(selection) => TrustedScheduleCatalog::<Cfg>::verifier_admits(
                 setup,
                 self.admitted_row(selection)?,
+                mode,
             )?,
         };
         if agrees {

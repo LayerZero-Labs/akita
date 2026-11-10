@@ -145,9 +145,12 @@ where
     );
     let verifier =
         self_derived_schedule_verifier(&scheme, &verifier_setup_source, &schedule, &opening_layout);
-    let verifier_capacity =
-        akita_params::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
-            .expect("verifier capacity");
+    let verifier_capacity = akita_params::verifier_setup_matrix_capacity_for_schedule(
+        &schedule,
+        &opening_layout,
+        akita_params::SetupMode::Check,
+    )
+    .expect("verifier capacity");
     assert_eq!(
         verifier
             .setup()
@@ -168,6 +171,7 @@ where
                 undersized.expanded().as_ref(),
                 &schedule,
                 &opening_layout,
+                akita_params::SetupMode::Check
             )
             .expect("fit check"),
             "one-field-short verifier setup must not fit"
@@ -282,9 +286,12 @@ where
     );
     let verifier =
         self_derived_schedule_verifier(&scheme, &verifier_setup_source, &schedule, &opening_layout);
-    let verifier_capacity =
-        akita_params::verifier_setup_matrix_capacity_for_schedule(&schedule, &opening_layout)
-            .expect("verifier capacity");
+    let verifier_capacity = akita_params::verifier_setup_matrix_capacity_for_schedule(
+        &schedule,
+        &opening_layout,
+        akita_params::SetupMode::Check,
+    )
+    .expect("verifier capacity");
     assert_eq!(
         verifier
             .setup()

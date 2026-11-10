@@ -1,3 +1,4 @@
+use akita_params::SetupMode;
 #[cfg(feature = "logging-transcript")]
 #[path = "outer_setup_batch/transcript_order.rs"]
 mod transcript_order;
@@ -167,6 +168,7 @@ where
         let capacity = akita_params::verifier_setup_matrix_capacity_for_schedule(
             row.schedule(),
             opening().opening_layout(),
+            akita_params::SetupMode::Check,
         )
         .unwrap();
         let reduced = setup.to_verifier_setup(capacity).unwrap();
@@ -181,9 +183,43 @@ where
             catalog.clone(),
             selection,
             None,
+            akita_verifier::SetupMode::Check,
         )
     }
     .unwrap();
+    let deferred_verifier = if Cfg::Field::MODULUS_BITS == 128 {
+        let compact_fields = akita_params::verifier_setup_matrix_capacity_for_schedule(
+            row.schedule(),
+            opening().opening_layout(),
+            SetupMode::Defer,
+        )
+        .unwrap()
+        .num_field_elements;
+        let terminal = akita_verifier::build_riscv64_terminal_ntt_cache(
+            verifier.setup(),
+            row.schedule(),
+            selection.row_digest,
+        )
+        .unwrap();
+        let compact = setup
+            .to_verifier_setup(akita_params::SetupMatrixCapacity {
+                num_field_elements: compact_fields,
+            })
+            .unwrap();
+        let deferred_verifier = unsafe {
+            AkitaVerifier::<Cfg>::for_selection(
+                AkitaVerifierSetup::from_parts(compact.expanded().clone(), public.clone()).unwrap(),
+                catalog.clone(),
+                selection,
+                Some(akita_verifier::TrustedTerminalCache::Decode(&terminal)),
+                SetupMode::Defer,
+            )
+        }
+        .unwrap();
+        Some(deferred_verifier)
+    } else {
+        None
+    };
     let prove = |batch: Option<(u32, &SetupBatchStatement<Cfg::ExtField>)>| {
         #[cfg(feature = "logging-transcript")]
         akita_transcript::clear_thread_events();
@@ -409,6 +445,49 @@ where
         )
         .unwrap();
     let carried = carried.into_pending();
+    if let Some(deferred_verifier) = &deferred_verifier {
+        let mut compact_advice = Advice {
+            backend: &backend,
+            polynomial: &polynomial,
+            calls: 0,
+        };
+        let mut compact_carried = SetupClaimAccumulator::from_batch(level, inherited.clone())
+            .with_advice(&mut compact_advice);
+        deferred_verifier
+            .batched_verify(
+                &outer,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                SetupPolicy::Defer(&mut compact_carried),
+            )
+            .unwrap();
+        let compact_carried = compact_carried.into_pending();
+        assert_eq!(
+            SetupBatchStatement::new(polynomial.clone(), 32, compact_carried)
+                .unwrap()
+                .descriptor_bytes::<Cfg::Field>()
+                .unwrap(),
+            SetupBatchStatement::new(polynomial.clone(), 32, carried.clone())
+                .unwrap()
+                .descriptor_bytes::<Cfg::Field>()
+                .unwrap(),
+            "compact material must export identical obligations from the unchanged proof",
+        );
+        let mut unresolved = SetupClaimAccumulator::from_batch(level, inherited.clone());
+        assert!(matches!(
+            deferred_verifier.batched_verify(
+                &outer,
+                SESSION,
+                GroupBatchStatement::new(selection, claims()).unwrap(),
+                BasisMode::Lagrange,
+                SetupPolicy::Check(Some(&mut unresolved)),
+            ),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(!unresolved.into_pending().is_empty());
+    }
+
     assert_eq!(
         carried.len(),
         direct_folds
@@ -470,6 +549,7 @@ where
                 catalog.clone(),
                 selection,
                 None,
+                akita_verifier::SetupMode::Check,
             )
         }
         .unwrap();

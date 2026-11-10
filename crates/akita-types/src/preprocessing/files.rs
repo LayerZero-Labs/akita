@@ -52,16 +52,17 @@ pub fn catalog_view_file_name(set_name: &str, row: &ScheduleRowDigest) -> String
     )
 }
 
-/// `terminal-cache/<hex(stream_id)>/<hex(row digest)>/<target>/<capacity>`.
+/// `terminal-cache/<hex(stream_id)>/<hex(row digest)>/<target>`. A cache
+/// binds its row's exact terminal footprint, so the row names it in every
+/// setup mode.
 #[must_use]
 pub fn terminal_cache_file_name(
     stream_id: &StreamId,
     row: &ScheduleRowDigest,
     target: &str,
-    capacity: usize,
 ) -> String {
     format!(
-        "terminal-cache/{stream_id}/{}/{target}/{capacity}",
+        "terminal-cache/{stream_id}/{}/{target}",
         super::encoding::hex(row.as_bytes())
     )
 }

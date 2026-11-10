@@ -139,6 +139,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
                 Cfg::schedules(&self.scheme).clone(),
                 honest.proved.selection,
                 Some(akita_verifier::TrustedTerminalCache::Decode(&bytes)),
+                akita_verifier::SetupMode::Check,
             )
         };
         let verify = |verifier: &AkitaVerifier<Cfg>, proof: &[u8]| {

@@ -150,7 +150,7 @@ fn file_names_reject_path_traversal() {
     for name in ["", "..", "a/../b", "/a", "a//b", "a/", "A", "a b", "./a"] {
         assert!(validate_file_name(name).is_err(), "{name:?}");
     }
-    validate_file_name("terminal-cache/0a/1b/riscv64/4096").unwrap();
+    validate_file_name("terminal-cache/0a/1b/riscv64").unwrap();
 }
 
 const ANCHOR_ENTRIES: &[AnchorEntry] = &[AnchorEntry::new(

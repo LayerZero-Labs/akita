@@ -69,13 +69,14 @@ where
     for (id, commitment) in ids.into_iter().zip(commitments) {
         registry.insert(SetupPrefixVerifierSlot { id, commitment })?;
     }
-    let expanded = AkitaExpandedSetup::derive(
-        admission.setup_descriptor(setup_seed, admission.verifier_matrix_capacity(None)?),
-    )?;
+    let expanded = AkitaExpandedSetup::derive(admission.setup_descriptor(
+        setup_seed,
+        admission.verifier_matrix_capacity(None, akita_params::SetupMode::Check)?,
+    ))?;
     // SAFETY: the matrix and every commitment were derived here from the
     // release's seed.
     let setup = unsafe { AkitaVerifierSetup::from_parts(Arc::new(expanded), registry)? };
-    admission.check_verifier_setup(setup.expanded(), None)?;
+    admission.check_verifier_setup(setup.expanded(), None, akita_params::SetupMode::Check)?;
     // SAFETY: as above; no commitment was imported.
     let setup = unsafe { LocallyDerivedVerifierSetup::assume_locally_derived(setup) };
     Ok((setup, admission.catalog().clone()))

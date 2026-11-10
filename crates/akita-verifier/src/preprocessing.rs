@@ -9,6 +9,7 @@
 //! checks admission again on the result (A4), and issues the pinned value.
 
 use crate::prepared_cache::TrustedTerminalCache;
+use crate::SetupMode;
 use akita_config::preprocessing::{
     load_prefix_commitments, load_set_catalog, load_set_catalog_view, open_set, set_chunking,
     Admission, PrefixCommitmentSource, ProgramRows,
@@ -43,7 +44,14 @@ use std::sync::Arc;
 ///     catalog: akita_config::TrustedScheduleCatalog<OneHot>,
 ///     bundle_id: akita_types::preprocessing::BundleId,
 /// ) -> PinnedVerifierSetup<OneHot> {
-///     PinnedVerifierSetup { setup, catalog, selection: None, bundle_id, set_name: String::new() }
+///     PinnedVerifierSetup {
+///         setup,
+///         catalog,
+///         selection: None,
+///         mode: akita_verifier::SetupMode::Check,
+///         bundle_id,
+///         set_name: String::new(),
+///     }
 /// }
 /// ```
 ///
@@ -62,6 +70,7 @@ pub struct PinnedVerifierSetup<Cfg: CommitmentConfig> {
     setup: AkitaVerifierSetup<Cfg::Field>,
     catalog: TrustedScheduleCatalog<Cfg>,
     selection: Option<OpeningScheduleSelection>,
+    mode: SetupMode,
     bundle_id: BundleId,
     set_name: String,
 }
@@ -82,6 +91,13 @@ impl<Cfg: CommitmentConfig> PinnedVerifierSetup<Cfg> {
         self.selection
     }
 
+    /// How the verifier treats direct setup queries: `Check` evaluates them
+    /// against the derived matrix; `Defer` exports them as obligations and
+    /// holds only the compression-map coefficients.
+    pub fn mode(&self) -> SetupMode {
+        self.mode
+    }
+
     /// The release this setup was loaded from.
     pub fn bundle_id(&self) -> BundleId {
         self.bundle_id
@@ -98,8 +114,9 @@ impl<Cfg: CommitmentConfig> PinnedVerifierSetup<Cfg> {
         AkitaVerifierSetup<Cfg::Field>,
         TrustedScheduleCatalog<Cfg>,
         Option<OpeningScheduleSelection>,
+        SetupMode,
     ) {
-        (self.setup, self.catalog, self.selection)
+        (self.setup, self.catalog, self.selection, self.mode)
     }
 }
 
@@ -260,7 +277,16 @@ where
         Some(selection) => admission.selected_view(selection)?,
     };
     issue(
-        release, record, stream, files, &admission, catalog, selection, source, None,
+        release,
+        record,
+        stream,
+        files,
+        &admission,
+        catalog,
+        selection,
+        SetupMode::Check,
+        source,
+        None,
     )
 }
 
@@ -271,7 +297,9 @@ where
 /// catalog; either must reproduce the catalog identity. Registry entries are
 /// checked like any release file (a guest never derives commitments), and A3
 /// takes the embedded matrix prefix, whose shape must be exactly the admitted
-/// row's verifier capacity.
+/// row's verifier capacity under `mode`. A `Defer` guest embeds only the
+/// compression-map coefficients and builds its verifier with
+/// [`crate::AkitaVerifier::from_pinned_with_terminal_cache`].
 ///
 /// # Errors
 ///
@@ -283,6 +311,7 @@ pub fn load_guest_verifier_setup<Cfg>(
     selection: OpeningScheduleSelection,
     program: Option<(&ProgramRows, &[u8])>,
     matrix: PinnedMatrixPrefix,
+    mode: SetupMode,
 ) -> Result<PinnedVerifierSetup<Cfg>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -310,6 +339,7 @@ where
         &admission,
         admission.catalog().clone(),
         Some(selection),
+        mode,
         PrefixCommitmentSource::Registry,
         Some(matrix),
     )
@@ -338,12 +368,7 @@ pub fn load_terminal_cache<Cfg: CommitmentConfig>(
         ));
     }
     let record = release.set(&pinned.set_name)?;
-    let name = terminal_cache_file_name(
-        &record.stream_id,
-        &selection.row_digest,
-        target,
-        pinned.setup.expanded().descriptor().num_field_elements,
-    );
+    let name = terminal_cache_file_name(&record.stream_id, &selection.row_digest, target);
     Ok(PinnedTerminalCache {
         bytes: TerminalCacheBytes::Owned(read_release_file(
             files,
@@ -363,6 +388,7 @@ fn issue<Cfg>(
     admission: &Admission<Cfg>,
     catalog: TrustedScheduleCatalog<Cfg>,
     selection: Option<OpeningScheduleSelection>,
+    mode: SetupMode,
     source: PrefixCommitmentSource<'_, Cfg::Field>,
     embedded_matrix: Option<PinnedMatrixPrefix>,
 ) -> Result<PinnedVerifierSetup<Cfg>, AkitaError>
@@ -373,8 +399,10 @@ where
     let ids = admission.required_slot_ids(selection)?;
     let commitments = load_prefix_commitments(release, record, stream, files, &ids, source)?;
     let setup_seed = stream.identity.setup_seed();
-    let descriptor =
-        admission.setup_descriptor(setup_seed, admission.verifier_matrix_capacity(selection)?);
+    let descriptor = admission.setup_descriptor(
+        setup_seed,
+        admission.verifier_matrix_capacity(selection, mode)?,
+    );
     let expanded = match embedded_matrix {
         None => AkitaExpandedSetup::derive(descriptor)?,
         Some(matrix) => {
@@ -406,11 +434,12 @@ where
     // an approved image), and every commitment matched the anchored
     // manifest's prefix commitment digest.
     let setup = unsafe { AkitaVerifierSetup::from_parts(Arc::new(expanded), registry)? };
-    admission.check_verifier_setup(setup.expanded(), selection)?;
+    admission.check_verifier_setup(setup.expanded(), selection, mode)?;
     Ok(PinnedVerifierSetup {
         setup,
         catalog,
         selection,
+        mode,
         bundle_id: release.bundle_id(),
         set_name: record.name.clone(),
     })

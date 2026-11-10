@@ -24,7 +24,7 @@ use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use akita_verifier::preprocessing::{
     load_guest_verifier_setup, load_terminal_cache, load_verifier_setup, PinnedMatrixPrefix,
 };
-use akita_verifier::AkitaVerifier;
+use akita_verifier::{AkitaVerifier, SetupMode};
 use jolt_field::CanonicalEncoding;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -200,15 +200,16 @@ fn verify(verifier: &AkitaVerifier<Cfg>, proved: &Proved) -> Result<(), akita_er
     )
 }
 
-/// The uncompressed encoding of a verifier matrix, placed so its body is
-/// aligned for in-place use and leaked, as a guest image embeds it.
-fn embedded_matrix(setup: &akita_types::AkitaVerifierSetup<F>) -> PinnedMatrixPrefix {
+/// The uncompressed encoding of the first `len` elements of a verifier
+/// matrix, placed so its body is aligned for in-place use and leaked, as a
+/// guest image embeds it.
+fn embedded_matrix(setup: &akita_types::AkitaVerifierSetup<F>, len: usize) -> PinnedMatrixPrefix {
     let mut bytes = Vec::new();
-    setup
-        .expanded()
-        .shared_matrix()
-        .serialize_uncompressed(&mut bytes)
-        .unwrap();
+    akita_params::FlatMatrix::from_flat_data(
+        setup.expanded().shared_matrix().as_field_slice()[..len].to_vec(),
+    )
+    .serialize_uncompressed(&mut bytes)
+    .unwrap();
     let words = Box::leak(vec![0u128; bytes.len() / 16 + 2].into_boxed_slice());
     // SAFETY: the leaked words cover the bytes for `'static`; the 8-byte
     // count header puts the body at a 16-byte boundary.
@@ -275,7 +276,12 @@ fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
         );
         let cache =
             load_terminal_cache(&opened, &release.files, &selected, RISCV64_TARGET).expect("cache");
-        let matrix = embedded_matrix(selected.setup());
+        let selected_setup = selected.setup().clone();
+        let check_len = selected_setup
+            .expanded()
+            .shared_matrix()
+            .num_field_elements();
+        let matrix = embedded_matrix(&selected_setup, check_len);
         verify(
             &AkitaVerifier::from_pinned(selected.clone()).unwrap(),
             &proved,
@@ -294,6 +300,7 @@ fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
             proved.selection,
             None,
             matrix,
+            SetupMode::Check,
         )
         .expect("guest load");
         assert_eq!(
@@ -301,6 +308,48 @@ fn registry_mode_loads_prove_and_verify_in_every_verifier_shape() {
             scheme.schedules().catalog_digest()
         );
         verify(&AkitaVerifier::from_pinned(guest).unwrap(), &proved).expect("guest verifier");
+
+        // A `Defer` guest embeds only the compression maps, and its verifier
+        // needs the release's terminal cache, which binds the row's terminal
+        // footprint in either mode.
+        let row = scheme
+            .schedules()
+            .resolve_selection(proved.selection)
+            .unwrap();
+        let defer_len = akita_params::verifier_setup_matrix_capacity_for_schedule(
+            row.schedule(),
+            &row.profiles().opening_layout().unwrap(),
+            SetupMode::Defer,
+        )
+        .unwrap()
+        .num_field_elements;
+        assert!(defer_len < check_len);
+        let defer_guest = |len| {
+            load_guest_verifier_setup::<Cfg>(
+                &opened,
+                &release.files,
+                SET,
+                proved.selection,
+                None,
+                embedded_matrix(&selected_setup, len),
+                SetupMode::Defer,
+            )
+        };
+        assert!(
+            defer_guest(check_len).is_err(),
+            "a Defer guest embeds only the compression maps"
+        );
+        let deferred = defer_guest(defer_len).expect("Defer guest load");
+        assert_eq!(deferred.mode(), SetupMode::Defer);
+        assert!(
+            AkitaVerifier::from_pinned(deferred.clone()).is_err(),
+            "a Defer verifier needs its terminal cache"
+        );
+        assert!(
+            AkitaVerifier::from_pinned_with_terminal_cache(deferred, &cache)
+                .unwrap()
+                .admits(proved.selection.row_digest)
+        );
 
         // A catalog row above the set's variable limit is outside A1.
         let outside = scheme
@@ -772,7 +821,14 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
             PrefixCommitmentSource::Registry,
         )
         .unwrap();
-        let matrix = embedded_matrix(selected.setup());
+        let matrix = embedded_matrix(
+            selected.setup(),
+            selected
+                .setup()
+                .expanded()
+                .shared_matrix()
+                .num_field_elements(),
+        );
         let guest = |view: &[u8]| {
             load_guest_verifier_setup::<Cfg>(
                 &opened,
@@ -781,6 +837,7 @@ fn program_rows_merge_into_one_catalog_identity_for_host_and_guest() {
                 proved.selection,
                 Some((&stored, view)),
                 matrix,
+                SetupMode::Check,
             )
         };
         let mut tampered_view = view.clone();

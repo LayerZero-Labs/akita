@@ -111,8 +111,11 @@ where
         schedule: &FoldSchedule,
         root_layout: &OpeningClaimsLayout,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
-        let capacity =
-            akita_params::verifier_setup_matrix_capacity_for_schedule(schedule, root_layout)?;
+        let capacity = akita_params::verifier_setup_matrix_capacity_for_schedule(
+            schedule,
+            root_layout,
+            akita_params::SetupMode::Check,
+        )?;
         setup.to_verifier_setup(capacity)
     }
 
