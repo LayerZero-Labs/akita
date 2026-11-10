@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+use jolt_field::{One, Prime128Offset6A23801F as F, Zero};
 #[test]
 fn bounded_sampled_accumulators_match_naive_at_extreme_and_embedded_points() {
     for (dimension, ones, twos) in [(64, 31, 10), (128, 65, 0)] {
