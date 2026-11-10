@@ -6,7 +6,7 @@ per-phase cycle counts (`deserialize_input`, `prepare_verifier`,
 execution and confirms Jolt accepts it.
 
 This directory is a **standalone Cargo sub-workspace** (it's excluded
-from the parent Akita workspace). It pins Rust `1.95` plus the
+from the parent Akita workspace). It pins Rust `1.99.1` plus the
 RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 `arkworks-algebra`.
 

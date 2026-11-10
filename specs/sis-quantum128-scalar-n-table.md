@@ -58,7 +58,7 @@ tag `1`; unsupported policy tags and table identities fail closed.
 The implementation pinned by this specification uses ADPS16 quantum exponent
 `0.2650`, LGSA shape, coefficient `L-infinity` norm, target `128.0`, maximum
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
-modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
+modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128Offset6A23801F`.
 Production arithmetic otherwise uses the documented `f64` backend. Integer
 small-box branch boundaries are compared exactly, with a fast log-space
 precheck away from equality. The unimplemented high-precision backend fails
@@ -383,7 +383,7 @@ The initial profiles are:
 pub enum SisModulusProfileId {
     Q32Offset99,
     Q64Offset59,
-    Q128OffsetA7F7,
+    Q128Offset6A23801F,
 }
 ```
 

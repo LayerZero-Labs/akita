@@ -1,6 +1,6 @@
 use super::unit_intervals;
 use super::{basis_eval_at_index, EqPairSeed};
-use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
 
 fn differential<const LM: bool, const RM: bool, const STATES: usize>() {
     let mut state = 0xb12b_abc7_45d6_9e01u64;

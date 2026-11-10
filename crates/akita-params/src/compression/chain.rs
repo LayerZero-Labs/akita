@@ -8,7 +8,7 @@ use super::*;
 // per admitted nonzero source length gives exact, eviction-free reuse without
 // attacker-sized allocation or cache state affecting derivation semantics.
 const Q128_COMPLETE_SOURCE_COUNT: usize =
-    MAX_COMPRESSION_INPUT_BYTES / profile_field_bytes(SisModulusProfileId::Q128OffsetA7F7);
+    MAX_COMPRESSION_INPUT_BYTES / profile_field_bytes(SisModulusProfileId::Q128Offset6A23801F);
 const Q64_COMPLETE_SOURCE_COUNT: usize =
     MAX_COMPRESSION_INPUT_BYTES / profile_field_bytes(SisModulusProfileId::Q64Offset59);
 const Q32_COMPLETE_SOURCE_COUNT: usize =
@@ -27,7 +27,7 @@ fn complete_source_plan_cache(
 ) -> Option<&'static OnceLock<CompressionChainPlan>> {
     let index = source_coefficients.checked_sub(1)?;
     match modulus_profile {
-        SisModulusProfileId::Q128OffsetA7F7 => Q128_COMPLETE_SOURCE_PLANS.get(index),
+        SisModulusProfileId::Q128Offset6A23801F => Q128_COMPLETE_SOURCE_PLANS.get(index),
         SisModulusProfileId::Q64Offset59 => Q64_COMPLETE_SOURCE_PLANS.get(index),
         SisModulusProfileId::Q32Offset99 => Q32_COMPLETE_SOURCE_PLANS.get(index),
     }
