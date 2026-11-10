@@ -322,6 +322,7 @@ where
         e_stride,
         t_stride,
         z_cols,
+        block_claims,
         ..
     } = structured_group_shape::<F, _>(plan, group_id, block_challenges, opening_a_evals)?;
     let opening_scales = (opening_subcolumns != 1)
@@ -380,10 +381,34 @@ where
         ));
     }
 
+    let folded_t_low = if group.physical_b().logical_rows()? != 0 {
+        if group.a_row_weights().len() != group.n_a() {
+            return Err(AkitaError::InvalidProof);
+        }
+        fold_t_row_weights(
+            point.len(),
+            commitment_digits,
+            outer_low,
+            group.a_row_weights(),
+            block_claims,
+        )?
+    } else {
+        None
+    };
+    let fold_rows = folded_t_low.is_some();
+    let t_low = folded_t_low.as_deref().unwrap_or(outer_low);
+    let t_rows_per_block = if fold_rows { 1 } else { group.n_a() };
+    let t_unit_weight = [E::one()];
+    let t_inner_weights = if fold_rows {
+        &t_unit_weight[..]
+    } else {
+        group.a_row_weights()
+    };
+
     // PreparedDigits caps table preparation and row visits independently of
     // the general evaluator's carry-state work estimate.
     let prepared_t = (group.physical_b().logical_rows()? != 0)
-        .then(|| PreparedDigits::new(point, commitment_digits, outer_low))
+        .then(|| PreparedDigits::new(point, commitment_digits, t_low))
         .transpose()?
         .flatten();
 
@@ -474,12 +499,12 @@ where
         };
 
         if let Some(b_tensor) = b_tensor {
-            let t_high_weights = AffineWeightProduct::new(claim_challenges, group.a_row_weights())?;
+            let t_high_weights = AffineWeightProduct::new(claim_challenges, t_inner_weights)?;
             let t_first_row = global_block_start
-                .checked_mul(group.n_a())
+                .checked_mul(t_rows_per_block)
                 .ok_or(AkitaError::InvalidProof)?;
             let t_rows = unit_blocks
-                .checked_mul(group.n_a())
+                .checked_mul(t_rows_per_block)
                 .ok_or(AkitaError::InvalidProof)?;
             if let Some(prepared) = &prepared_t {
                 prepared.accumulate(
@@ -491,10 +516,10 @@ where
                 )?;
             } else {
                 let t_outer_start = t_first_row
-                    .checked_mul(outer_subcolumns)
+                    .checked_mul(t_low.len().max(1))
                     .ok_or(AkitaError::InvalidProof)?;
                 let t_live_len = t_rows
-                    .checked_mul(outer_subcolumns)
+                    .checked_mul(t_low.len().max(1))
                     .ok_or(AkitaError::InvalidProof)?;
                 contribution += eval_affine_digit_intervals(
                     point,
@@ -505,7 +530,7 @@ where
                     1,
                     commitment_digits,
                     &t_high_weights,
-                    outer_low,
+                    t_low,
                     &[],
                 )?;
             }
@@ -603,6 +628,55 @@ where
     Ok(evaluation + group.consistency_weight() * z)
 }
 
+/// Fold A rows only when their repeated visits pay for the wider table and
+/// the additional low-weight vector. Unsupported or unpriced shapes keep the
+/// original row layout.
+fn fold_t_row_weights<E: Field>(
+    point_bits: usize,
+    digits: &[E],
+    outer_low: &[E],
+    row_weights: &[E],
+    block_claims: usize,
+) -> Result<Option<Vec<E>>, AkitaError> {
+    let n_a = row_weights.len();
+    if n_a <= 1 || !n_a.is_power_of_two() || block_claims == 0 {
+        return Ok(None);
+    }
+    let folded_lanes =
+        checked::product([n_a, outer_low.len().max(1)]).ok_or(AkitaError::InvalidProof)?;
+    if checked::product([folded_lanes, digits.len()])
+        .is_none_or(|width| width > akita_algebra::offset_eq::MAX_PREPARED_STRIDE)
+    {
+        return Ok(None);
+    }
+    let costs = PreparedDigits::<E, E>::preparation_work(point_bits, digits.len(), folded_lanes)
+        .zip(PreparedDigits::<E, E>::preparation_work(
+            point_bits,
+            digits.len(),
+            outer_low.len(),
+        ))
+        .and_then(|(folded, original)| {
+            Some((
+                checked::sum([folded, folded_lanes, block_claims])?,
+                checked::sum([original, checked::product([block_claims, n_a])?])?,
+            ))
+        });
+    if costs.is_none_or(|(folded, original)| folded >= original) {
+        return Ok(None);
+    }
+    let mut low = Vec::new();
+    low.try_reserve_exact(folded_lanes)
+        .map_err(|_| AkitaError::InvalidInput("structured row factor allocation failed".into()))?;
+    for &row_weight in row_weights {
+        if outer_low.is_empty() {
+            low.push(row_weight);
+        } else {
+            low.extend(outer_low.iter().map(|&lane| row_weight * lane));
+        }
+    }
+    Ok(Some(low))
+}
+
 // Feature `setup-sop-structured`, default off. Appended after the last original line so the
 // feature-off source keeps every line number; the call sites above select these paths through `lb2_alt!`.
 use super::lb2::lb2_alt;
@@ -630,4 +704,90 @@ fn lb2_t<E: Field>(t_eq: &[E], t_row_stride: usize, row_weights: &[E], gadget: &
         sum.push(row_weight, lb2_dot(row, gadget));
     }
     sum.finish()
+}
+
+#[cfg(test)]
+mod row_folding_tests {
+    use super::*;
+    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+
+    #[test]
+    fn small_groups_keep_the_original_row_layout() {
+        let rows = (1..=32).map(F::from_u64).collect::<Vec<_>>();
+        let digits = [F::one(); 16];
+        for repetitions in [1, 2, 32, 128] {
+            assert!(fold_t_row_weights(24, &digits, &[], &rows, repetitions)
+                .unwrap()
+                .is_none());
+        }
+        assert_eq!(
+            fold_t_row_weights(24, &digits, &[], &rows, 10_000).unwrap(),
+            Some(rows)
+        );
+    }
+
+    #[test]
+    fn amortized_row_folding_preserves_projected_lanes_and_carries() {
+        let rows = [3, 5, 7, 11].map(F::from_u64);
+        let lanes = [13, 17].map(F::from_u64);
+        let digits = [1, 2, 4].map(F::from_u64);
+        let blocks = (0..1_000).map(|i| F::from_u64(i + 19)).collect::<Vec<_>>();
+        let folded = fold_t_row_weights(20, &digits, &lanes, &rows, blocks.len())
+            .unwrap()
+            .unwrap();
+        let expected = rows
+            .iter()
+            .flat_map(|row| lanes.iter().map(move |lane| *row * *lane))
+            .collect::<Vec<_>>();
+        assert_eq!(folded, expected);
+        for kind in 0..3 {
+            let point = (0..20)
+                .map(|i| match kind {
+                    0 => F::from_u64(i + 23),
+                    1 => F::zero(),
+                    _ => F::one(),
+                })
+                .collect::<Vec<_>>();
+            let original_weights = AffineWeightProduct::new(&blocks, &rows).unwrap();
+            let unit = [F::one()];
+            let folded_weights = AffineWeightProduct::new(&blocks, &unit).unwrap();
+            let mut original_sum = F::zero();
+            PreparedDigits::new(&point, &digits, &lanes)
+                .unwrap()
+                .unwrap()
+                .accumulate(
+                    &mut original_sum,
+                    17,
+                    0,
+                    blocks.len() * rows.len(),
+                    &original_weights,
+                )
+                .unwrap();
+            let mut folded_sum = F::zero();
+            PreparedDigits::new(&point, &digits, &folded)
+                .unwrap()
+                .unwrap()
+                .accumulate(&mut folded_sum, 17, 0, blocks.len(), &folded_weights)
+                .unwrap();
+            assert_eq!(folded_sum, original_sum);
+        }
+    }
+
+    #[test]
+    fn unpriced_or_unsupported_row_folds_keep_the_original_layout() {
+        let rows = [F::one(); 32];
+        let digits = [F::one(); 16];
+        for (bits, low, weights, repetitions) in [
+            (24, &[][..], &rows[..], 0),
+            (24, &[][..], &rows[..1], 10_000),
+            (24, &[][..], &rows[..3], 10_000),
+            (8, &[][..], &rows[..], 10_000),
+            (24, &rows[..4], &rows[..], 10_000),
+            (24, &[][..], &rows[..], usize::MAX),
+        ] {
+            assert!(fold_t_row_weights(bits, &digits, low, weights, repetitions)
+                .unwrap()
+                .is_none());
+        }
+    }
 }
