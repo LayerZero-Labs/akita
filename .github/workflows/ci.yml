@@ -84,7 +84,7 @@ jobs:
           scripts/check-crate-deps.sh akita-zk-verifier
           scripts/check-crate-deps.sh akita-zk-prover
 
-  binary:
+  binary-trinomial:
     name: Binary trinomial arithmetic and relation bridge
     runs-on: ubuntu-latest
     steps:
@@ -102,7 +102,7 @@ jobs:
         run: cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak -- kernels::trinomial_relation
       - name: Test compact imports and signed ordinary seams
         run: |
-          cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak opaque::binary_
+          cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak opaque::binary
           cargo test -p akita-params --lib --no-default-features --features binary,transcript-keccak ordinary_source
           cargo test -p akita-planner --lib --no-default-features --features binary,transcript-keccak ordinary_source
       - name: Clippy trinomial bridge and ordinary seams
@@ -117,7 +117,7 @@ jobs:
         run: cargo test --release -p akita-pcs --test binary_end_to_end --no-default-features --features parallel,binary,transcript-keccak
 
 
-  binary:
+  binary-field:
     name: Binary field arithmetic
     runs-on: ubuntu-latest
     steps:
@@ -461,7 +461,7 @@ jobs:
           --test-threads=1
 
   test-binary-setup:
-    name: Binary-source setup and q24 certificate
+    name: Binary setup and q24 certificate
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

@@ -17,7 +17,7 @@ pub enum AkitaModulusProfileId {
     /// Extension seam: q24 modulus variant registration for
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
     ///
-    /// Binary-source commitment prime `2^24 - 2523807`.
+    /// Binary commitment prime `2^24 - 2523807`.
     #[cfg(feature = "binary")]
     Q24Minus2523807,
     /// `2^128 - (2^32 - 22537)`.

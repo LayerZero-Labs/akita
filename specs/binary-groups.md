@@ -6,7 +6,7 @@
 | Created | 2026-10-27 |
 | Status | design |
 | PR | Pending |
-| Supersedes | None; existing LaBinius entry points remain live |
+| Supersedes | None |
 | Superseded-by | |
 | Book-chapter | book/src/how/architecture.md |
 
@@ -72,8 +72,8 @@ verification, add arithmetic kernels, certify q24 SIS, implement a challenge
 sampler or setup stream, or supply an application proof. Akita supplies no
 booleanity, zero-support or prime-claim-fusion helpers. Unsupported
 non-power-of-two word widths are rejected rather than implicitly repacked. The
-existing LaBinius implementation continues to be described by its live
-specifications until a later migration.
+former standalone LaBinius implementation is recorded in
+`specs/archive/2026-Q4/`.
 
 ## Evaluation
 
@@ -102,8 +102,8 @@ features and with `binary`. Test doubles exercise the integration
 trait; Akita MUST NOT ship a production implementation of that trait.
 Integrating the root ring switch and grouped opening MUST add ordinary-byte
 stability, mixed-group transcript replay, malformed input and pending-claim
-consumption tests. Existing ordinary and LaBinius tests continue to apply to
-their respective live paths.
+consumption tests. Existing ordinary tests continue to apply to the
+ordinary path.
 
 Run `./scripts/check-doc-guardrails.sh` for this specification. Use the current
 workflow and repository instructions for the workspace feature matrices.
@@ -477,7 +477,7 @@ full joint re-admission rather than inheriting planning bounds.
 ## Documentation
 
 This is the normative design record for the binary-group contract. It does not
-supersede live-code descriptions in the LaBinius specs. The checkpoint proof is
+supersede the field-switch and packed-F162 specs. The checkpoint proof is
 separate in `specs/binary-checkpoint.md`. After implementation and review,
 fold durable explanations into the Book's architecture, commitment, transcript
 and verification chapters, update lifecycle metadata and archive obsolete root

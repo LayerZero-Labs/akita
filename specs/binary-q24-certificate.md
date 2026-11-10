@@ -1,4 +1,4 @@
-# Binary-source q24 SIS certificate
+# Binary q24 SIS certificate
 
 Status: active
 Book-chapter: book/src/how/security.md

@@ -127,7 +127,7 @@ The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
 estimator at verification time.
 
-### Binary-source q24 certificate
+### Binary q24 certificate
 
 The binary commitment's A matrix has rank three over the degree-648
 trinomial ring `Z_q[Y]/(Y^648 - Y^324 + 1)` with commitment modulus
