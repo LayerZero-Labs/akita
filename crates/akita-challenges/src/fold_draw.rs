@@ -36,7 +36,7 @@ pub struct FoldChallengeFamily {
 enum FamilyShell {
     SignedSparse(SparseChallengeShell),
     /// Decoded from one 32-byte message by indexed SHAKE256 substreams.
-    #[cfg(feature = "labinius-challenges")]
+    #[cfg(feature = "binary")]
     BinaryRoot {
         ring_d: usize,
     },
@@ -76,7 +76,7 @@ impl FoldChallengeFamily {
             FoldChallengeDistribution::SignedSparse(config) => {
                 FamilyShell::SignedSparse(SparseChallengeShell::new(ring_d, &config, rejection)?)
             }
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FoldChallengeDistribution::BinaryRoot => {
                 if rejection.is_some() {
                     return Err(AkitaError::InvalidSetup(
@@ -101,7 +101,7 @@ impl FoldChallengeFamily {
     pub fn stream(&self, count: usize) -> Result<SparseChallengeStream, AkitaError> {
         match self.shell {
             FamilyShell::SignedSparse(shell) => shell.stream(count),
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FamilyShell::BinaryRoot { .. } => Err(AkitaError::InvalidSetup(
                 "binary root challenges have no sparse message stream".into(),
             )),
@@ -117,7 +117,7 @@ impl FoldChallengeFamily {
     pub fn message_len(&self, count: usize) -> Result<usize, AkitaError> {
         match self.shell {
             FamilyShell::SignedSparse(shell) => Ok(shell.stream(count)?.message_len()),
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FamilyShell::BinaryRoot { .. } => {
                 if count == 0 {
                     return Err(AkitaError::InvalidSetup(
@@ -137,7 +137,7 @@ impl FoldChallengeFamily {
     pub fn set_bits(&self) -> u32 {
         match self.shell {
             FamilyShell::SignedSparse(shell) => shell.set_bits(),
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FamilyShell::BinaryRoot { ring_d } => {
                 crate::binary::root_family::entropy_bits(ring_d).floor() as u32
             }
@@ -153,7 +153,7 @@ impl FoldChallengeFamily {
     pub const fn ring_d(&self) -> usize {
         match self.shell {
             FamilyShell::SignedSparse(shell) => shell.ring_d(),
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FamilyShell::BinaryRoot { ring_d } => ring_d,
         }
     }
@@ -164,7 +164,7 @@ impl FoldChallengeFamily {
             FamilyShell::SignedSparse(shell) => {
                 FoldChallengeDistribution::SignedSparse(shell.config())
             }
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FamilyShell::BinaryRoot { .. } => FoldChallengeDistribution::BinaryRoot,
         }
     }
@@ -173,7 +173,7 @@ impl FoldChallengeFamily {
     pub const fn rejection(&self) -> Option<OperatorNormRejection> {
         match self.shell {
             FamilyShell::SignedSparse(shell) => shell.rejection(),
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FamilyShell::BinaryRoot { .. } => None,
         }
     }
@@ -226,7 +226,7 @@ pub trait FoldDraw {
                     })
                     .transpose()
             }
-            #[cfg(feature = "labinius-challenges")]
+            #[cfg(feature = "binary")]
             FamilyShell::BinaryRoot { .. } => {
                 let challenges =
                     self.draw_message(crate::binary::BINARY_CHALLENGE_SEED_LEN, |message| {

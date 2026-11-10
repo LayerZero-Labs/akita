@@ -84,8 +84,8 @@ jobs:
           scripts/check-crate-deps.sh akita-zk-verifier
           scripts/check-crate-deps.sh akita-zk-prover
 
-  labinius-trinomial:
-    name: LaBinius trinomial arithmetic and relation bridge
+  binary:
+    name: Binary trinomial arithmetic and relation bridge
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,32 +93,32 @@ jobs:
         with:
           components: clippy
       - name: Test trinomial arithmetic
-        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-trinomial
+        run: cargo test -p akita-algebra --lib --no-default-features --features binary
       - name: Clippy trinomial arithmetic and benchmarks
-        run: cargo clippy -p akita-algebra --lib --benches --no-default-features --features labinius-trinomial -- -D warnings
+        run: cargo clippy -p akita-algebra --lib --benches --no-default-features --features binary -- -D warnings
       - name: Test trinomial relation geometry
-        run: cargo test -p akita-types --lib --no-default-features --features labinius-trinomial,transcript-keccak
+        run: cargo test -p akita-types --lib --no-default-features --features binary,transcript-keccak
       - name: Test trinomial quotient kernel
-        run: cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-keccak -- kernels::trinomial_relation
+        run: cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak -- kernels::trinomial_relation
       - name: Test compact imports and signed ordinary seams
         run: |
-          cargo test -p akita-cpu-backend --lib --no-default-features --features labinius-trinomial,transcript-keccak opaque::binary_
-          cargo test -p akita-params --lib --no-default-features --features labinius-trinomial,transcript-keccak ordinary_source
-          cargo test -p akita-planner --lib --no-default-features --features labinius-trinomial,transcript-keccak ordinary_source
+          cargo test -p akita-cpu-backend --lib --no-default-features --features binary,transcript-keccak opaque::binary_
+          cargo test -p akita-params --lib --no-default-features --features binary,transcript-keccak ordinary_source
+          cargo test -p akita-planner --lib --no-default-features --features binary,transcript-keccak ordinary_source
       - name: Clippy trinomial bridge and ordinary seams
-        run: cargo clippy -p akita-types -p akita-cpu-backend -p akita-params -p akita-planner --all-targets --no-default-features --features labinius-trinomial,transcript-keccak -- -D warnings
+        run: cargo clippy -p akita-types -p akita-cpu-backend -p akita-params -p akita-planner --all-targets --no-default-features --features binary,transcript-keccak -- -D warnings
       - name: Test owned binary source kernels
         run: |
           for backend in transcript-blake2b transcript-keccak; do
-            cargo test -p akita-cpu-backend --test binary_source --no-default-features --features "labinius-trinomial,$backend"
-            cargo test -p akita-cpu-backend --test binary_source --no-default-features --features "parallel,labinius-trinomial,$backend"
+            cargo test -p akita-cpu-backend --test binary --no-default-features --features "binary,$backend"
+            cargo test -p akita-cpu-backend --test binary --no-default-features --features "parallel,binary,$backend"
           done
       - name: Test binary source end-to-end opening
-        run: cargo test --release -p akita-pcs --test binary_source_end_to_end --no-default-features --features parallel,labinius-trinomial,transcript-keccak
+        run: cargo test --release -p akita-pcs --test binary_end_to_end --no-default-features --features parallel,binary,transcript-keccak
 
 
-  labinius-binary:
-    name: LaBinius binary arithmetic
+  binary:
+    name: Binary field arithmetic
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -128,13 +128,13 @@ jobs:
       - name: Test algebra without the extension
         run: cargo test -p akita-algebra --lib --no-default-features
       - name: Test binary arithmetic
-        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary binary
+        run: cargo test -p akita-algebra --lib --no-default-features --features binary binary
       - name: Test parallel binary arithmetic
-        run: cargo test -p akita-algebra --lib --no-default-features --features labinius-binary,parallel binary
+        run: cargo test -p akita-algebra --lib --no-default-features --features binary,parallel binary
       - name: Lint parallel binary arithmetic and benchmarks
-        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary,parallel -- -D warnings
+        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features binary,parallel -- -D warnings
       - name: Lint binary arithmetic and benchmarks
-        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features labinius-binary -- -D warnings
+        run: cargo clippy -p akita-algebra --all-targets --no-default-features --features binary -- -D warnings
 
   machete:
     name: Unused dependencies
@@ -460,7 +460,7 @@ jobs:
           --
           --test-threads=1
 
-  test-labinius-sis:
+  test-binary-setup:
     name: Binary-source setup and q24 certificate
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -471,13 +471,13 @@ jobs:
           components: clippy
       - name: Test binary setup and the q24 certificate
         run: |
-          cargo test -p akita-params --lib --no-default-features --features labinius-sis,transcript-keccak binary_setup
-          cargo test -p akita-sis-estimator --lib --test q24_width_table --no-default-features --features labinius-sis
+          cargo test -p akita-params --lib --no-default-features --features binary,transcript-keccak binary_setup
+          cargo test -p akita-sis-estimator --lib --test q24_width_table --no-default-features --features binary
       - name: Check opt-in estimator targets
-        run: cargo clippy -p akita-params -p akita-sis-estimator --all-targets --no-default-features --features labinius-sis,transcript-keccak -- -D warnings
+        run: cargo clippy -p akita-params -p akita-sis-estimator --all-targets --no-default-features --features binary,transcript-keccak -- -D warnings
 
-  test-labinius-challenges:
-    name: LaBinius challenge families (${{ matrix.backend }})
+  test-binary-challenges:
+    name: Binary challenge families (${{ matrix.backend }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -489,9 +489,9 @@ jobs:
         with:
           components: clippy
       - name: Test opt-in binary families
-        run: cargo test -p akita-challenges --lib --no-default-features --features labinius-challenges,${{ matrix.backend }}
+        run: cargo test -p akita-challenges --lib --no-default-features --features binary,${{ matrix.backend }}
       - name: Check opt-in challenge targets
-        run: cargo clippy -p akita-challenges --all-targets --no-default-features --features labinius-challenges,${{ matrix.backend }} -- -D warnings
+        run: cargo clippy -p akita-challenges --all-targets --no-default-features --features binary,${{ matrix.backend }} -- -D warnings
 
   test-timing:
     name: Test timing

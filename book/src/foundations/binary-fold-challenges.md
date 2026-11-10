@@ -197,8 +197,8 @@ comparison. These measurements are historical. The current benchmark exercises
 the opt-in binary sampler through `FoldDraw` with a deterministic SHAKE draw:
 
 ```bash
-cargo bench -p akita-challenges --features labinius-challenges --bench binary_challenge -- \
-  labinius_binary_challenge_batch
+cargo bench -p akita-challenges --features binary --bench binary_challenge -- \
+  binary_challenge_batch
 ```
 
 ## Current scope and audit paths

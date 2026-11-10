@@ -33,7 +33,7 @@ where
         + ChallengeCodec,
 {
     match claims.groups().first().map(|group| group.kind()) {
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         Some(akita_types::opening_claims::GroupClaimKind::Binary { .. }) => {
             if basis != BasisMode::Lagrange {
                 return Err(AkitaError::InvalidProof);

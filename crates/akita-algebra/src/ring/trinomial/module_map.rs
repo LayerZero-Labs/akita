@@ -63,7 +63,7 @@ pub fn unpack_signed_components(coefficients: &[i128]) -> Result<[[i128; 162]; 4
 ///
 /// This is the quotient homomorphism `S -> GF(2^162)`. Negative odd
 /// coefficients have parity one. A noncanonical coefficient count is rejected.
-#[cfg(feature = "labinius-binary")]
+#[cfg(feature = "binary")]
 pub fn scalar_to_binary(
     coefficients: &[i128],
 ) -> Result<crate::binary::BinaryField162, AkitaError> {

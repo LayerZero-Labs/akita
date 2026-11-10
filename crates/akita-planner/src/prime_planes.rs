@@ -7,7 +7,7 @@ use akita_params::sis::ajtai_key::{
     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
 };
 use akita_params::GroupCommitPhaseParams;
-use akita_types::binary_source::{
+use akita_types::binary::{
     BinaryCommittedGroupManifest, BinaryRootWitnessPlan, BinaryTypedPrefix, OrdinaryNativeRootPlan,
     PrimePlaneManifest,
 };
@@ -138,7 +138,7 @@ mod tests {
     use super::*;
     use akita_challenges::FoldChallengeDistribution;
     use akita_params::{CommittedGroupParams, PolynomialGroupLayout};
-    use akita_types::binary_source::{
+    use akita_types::binary::{
         BinaryIndexMap, BinaryRootPublic, BinarySourceDescriptor, BinaryTerminalClaim,
         PrimeGroupClaim, PrimePlaneClaim,
     };
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn p64_prime_plane_price_uses_two_planes_and_independent_d_rank() {
-        use akita_types::binary_source::PrimeClaimValue;
+        use akita_types::binary::PrimeClaimValue;
         let field = BinaryFieldProfile::P64;
         let params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q64Offset59,

@@ -800,6 +800,6 @@ where
 #[path = "replay/tests.rs"]
 mod tests;
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[path = "replay/binary_columns.rs"]
 mod binary_columns;

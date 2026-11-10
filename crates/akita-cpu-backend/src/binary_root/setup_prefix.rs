@@ -5,7 +5,7 @@ use akita_error::{checked, AkitaError};
 use akita_params::SetupPrefixSlotId;
 use akita_prover::{PreparedSetupPrefix, SetupPrefixProverRegistry};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::binary_source::{
+use akita_types::binary::{
     BinaryCommittedGroupManifest, BinaryTypedPrefix, CompositePrefixBlock, CompositePrefixKind,
     CompositePrefixLayout,
 };

@@ -72,7 +72,7 @@ where
 /// Extension seam: replay a singleton Stage 3 transcript for an authenticated
 /// public prefix identity and check its terminal product against the caller's
 /// weight. <https://github.com/LayerZero-Labs/akita/issues/285>.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub(crate) fn verify_stage3_session<F, E>(
     rounds: usize,
     encoded_slot: &[u8],

@@ -18,7 +18,7 @@ use akita_algebra::{MinusTrinomial, TrinomialRing};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
 use akita_params::{RelationPolynomial, RelationRowGeometry};
-use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
+use akita_types::binary::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVAL};
 use akita_types::native_root_relation::{binary_commitment_group, NativeRootGroup};
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use jolt_field::solinas::parallel::*;

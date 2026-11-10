@@ -12,7 +12,7 @@ use akita_params::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, RoleParams,
     SetupMatrixCapacity, SisModulusProfileId,
 };
-use akita_types::binary_source::{OrdinaryNativeRootBatch, OrdinaryNativeRootClaim};
+use akita_types::binary::{OrdinaryNativeRootBatch, OrdinaryNativeRootClaim};
 use akita_types::root_repacking::RootCoefficientRepacking;
 use jolt_field::{One, Prime128Offset275, Ring, Zero};
 use std::collections::BTreeSet;

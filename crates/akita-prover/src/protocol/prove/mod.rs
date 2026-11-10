@@ -36,7 +36,7 @@ pub(crate) struct ExtensionOpeningReduction<E: Field> {
     pub(crate) final_factors: Vec<E>,
 }
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 mod binary_root;
 pub mod execution;
 mod fold;

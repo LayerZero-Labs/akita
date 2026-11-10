@@ -129,7 +129,7 @@ estimator at verification time.
 
 ### Binary-source q24 certificate
 
-The binary-source commitment's A matrix has rank three over the degree-648
+The binary commitment's A matrix has rank three over the degree-648
 trinomial ring `Z_q[Y]/(Y^648 - Y^324 + 1)` with commitment modulus
 
 ```text
@@ -152,13 +152,13 @@ The certificate uses the same `Quantum169BitADPS16` policy and
 At widths 4096, 8192 and 16384, ranks 3 and 4 are proven above the 169-bit
 target up to the search cap for every bound, and rank 2 has a finite attack
 below 128 bits. The per-cell results are in
-[`specs/binary-source-q24-certificate.md`](../../../specs/binary-source-q24-certificate.md).
+[`specs/binary-q24-certificate.md`](../../../specs/binary-q24-certificate.md).
 
 Regenerate both CSV files with bounded parallelism:
 
 ```bash
 RAYON_NUM_THREADS=2 cargo run --release -p akita-sis-estimator \
-  --features parallel,labinius-sis --example q24_infinity_width_table
+  --features parallel,binary --example q24_infinity_width_table
 ```
 
 **Implementation map**

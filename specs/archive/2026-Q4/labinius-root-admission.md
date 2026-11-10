@@ -6,7 +6,7 @@ Tracking: https://github.com/LayerZero-Labs/akita/issues/45
 
 Archived 2026-Q4, when the q25 root-admission code in `akita-params` was removed.
 The live q24 certificate moved to
-[binary-source-q24-certificate.md](../../binary-source-q24-certificate.md).
+[binary-q24-certificate.md](../../binary-q24-certificate.md).
 
 ## Scope and profile
 

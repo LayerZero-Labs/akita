@@ -15,7 +15,7 @@ pub(super) fn validate_group_payload<F: Field>(
     descriptor.validate_frozen_precommit(field_bits)?;
     match (committed.kind(), kind) {
         (CommittedGroupKind::Ordinary, GroupClaimKind::Ordinary) => {}
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         (
             CommittedGroupKind::Binary(manifest),
             GroupClaimKind::Binary {
@@ -58,7 +58,7 @@ pub(super) fn validate_group_payload<F: Field>(
     Ok(())
 }
 
-#[cfg(all(test, feature = "labinius-trinomial"))]
+#[cfg(all(test, feature = "binary"))]
 mod tests {
     use super::*;
     use akita_params::binary_setup::BinaryFieldProfile;
@@ -70,7 +70,7 @@ mod tests {
         BlockGeometry, CommitmentSliceCount, GadgetDigits, GroupCommitPhaseParams,
         PolynomialGroupLayout, RoleParams,
     };
-    use akita_types::binary_source::{
+    use akita_types::binary::{
         BinaryCommittedGroupManifest, BinaryIndexMap, BinarySourceDescriptor, BinaryWordClaim,
         PrimePlaneManifest,
     };

@@ -76,7 +76,7 @@ pub mod benchmark_support {
         centered_quotient_rows_with_i16_tail, decompose_rows_i8_into,
         fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_digits_i8, FusedQuotientRows,
     };
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     pub use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
     pub use crate::sources::onehot::column_sweep_ajtai_onehot_multi;
     pub use crate::sources::poly_helpers::balanced_ring_decompose_fold_partitioned;
@@ -106,8 +106,8 @@ pub(crate) fn typed_inner_rows<F: Field, const D: usize>(
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub mod native_root;
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub mod binary_root;

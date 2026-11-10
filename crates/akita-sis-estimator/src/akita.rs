@@ -18,7 +18,7 @@ pub enum AkitaModulusProfileId {
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
     ///
     /// Binary-source commitment prime `2^24 - 2523807`.
-    #[cfg(feature = "labinius-sis")]
+    #[cfg(feature = "binary")]
     Q24Minus2523807,
     /// `2^128 - (2^32 - 22537)`.
     Q128OffsetA7F7,
@@ -40,7 +40,7 @@ impl AkitaModulusProfileId {
         match label {
             "q32" | "Q32Offset99" => Ok(Self::Q32Offset99),
             "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
-            #[cfg(feature = "labinius-sis")]
+            #[cfg(feature = "binary")]
             "q24" | "Q24Minus2523807" => Ok(Self::Q24Minus2523807),
             "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
             "q128_offset275" | "Q128Offset275" => Ok(Self::Q128Offset275),
@@ -60,7 +60,7 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => akita_q32(),
             Self::Q64Offset59 => akita_q64(),
-            #[cfg(feature = "labinius-sis")]
+            #[cfg(feature = "binary")]
             Self::Q24Minus2523807 => BigUint::from((1u32 << 24) - 2_523_807),
             Self::Q128OffsetA7F7 => akita_q128(),
             Self::Q128Offset275 => {
@@ -78,7 +78,7 @@ impl AkitaModulusProfileId {
         match self {
             Self::Q32Offset99 => "q32",
             Self::Q64Offset59 => "q64",
-            #[cfg(feature = "labinius-sis")]
+            #[cfg(feature = "binary")]
             Self::Q24Minus2523807 => "q24",
             Self::Q128OffsetA7F7 => "q128",
             Self::Q128Offset275 => "q128_offset275",
@@ -219,7 +219,7 @@ pub fn scalar_sis_from_ring_euclidean(
 mod tests {
     use super::*;
 
-    #[cfg(not(feature = "labinius-sis"))]
+    #[cfg(not(feature = "binary"))]
     #[test]
     fn q24_profile_is_absent_without_the_feature() {
         assert!(AkitaModulusProfileId::parse("q24").is_err());

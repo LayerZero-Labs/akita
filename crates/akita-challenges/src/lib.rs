@@ -9,7 +9,7 @@
 //!   to `akita-config`, `akita-types`, and `akita-planner`.
 //! - `BinaryChallengeProfile` / `BinaryChallengeSampler` — exact
 //!   parity-injective fixed- and bounded-weight support families for the
-//!   degree-162 and degree-486 LaBinius scalar rings (with `labinius-challenges`).
+//!   degree-162 and degree-486 binary scalar rings (with `binary`).
 //! - [`FoldDraw`] and its Spongefish adapters — fold-challenge drawing
 //!   over live or preview state.
 //! - [`Challenges`] — sampled folding challenges in claim-major block order.
@@ -17,7 +17,7 @@
 //! - [`SparseChallengeStream`] — the fixed-length message layout and decoder
 //!   for one group's challenges.
 
-#[cfg(feature = "labinius-challenges")]
+#[cfg(feature = "binary")]
 mod binary;
 mod challenge;
 mod challenges;
@@ -26,7 +26,7 @@ mod family;
 mod fold_draw;
 mod sampler;
 
-#[cfg(feature = "labinius-challenges")]
+#[cfg(feature = "binary")]
 pub use binary::{
     BinaryChallenge, BinaryChallengeFamily, BinaryChallengeProfile, BinaryChallengeSampler,
     BinaryChallengeTerm, BinaryScalarRing, BinarySignRule, ColumnChallengeAddress,

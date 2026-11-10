@@ -2,7 +2,7 @@
 
 use super::product_table::{SetupProductSource, SetupProductSumcheck};
 use akita_sumcheck::SumcheckKernel;
-use akita_types::binary_source::{root_weight_scenarios, RootFixtureField as F};
+use akita_types::binary::{root_weight_scenarios, RootFixtureField as F};
 use jolt_field::Ring;
 use std::sync::Arc;
 
@@ -60,7 +60,7 @@ fn structured_typed_prefix_stage3_matches_the_dense_weight_round_by_round() {
 #[test]
 fn binary_root_p64_typed_stage3_matches_dense_extension_rounds() {
     use akita_params::binary_setup::BinaryFieldProfile;
-    use akita_types::binary_source::{
+    use akita_types::binary::{
         binary_word_manifest_fixture, BinaryAProduct, BinaryRootWitnessPlan, BinaryTypedPrefix,
     };
     use jolt_field::{Ext2, ExtField, One, Prime64Offset59 as Base, Zero};

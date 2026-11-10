@@ -5,7 +5,7 @@ use akita_error::AkitaError;
 use akita_params::binary_setup::BinaryFieldProfile;
 use akita_params::{GrindingPlan, GrindingRun, GrindingSite, SumcheckProtocol};
 use akita_sumcheck::{SumcheckKernel, SumcheckShape};
-use akita_types::binary_source::{
+use akita_types::binary::{
     binary_word_manifest_fixture, BinaryAProduct, BinaryAReadGuard, BinaryRootWitnessPlan,
     BinaryTypedPrefix,
 };

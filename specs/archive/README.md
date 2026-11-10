@@ -70,4 +70,4 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q4/labinius-root-reduction.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
 | `2026-Q4/labinius-root-sumcheck.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
 | `2026-Q4/labinius-setup-contract.md` | historical | _(removed crates; design record)_ | 2026-Q4 |
-| `2026-Q4/labinius-root-admission.md` | historical | _(removed q25 admission; q24 certificate in `binary-source-q24-certificate.md`)_ | 2026-Q4 |
+| `2026-Q4/labinius-root-admission.md` | historical | _(removed q25 admission; q24 certificate in `binary-q24-certificate.md`)_ | 2026-Q4 |

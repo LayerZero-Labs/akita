@@ -3,7 +3,7 @@
 use super::packed::pack_logical_words;
 use super::MAX_BINARY_SOURCE_MATERIAL_BYTES;
 use akita_error::{checked, AkitaError};
-use akita_types::binary_source::BinarySourceDescriptor;
+use akita_types::binary::BinarySourceDescriptor;
 use std::mem::size_of;
 
 pub(super) enum BinarySourceInput {

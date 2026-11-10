@@ -7,7 +7,7 @@ use shake::Shake256;
 
 use super::{root_family, BinaryChallenge, BinaryChallengeProfile};
 
-/// Domain of the addressed binary-source column sampler.
+/// Domain of the addressed binary column sampler.
 pub const MULTIGROUP_COLUMN_DOMAIN: &[u8] = b"akita/binary-source/multigroup/column/v1";
 /// The size/lexicographic bounded-46 support family with the existing sign rule.
 pub const MULTIGROUP_COLUMN_FAMILY_ID: u64 = 1;

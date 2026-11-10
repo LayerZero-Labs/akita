@@ -10,7 +10,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
         ordinary: GrindingPlan,
         schedule: &FoldSchedule,
     ) -> Result<GrindingPlan, AkitaError> {
-        #[cfg(feature = "labinius-trinomial")]
+        #[cfg(feature = "binary")]
         if let Some(super::GroupClaimKind::Binary { manifest, .. }) =
             self.groups().first().map(|group| group.kind())
         {
@@ -21,7 +21,7 @@ impl<E: Clone, C> OpeningClaims<'_, E, C> {
                 schedule.root.output_witness_len,
                 next.params.d_a(),
             )?;
-            return crate::binary_source::binary_root_grinding_plan(
+            return crate::binary::binary_root_grinding_plan(
                 &ordinary,
                 &[akita_error::checked::product([
                     manifest.descriptor().index_map().columns(),

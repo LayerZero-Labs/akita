@@ -75,7 +75,7 @@ fn iota_is_a_ring_homomorphism_and_scalar_action_is_componentwise() {
     );
 }
 
-#[cfg(feature = "labinius-binary")]
+#[cfg(feature = "binary")]
 #[test]
 fn binary_scalar_reduction_is_a_ring_homomorphism() {
     use crate::binary::BinaryField162;

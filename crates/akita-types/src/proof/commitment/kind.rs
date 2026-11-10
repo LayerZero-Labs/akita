@@ -8,6 +8,6 @@ pub enum CommittedGroupKind {
     /// A commitment to an ordinary negacyclic-ring source.
     Ordinary,
     /// An explicitly admitted experimental binary source commitment.
-    #[cfg(feature = "labinius-trinomial")]
-    Binary(crate::binary_source::BinaryCommittedGroupManifest),
+    #[cfg(feature = "binary")]
+    Binary(crate::binary::BinaryCommittedGroupManifest),
 }

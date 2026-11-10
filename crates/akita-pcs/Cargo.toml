@@ -28,18 +28,17 @@ features = ["parallel", "transcript-keccak"]
 ignored = ["akita-setup"]
 
 [features]
-# Extension seam: opt-in native binary-source protocol and measurement tooling.
+# Extension seam: opt-in native binary protocol and measurement tooling.
 # <https://github.com/LayerZero-Labs/akita/issues/285>.
-binary-source-measurements = ["labinius-trinomial"]
-labinius-trinomial = [
-  "akita-algebra/labinius-trinomial",
-  "akita-algebra/labinius-binary",
-  "akita-challenges/labinius-challenges",
-  "akita-cpu-backend/labinius-trinomial",
-  "akita-planner/labinius-trinomial",
-  "akita-prover/labinius-trinomial",
-  "akita-types/labinius-trinomial",
-  "akita-verifier/labinius-trinomial",
+binary-measurements = ["binary"]
+binary = [
+  "akita-algebra/binary",
+  "akita-challenges/binary",
+  "akita-cpu-backend/binary",
+  "akita-planner/binary",
+  "akita-prover/binary",
+  "akita-types/binary",
+  "akita-verifier/binary",
 ]
 default = ["parallel", "transcript-keccak"]
 transcript-blake2b = [
@@ -185,8 +184,8 @@ name = "profile"
 path = "examples/profile/main.rs"
 
 [[example]]
-name = "binary_source_full_size"
-required-features = ["labinius-trinomial"]
+name = "binary_full_size"
+required-features = ["binary"]
 
 [[bench]]
 name = "ring_ntt"

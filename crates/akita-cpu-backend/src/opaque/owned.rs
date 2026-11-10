@@ -102,8 +102,8 @@ pub(super) trait PrivateSource<F: Field + CanonicalEncoding, E: Field>: Send + S
     fn group_kind(&self) -> SourceGroupKind {
         SourceGroupKind::Ordinary
     }
-    #[cfg(feature = "labinius-trinomial")]
-    fn binary_source(&self) -> Option<&super::binary_source::BinarySourceStorage> {
+    #[cfg(feature = "binary")]
+    fn binary(&self) -> Option<&super::binary::BinarySourceStorage> {
         None
     }
     fn commitment_sources(&self) -> Vec<&dyn CommitmentSource<F>>;
@@ -111,7 +111,7 @@ pub(super) trait PrivateSource<F: Field + CanonicalEncoding, E: Field>: Send + S
     /// Extension seam: borrow the coefficient table of a one-polynomial
     /// source that keeps it in memory.
     /// Tracking issue: <https://github.com/LayerZero-Labs/akita/issues/285>.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn retained_coefficients(&self) -> Option<&[F]> {
         None
     }
@@ -185,7 +185,7 @@ where
             .map(|p| p as &dyn CommitmentSource<F>)
             .collect()
     }
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn retained_coefficients(&self) -> Option<&[F]> {
         match self.polynomials.as_slice() {
             [polynomial] => match polynomial.source_coefficients().ok()? {

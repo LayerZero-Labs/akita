@@ -5,7 +5,7 @@ pub mod cyclotomic;
 pub mod eval;
 mod ifma52;
 mod residue;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub mod trinomial;
 
 pub use crt_ntt_repr::{
@@ -22,7 +22,7 @@ pub use eval::{
 };
 pub use ifma52::{Ifma52NttMatrix, Ifma52Params};
 pub use residue::{residue_kernel, terminal_residue_kernel, ResidueKernelPoint};
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use trinomial::{
     embed_scalar, pack_scalar_components, shifted_remainder_evaluations, unpack_scalar_components,
     MinusTrinomial, PlusTrinomial, TrinomialError, TrinomialI8Lut, TrinomialLimbAccumulator,

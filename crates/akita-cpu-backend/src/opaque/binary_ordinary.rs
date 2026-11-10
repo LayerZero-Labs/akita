@@ -5,7 +5,7 @@ use super::owned_kind::SourceGroupKind;
 use super::CpuBackend;
 use akita_error::{checked, AkitaError};
 use akita_params::dispatch_for_field;
-use akita_types::binary_source::OrdinaryNativeRootPlan;
+use akita_types::binary::OrdinaryNativeRootPlan;
 use jolt_field::{CanonicalEncoding, Field};
 
 impl<F, E> CpuBackend<F, E>

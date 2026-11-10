@@ -18,14 +18,14 @@ pub(in crate::opaque::sumcheck) enum SetupProductSource<F: Field> {
     Owned(Arc<[F]>),
     /// Extension seam: a table that a committed source retains.
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     Retained(Arc<dyn RetainedSetupTable<F>>),
     #[cfg(test)]
     Table(Vec<F>),
 }
 
 /// A setup table owned elsewhere, such as the source of a committed prefix.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub(in crate::opaque::sumcheck) trait RetainedSetupTable<F>:
     Send + Sync
 {
@@ -37,7 +37,7 @@ impl<F: Field> SetupProductSource<F> {
         match self {
             Self::Expanded(setup) => setup.shared_matrix().as_field_slice(),
             Self::Owned(table) => table,
-            #[cfg(feature = "labinius-trinomial")]
+            #[cfg(feature = "binary")]
             Self::Retained(table) => table.coefficients(),
             #[cfg(test)]
             Self::Table(table) => table,
@@ -158,7 +158,7 @@ where
 
     /// One-coefficient product of `source` and block-structured weights. The
     /// source must be zero outside the live blocks.
-    #[cfg_attr(not(feature = "labinius-trinomial"), allow(dead_code))]
+    #[cfg_attr(not(feature = "binary"), allow(dead_code))]
     pub(in crate::opaque::sumcheck) fn structured(
         source: SetupProductSource<F>,
         weights: Box<dyn StructuredSetupWeights<E>>,

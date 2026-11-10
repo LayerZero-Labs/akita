@@ -57,7 +57,7 @@ pub use relation_layout::{
     RelationGroupRows, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
     RelationWitnessGeometry,
 };
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use relation_polynomial::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
 pub use relation_polynomial::{RelationPolynomial, RelationPolynomialKind};
 pub use ring_dims::{

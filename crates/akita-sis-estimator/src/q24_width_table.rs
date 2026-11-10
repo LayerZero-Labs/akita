@@ -1,5 +1,5 @@
 //! Reproducible q24 width certificates and fixed-width quantum audit cells for
-//! the binary-source commitment ring.
+//! the binary commitment ring.
 //!
 //! This module is offline evidence, not a runtime admission path: no catalog
 //! or protocol reads it.
@@ -19,7 +19,7 @@ use crate::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Exact q24 commitment profile, available only with `labinius-sis`.
+/// Exact q24 commitment profile, available only with `binary`.
 pub const PROFILE: AkitaModulusProfileId = AkitaModulusProfileId::Q24Minus2523807;
 /// Source-comparison bounds for weights 46, 64 and 77 at diameter 4095.
 pub const BOUNDS: [u64; 3] = [1_506_960, 2_096_640, 2_522_520];

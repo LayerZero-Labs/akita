@@ -4,7 +4,7 @@ use crate::opaque::owned::{CommitmentHandle, CommittedSource};
 use crate::{CpuBackend, DensePoly};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_params::GroupCommitPhaseParams;
-use akita_types::binary_source::OrdinaryNativeRootPlan;
+use akita_types::binary::OrdinaryNativeRootPlan;
 use jolt_field::{Ext2, ExtField, Prime64Offset59 as F, Ring, Zero};
 use std::sync::Arc;
 type E = Ext2<F>;

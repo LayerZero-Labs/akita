@@ -7,7 +7,7 @@ use akita_algebra::ring::trinomial::{
 use akita_algebra::MinusTrinomial;
 use akita_challenges::{Challenges, FoldChallengeDistribution, SparseChallenge};
 use akita_params::binary_setup::BinaryFieldProfile;
-use akita_types::binary_source::{
+use akita_types::binary::{
     binary_ordinary_profile_fixture, binary_public_digit_commitment, binary_root_matrix,
     binary_word_manifest_fixture, BinaryRootPublic, OrdinaryNativeRootPlan, PrimeGroupClaim,
     PrimePlaneClaim, PrimePlaneManifest, BINARY_SOURCE_Q,

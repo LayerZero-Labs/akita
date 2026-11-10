@@ -312,7 +312,7 @@ where
     /// and bind it, and the remaining rounds run on its dense handover. The
     /// round messages equal those of [`Self::from_dense_relation`] on the
     /// zero-padded witness and the materialized weights.
-    #[cfg_attr(not(any(test, feature = "labinius-trinomial")), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "binary")), allow(dead_code))]
     pub(crate) fn from_structured_relation(
         witness: crate::sources::packed_digits::PackedSignedDigits,
         weights: Box<dyn relation_range_image::StructuredRelationWeights<E>>,
@@ -648,6 +648,6 @@ where
 #[path = "stage_sessions_dense_tests.rs"]
 mod stage_sessions_dense_tests;
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 #[path = "native_session.rs"]
 mod native_session;

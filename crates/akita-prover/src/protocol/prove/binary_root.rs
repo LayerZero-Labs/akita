@@ -4,7 +4,7 @@ use akita_params::{
     DigitRangePlan, FlatBooleanDomain, GrindingSite, NextWitnessBindingPolicy,
     SetupContributionMode,
 };
-use akita_types::binary_source::{
+use akita_types::binary::{
     binary_projection_values, binary_root_batch_challenges, binary_root_challenges,
     binary_root_p64_batch_challenges, binary_root_statement, BinaryProjectionRequest,
     BinaryProjectionRows, BinaryProjectionWitness, BinaryRootPublic,
@@ -120,7 +120,7 @@ where
                 proof_session,
                 &context.for_group(0),
                 handles.first().ok_or(AkitaError::InvalidProof)?,
-                &akita_types::binary_source::BinaryFieldSwitchSourceRequest {
+                &akita_types::binary::BinaryFieldSwitchSourceRequest {
                     manifest: manifest.as_ref().clone(),
                     polynomial: *claim.polynomial(),
                 },
@@ -149,7 +149,7 @@ where
         ordinary_profile,
     )?;
 
-    let request = akita_types::binary_source::BinaryRootWitnessRequest {
+    let request = akita_types::binary::BinaryRootWitnessRequest {
         manifest: manifest.as_ref().clone(),
         claim: terminal,
         prime: prime.clone(),
@@ -348,7 +348,9 @@ where
         &payload,
         &d_payload,
         ordinary_claim,
-        Some(akita_types::binary_source::BinaryAOperand::new::<Cfg::Field>(&witness_a.matrix)),
+        Some(akita_types::binary::BinaryAOperand::new::<Cfg::Field>(
+            &witness_a.matrix,
+        )),
     )?;
     drop(witness_a);
     let authentication = public.authentication_batches(&batches)?.map(<[_]>::to_vec);
@@ -402,8 +404,8 @@ where
         AkitaError::InvalidInput("binary root typed prefix was not prepared".into())
     })?;
     let phase = tracing::info_span!("binary_root_stage3_layout").entered();
-    let typed = akita_types::binary_source::BinaryTypedPrefix::from_plan(manifest, public.plan())?;
-    let product = akita_types::binary_source::BinaryAProduct::new(
+    let typed = akita_types::binary::BinaryTypedPrefix::from_plan(manifest, public.plan())?;
+    let product = akita_types::binary::BinaryAProduct::new(
         public.plan(),
         &rho,
         &stage2.challenges,

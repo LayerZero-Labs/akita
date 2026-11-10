@@ -26,10 +26,10 @@ default = ["transcript-keccak"]
 parallel = ["dep:rayon"]
 transcript-blake2b = ["akita-params/transcript-blake2b"]
 transcript-keccak = ["akita-params/transcript-keccak"]
-# Offline binary-source width tables. They never touch a transcript, but
+# Offline binary width tables. They never touch a transcript, but
 # `akita-params` links one, so the tables build on the workspace default
 # backend. No crate forwards this feature.
-labinius-sis = ["transcript-keccak", "akita-params/labinius-sis"]
+binary = ["transcript-keccak", "akita-params/binary"]
 
 [[bench]]
 name = "fixed_infinity"
@@ -41,11 +41,11 @@ harness = false
 
 [[example]]
 name = "q24_infinity_width_table"
-required-features = ["labinius-sis"]
+required-features = ["binary"]
 
 [[test]]
 name = "q24_width_table"
-required-features = ["labinius-sis"]
+required-features = ["binary"]
 
 [lints]
 workspace = true

@@ -2,8 +2,8 @@
 
 /// Extension seam: binary source contracts
 /// ([tracking issue](https://github.com/LayerZero-Labs/akita/issues/285)).
-#[cfg(feature = "labinius-trinomial")]
-pub mod binary_source;
+#[cfg(feature = "binary")]
+pub mod binary;
 mod eor_sites;
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -13,7 +13,7 @@ mod l2_sites;
 pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 mod relation_bridge;
 pub mod setup_contribution;
 mod stage1_sites;
@@ -91,9 +91,9 @@ pub(crate) use proof::{
     FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof, SetupSumcheckProof,
     TerminalLevelProof,
 };
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use relation_bridge::{RelationCoefficientLayout, RelationCoefficientRole, TrinomialSign};
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use relation_bridge::{RelationPolynomial, RelationPolynomialKind};
 pub use setup_contribution::{
     checked_slice, ensure_setup_envelope, factor_aligned_role_tensors, project_role_tensors,
@@ -101,7 +101,7 @@ pub use setup_contribution::{
     PhysicalBSetupPlan, PhysicalBWeightSegment, PhysicalBWeightTerm, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionGroupPlan, SetupContributionPlan,
 };
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub use setup_contribution::{
     PreparedTrinomialASetupWeights, TrinomialASetupView, TrinomialResponseLayout,
 };
@@ -140,8 +140,8 @@ pub use setup_contribution::{
     materialize_reduced_role_tensor_weights, prepare_reduced_role_coefficient_state,
     PreparedCoefficientFunctional, ReducedRoleCoefficientState, SetupIndexWeightMle,
 };
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub mod native_root_relation;
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 pub mod root_repacking;
 pub mod setup_claims;

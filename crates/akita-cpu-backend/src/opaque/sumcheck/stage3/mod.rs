@@ -7,15 +7,15 @@
 
 #[cfg(test)]
 mod factored_tests;
-#[cfg(all(test, feature = "labinius-trinomial"))]
+#[cfg(all(test, feature = "binary"))]
 pub(crate) mod p64_root_transcript_tests;
-#[cfg(all(test, feature = "labinius-trinomial"))]
+#[cfg(all(test, feature = "binary"))]
 mod p64_transcript_tests;
 pub(super) mod product_table;
 #[cfg(test)]
 mod session_tests;
 pub(crate) mod structured;
-#[cfg(all(test, feature = "labinius-trinomial"))]
+#[cfg(all(test, feature = "binary"))]
 mod structured_tests;
 pub(super) mod utils;
 
@@ -216,7 +216,7 @@ where
     /// Extension seam: run the factored one-coefficient product on the
     /// committed typed prefix, with its weight kept in its live blocks.
     /// <https://github.com/LayerZero-Labs/akita/issues/285>.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     fn begin_typed_stage3(
         &self,
         request: akita_prover::backend::TypedStage3Request<
@@ -315,12 +315,12 @@ where
 }
 
 /// The table of a committed setup prefix, read in place.
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 struct CommittedSetupTable<F: Field + CanonicalEncoding, E: Field>(
     Arc<crate::opaque::owned::CommittedSource<F, E>>,
 );
 
-#[cfg(feature = "labinius-trinomial")]
+#[cfg(feature = "binary")]
 impl<F: Field + CanonicalEncoding, E: Field> product_table::RetainedSetupTable<F>
     for CommittedSetupTable<F, E>
 {

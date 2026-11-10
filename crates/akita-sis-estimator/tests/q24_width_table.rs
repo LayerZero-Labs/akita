@@ -1,4 +1,4 @@
-#![cfg(feature = "labinius-sis")]
+#![cfg(feature = "binary")]
 
 use akita_sis_estimator::{q24_width_table as q24, AkitaModulusProfileId, SisSecurityPolicy};
 

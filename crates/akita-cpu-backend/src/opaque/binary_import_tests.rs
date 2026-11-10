@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::binary_source::{BinaryCommitmentProfiles, BinaryIndexMap};
+use akita_types::binary::{BinaryCommitmentProfiles, BinaryIndexMap};
 
 fn descriptor(width: usize, logical_len: usize) -> BinarySourceDescriptor {
     BinarySourceDescriptor::new(

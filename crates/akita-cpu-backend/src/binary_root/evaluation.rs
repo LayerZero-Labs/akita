@@ -8,7 +8,7 @@ use akita_algebra::ring::trinomial::{
 use akita_algebra::PlusTrinomial;
 use akita_challenges::Challenges;
 use akita_error::{checked, AkitaError};
-use akita_types::binary_source::{
+use akita_types::binary::{
     binary_scalar_challenges, binary_scalar_lift, BinaryEvaluationBounds, BinarySourceDescriptor,
     BinaryTerminalClaim, BINARY_PARITY_CARRY_DIGITS, BINARY_VALUE_CARRY_DIGITS,
 };
@@ -203,7 +203,7 @@ impl BinaryEvaluationWitness {
                     scalar_rows.push(values);
                 }
             }
-            let product = crate::kernels::binary_source::weighted_integer_convolution::binary_weighted_integer_convolution(
+            let product = crate::kernels::binary::weighted_integer_convolution::binary_weighted_integer_convolution(
                 &row_weights,
                 &scalar_rows,
             )?;

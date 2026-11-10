@@ -17,7 +17,7 @@ use akita_algebra::ring::trinomial::image::{Q24Image, Q24};
 use akita_algebra::{TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots};
 use akita_challenges::{Challenges, FoldChallengeDistribution};
 use akita_error::{checked, AkitaError};
-use akita_types::binary_source::{BinaryQuotientBounds, BinarySourceDescriptor};
+use akita_types::binary::{BinaryQuotientBounds, BinarySourceDescriptor};
 use jolt_field::solinas::parallel::*;
 
 /// q24 and the largest admitted primes below `2^28` and `2^27`.

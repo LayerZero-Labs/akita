@@ -239,7 +239,7 @@ where
     /// The weights keep their structured families; the backend chooses how
     /// to serve them to its rounds.
     /// Sparse negative-binary weights optionally add per-address `w(w+1)` predicates.
-    #[cfg(feature = "labinius-trinomial")]
+    #[cfg(feature = "binary")]
     #[allow(clippy::too_many_arguments)]
     fn begin_root_relation(
         &self,
