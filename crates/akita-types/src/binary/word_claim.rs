@@ -6,6 +6,8 @@ use akita_error::{checked, AkitaError};
 
 use super::BinarySourceDescriptor;
 
+const WORD_TAG: &[u8] = b"AkitaBinaryWord\x01";
+
 /// One logical word MLE evaluation, in canonical low-degree-first H encodings.
 ///
 /// H is GF(2^128), with modulus `X^128 + X^7 + X^2 + X + 1`.
@@ -51,8 +53,7 @@ impl BinaryWordClaim {
     }
 
     pub fn validate(&self, descriptor: &BinarySourceDescriptor) -> Result<(), AkitaError> {
-        let split = descriptor.index_map().claim_variable_split();
-        let expected = checked::sum([split.intra_carrier, split.carrier_address])
+        let expected = word_point_len(descriptor)
             .ok_or_else(|| AkitaError::InvalidInput("binary word point size overflow".into()))?;
         if !descriptor.polynomials().contains(&self.polynomial) || self.point.len() != expected {
             return Err(AkitaError::InvalidInput(
@@ -64,7 +65,7 @@ impl BinaryWordClaim {
 
     /// Sole order-zero encoding, binding the identifier, point arity and value.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = b"AkitaBinaryWord\x01".to_vec();
+        let mut bytes = WORD_TAG.to_vec();
         bytes.extend_from_slice(&self.polynomial);
         bytes.extend_from_slice(&(self.point.len() as u64).to_le_bytes());
         for coordinate in &self.point {
@@ -72,6 +73,39 @@ impl BinaryWordClaim {
         }
         bytes.extend_from_slice(&self.value);
         bytes
+    }
+
+    /// Decode one self-delimiting word record within a larger statement.
+    pub(super) fn read_from(
+        descriptor: &BinarySourceDescriptor,
+        reader: &mut &[u8],
+    ) -> Result<Self, akita_serialization::SerializationError> {
+        use akita_serialization::SerializationError;
+        use std::io::Read;
+        let bad = || SerializationError::InvalidData("noncanonical binary word claim".into());
+        *reader = reader.strip_prefix(WORD_TAG).ok_or_else(bad)?;
+        let mut polynomial = [0; 32];
+        reader.read_exact(&mut polynomial)?;
+        let mut count = [0; 8];
+        reader.read_exact(&mut count)?;
+        let count = usize::try_from(u64::from_le_bytes(count)).map_err(|_| bad())?;
+        if word_point_len(descriptor) != Some(count)
+            || checked::sum([count, 1])
+                .and_then(|n| checked::product([n, 16]))
+                .is_none_or(|size| size > reader.len())
+        {
+            return Err(bad());
+        }
+        let mut point = Vec::new();
+        point.try_reserve_exact(count).map_err(|_| bad())?;
+        for _ in 0..count {
+            let mut coordinate = [0; 16];
+            reader.read_exact(&mut coordinate)?;
+            point.push(coordinate);
+        }
+        let mut value = [0; 16];
+        reader.read_exact(&mut value)?;
+        Self::new(descriptor, polynomial, point, value).map_err(|_| bad())
     }
 
     /// Carrier-address point, after removing the descriptor's word-slot axes.
@@ -153,6 +187,11 @@ impl BinaryWordClaim {
             },
         ))
     }
+}
+
+fn word_point_len(descriptor: &BinarySourceDescriptor) -> Option<usize> {
+    let split = descriptor.index_map().claim_variable_split();
+    checked::sum([split.intra_carrier, split.carrier_address])
 }
 
 fn decode(bytes: &[u8; 16]) -> BinaryField128 {

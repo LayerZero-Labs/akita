@@ -1,3 +1,4 @@
+use super::prime_encoding::{append_claim, read_claim};
 use super::BinarySourceDescriptor;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::{checked, AkitaError};
@@ -140,10 +141,20 @@ impl PrimeGroupClaim {
         descriptor: &BinarySourceDescriptor,
         field: BinaryFieldProfile,
     ) -> Result<(), AkitaError> {
-        let arity = checked::ceil_log2(descriptor.index_map().padded_carriers())
-            .and_then(|n| checked::sum([n, 8]))
-            .ok_or(AkitaError::InvalidProof)?;
-        if self.evaluations.is_empty() || self.evaluations.len() > descriptor.polynomials().len() {
+        self.validate_shape(
+            prime_point_arity(descriptor)?,
+            descriptor.polynomials().len(),
+            field,
+        )
+    }
+
+    pub(super) fn validate_shape(
+        &self,
+        arity: usize,
+        owners: usize,
+        field: BinaryFieldProfile,
+    ) -> Result<(), AkitaError> {
+        if self.evaluations.is_empty() || self.evaluations.len() > owners {
             return Err(AkitaError::InvalidInput("invalid prime value count".into()));
         }
         if self.point.len() != arity {
@@ -154,14 +165,14 @@ impl PrimeGroupClaim {
         if self.point.iter().any(|x| !x.validate(field)) {
             return Err(AkitaError::InvalidInput("noncanonical prime point".into()));
         }
-        let mut owners = std::collections::BTreeSet::new();
+        let mut seen = std::collections::BTreeSet::new();
         for claim in &self.evaluations {
-            if claim.polynomial >= descriptor.polynomials().len() || !claim.value.validate(field) {
+            if claim.polynomial >= owners || !claim.value.validate(field) {
                 return Err(AkitaError::InvalidInput(
                     "invalid prime owner or value".into(),
                 ));
             }
-            if !owners.insert(claim.polynomial) {
+            if !seen.insert(claim.polynomial) {
                 return Err(AkitaError::InvalidInput(
                     "duplicate prime polynomial value".into(),
                 ));
@@ -242,51 +253,23 @@ impl PrimePlaneManifest {
         bytes: &[u8],
     ) -> Result<Self, akita_serialization::SerializationError> {
         use akita_serialization::SerializationError;
-        use std::io::{Cursor, Read};
         let bad = || SerializationError::InvalidData("noncanonical prime manifest".into());
         let tag: &[u8] = match field {
             BinaryFieldProfile::P128 => b"AkitaPrimePlanes\x02",
             BinaryFieldProfile::P64 => b"AkitaPrimePlanes/p64\x04",
         };
-        let mut reader = Cursor::new(bytes.strip_prefix(tag).ok_or_else(bad)?);
-        let read_u64 = |reader: &mut Cursor<&[u8]>| -> Result<u64, SerializationError> {
-            let mut bytes = [0; 8];
-            reader.read_exact(&mut bytes)?;
-            Ok(u64::from_le_bytes(bytes))
-        };
-        let arity = checked::ceil_log2(source.index_map().padded_carriers())
-            .and_then(|n| checked::sum([n, 8]))
-            .ok_or_else(bad)?;
-        let count = usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?;
-        if count != 0 && count != arity {
-            return Err(bad());
-        }
-        let read_element =
-            |reader: &mut Cursor<&[u8]>| -> Result<PrimeClaimValue, SerializationError> {
-                if field == BinaryFieldProfile::P128 {
-                    let mut bytes = [0; 16];
-                    reader.read_exact(&mut bytes)?;
-                    Ok(u128::from_le_bytes(bytes).into())
-                } else {
-                    Ok([u128::from(read_u64(reader)?), u128::from(read_u64(reader)?)].into())
-                }
-            };
-        let mut point = Vec::with_capacity(count);
-        for _ in 0..count {
-            point.push(read_element(&mut reader)?);
-        }
-        let claims = usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?;
-        if claims > source.polynomials().len() || ((claims == 0) != (count == 0)) {
-            return Err(bad());
-        }
-        let mut evaluations = Vec::with_capacity(claims);
-        for _ in 0..claims {
-            evaluations.push(PrimePlaneClaim {
-                polynomial: usize::try_from(read_u64(&mut reader)?).map_err(|_| bad())?,
-                value: read_element(&mut reader)?,
-            });
-        }
-        let claim = (claims != 0).then_some(PrimeGroupClaim { point, evaluations });
+        let mut reader = bytes.strip_prefix(tag).ok_or_else(bad)?;
+        let claim = read_claim(
+            &mut reader,
+            field,
+            prime_point_arity(source).map_err(|_| bad())?,
+            source.polynomials().len(),
+            None,
+        )
+        .map_err(|error| match error {
+            SerializationError::InvalidData(_) => bad(),
+            error => error,
+        })?;
         let manifest = Self::with_field_profile(source, claim, field).map_err(|_| bad())?;
         if manifest.canonical_bytes() != bytes {
             return Err(bad());
@@ -300,33 +283,15 @@ impl PrimePlaneManifest {
             BinaryFieldProfile::P128 => b"AkitaPrimePlanes\x02".to_vec(),
             BinaryFieldProfile::P64 => b"AkitaPrimePlanes/p64\x04".to_vec(),
         };
-        let coordinate_bytes = match self.field {
-            BinaryFieldProfile::P128 => 16,
-            BinaryFieldProfile::P64 => 8,
-        };
-        let point = self
-            .claim
-            .as_ref()
-            .map_or(&[][..], |claim| claim.point.as_slice());
-        bytes.extend_from_slice(&(point.len() as u64).to_le_bytes());
-        for coordinate in point {
-            for coordinate in coordinate.coordinates() {
-                bytes.extend_from_slice(&coordinate.to_le_bytes()[..coordinate_bytes]);
-            }
-        }
-        let claims = self
-            .claim
-            .as_ref()
-            .map_or(&[][..], |claim| claim.evaluations.as_slice());
-        bytes.extend_from_slice(&(claims.len() as u64).to_le_bytes());
-        for claim in claims {
-            bytes.extend_from_slice(&(claim.polynomial as u64).to_le_bytes());
-            for value in claim.value.coordinates() {
-                bytes.extend_from_slice(&value.to_le_bytes()[..coordinate_bytes]);
-            }
-        }
+        append_claim(&mut bytes, self.claim.as_ref(), self.field);
         bytes
     }
+}
+
+pub(super) fn prime_point_arity(source: &BinarySourceDescriptor) -> Result<usize, AkitaError> {
+    checked::ceil_log2(source.index_map().padded_carriers())
+        .and_then(|n| checked::sum([n, 8]))
+        .ok_or(AkitaError::InvalidProof)
 }
 
 /// Native E64 tensor of the public claim point, before coordinate extraction.
@@ -389,3 +354,7 @@ fn tensor<E: Field>(
 #[cfg(test)]
 #[path = "prime_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "prime_compatibility_tests.rs"]
+mod compatibility_tests;

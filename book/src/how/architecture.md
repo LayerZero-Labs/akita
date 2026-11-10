@@ -81,6 +81,31 @@ Its round count and planned size do not depend on the successor witness length.
 The [setup offloading chapter](./setup-offloading.md) follows this path from
 offline planning through the recursive verifier handoff.
 
+## Explicit two-point statements
+
+With the `binary` feature, `TwoPointClaimManifest` validates an ordered pair of
+**distinct E64 points**. Each element of either point has two base coordinates,
+`c0` and `c1`; those coordinates are not separate opening points. Each owner
+read at both points therefore contributes four evaluation planes, ordered by
+point, owner, then coordinate.
+
+`TwoPointGroupClaim::Binary` carries a mandatory word claim alongside both
+prime readings. The word claim is validated only against the source descriptor;
+the opening that consumes the statement must bind it to the prime owners and
+points. `TwoPointGroupClaim::Ordinary` reads every polynomial slot of a frozen
+P64 ordinary profile (ordinary groups use balanced digits); exact integer ranges
+remain the caller's contract. Constructors sort owners within each point and
+reject duplicates, wrong dimensions and noncanonical residues. Decoding also
+rejects unsorted wire owners, missing records and trailing bytes.
+
+These types encode statements only. They do not select a prover or verifier
+path and cannot be passed to the existing single-point opening driver. The
+existing one-point statement bytes remain unchanged. The source descriptor or
+profile and commitment identity must be bound separately at integration.
+
+Implementation and boundary tests: `crates/akita-types/src/binary/two_point.rs`
+and `crates/akita-types/src/binary/two_point_tests.rs`.
+
 ## Prover consumer boundary
 
 Protocol orchestration passes private state as associated handles through
