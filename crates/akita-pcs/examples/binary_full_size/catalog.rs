@@ -55,11 +55,8 @@ pub(super) fn plan(
         prime.planes().len(),
     )?;
     if let Some(ordinary) = ordinary {
-        // Ordinary segments precede the P64 quotient segment.
-        let segment = canonical
-            .quotient_segment()
-            .unwrap_or(canonical.repacking().segments().len());
-        canonical = canonical.with_ordinary(&OrdinaryNativeRootPlan::new(ordinary, segment)?)?;
+        let ordinary = OrdinaryNativeRootPlan::new(ordinary, canonical.ordinary_first_segment())?;
+        canonical = canonical.with_ordinary(&ordinary)?;
     }
     let mut live = 0usize;
     let mut physical = 0usize;

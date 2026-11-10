@@ -343,9 +343,7 @@ where
         }
         let ordinary_plan = akita_types::binary::OrdinaryNativeRootPlan::new(
             *profile,
-            expected_plan
-                .quotient_segment()
-                .unwrap_or(expected_plan.repacking().segments().len()),
+            expected_plan.ordinary_first_segment(),
         )?;
         expected_plan = expected_plan.with_ordinary(&ordinary_plan)?;
         let ordinary_context = context.for_group(1);
