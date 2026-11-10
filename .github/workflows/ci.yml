@@ -68,7 +68,9 @@ jobs:
       - name: Clippy (response model diagnostics)
         run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,response-model-diagnostics,transcript-keccak -- -D warnings
       - name: Rust version declarations
-        run: scripts/check-rust-version.sh
+        run: |
+          scripts/test-check-rust-version.sh
+          scripts/check-rust-version.sh
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier

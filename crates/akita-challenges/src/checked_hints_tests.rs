@@ -1,6 +1,6 @@
 use crate::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, SparseChallengeConfig};
 use akita_error::AkitaError;
-use jolt_field::{Prime128OffsetA7F7 as F, Ring};
+use jolt_field::{Prime128Offset6A23801F as F, Ring};
 struct Message(Vec<u8>);
 impl FoldDraw for Message {
     fn draw_message<T>(
@@ -116,14 +116,14 @@ const MESSAGE: &[u8] = include_bytes!("../testdata/checked_hint_message.bin");
 const HINTS: &[u8] = include_bytes!("../testdata/checked_hint_codes.bin");
 const EXPECTED: [[u128; 3]; 2] = [
     [
-        21047448056705363178069556910279857643u128,
-        144914228926386039077961049912358002305u128,
-        245957718946870999808281516405739222931u128,
+        40544065902344454397037691921406379642u128,
+        148436690822564892961175858852520944655u128,
+        270681290819792749220569730658856053299u128,
     ],
     [
-        133644585919095421225984225732961269912u128,
-        18391955382529900038727915850102110357u128,
-        326177195468316913605597546064481269453u128,
+        91275897945596252000852350436102186229u128,
+        92391489860930062131740839803393956855u128,
+        161059714558888528037951495051275981897u128,
     ],
 ];
 
