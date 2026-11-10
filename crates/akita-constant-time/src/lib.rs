@@ -9,7 +9,12 @@
 //! Rayon work spawned within the closure stays in this pool. Work explicitly
 //! sent to another pool or to a new OS thread does not inherit this protection.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+// Register access and the checked OS query are confined to this module.
+#[cfg(target_arch = "aarch64")]
+#[allow(unsafe_code)]
+mod dit;
 
 use std::cell::Cell;
 use std::fmt;
@@ -18,15 +23,14 @@ use std::sync::{Arc, OnceLock};
 use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 
 #[cfg(target_arch = "aarch64")]
-static DIT: std::sync::LazyLock<aarch64_dit::Dit> =
-    std::sync::LazyLock::new(aarch64_dit::Dit::init);
+static DIT: std::sync::LazyLock<dit::Dit> = std::sync::LazyLock::new(dit::Dit::init);
 
 thread_local! {
     static SECRET_WORKER: Cell<bool> = const { Cell::new(false) };
 
     // Each guard stays on the worker that enabled it, until that worker exits.
     #[cfg(target_arch = "aarch64")]
-    static WORKER_DIT: Cell<Option<aarch64_dit::Guard<'static>>> = const { Cell::new(None) };
+    static WORKER_DIT: Cell<Option<dit::Guard>> = const { Cell::new(None) };
 }
 
 static SECRET_POOL: OnceLock<Result<ThreadPool, PoolError>> = OnceLock::new();
@@ -40,14 +44,15 @@ const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 pub enum TimingMode {
     /// Workers enable Arm FEAT_DIT for their lifetime.
     Enforced,
-    /// No supported userspace timing mode exists on this CPU or architecture.
+    /// No supported userspace timing mode was detected on this host.
     Unavailable,
 }
 
 /// Reports the CPU mode used by [`run_secret`], without initializing the pool.
 ///
 /// FEAT_DIT hosts, including Apple M-series Macs, report [`TimingMode::Enforced`].
-/// Other hosts, including x86, report [`TimingMode::Unavailable`]. This is a
+/// Other hosts, including x86, report [`TimingMode::Unavailable`], as do hosts
+/// where capability detection fails. Detection is cached on first use. This is a
 /// capability report, not a claim about the calling thread's current DIT bit.
 pub fn status() -> TimingMode {
     #[cfg(target_arch = "aarch64")]
@@ -104,12 +109,16 @@ pub fn run_secret<T: Send>(op: impl FnOnce() -> T + Send) -> Result<T, PoolError
         return Ok(op());
     }
     let pool = SECRET_POOL.get_or_init(|| {
+        // Resolve capability detection on the caller. Worker startup only uses
+        // this cached result and cannot panic because an OS query failed.
+        #[cfg(target_arch = "aarch64")]
+        let dit = &*DIT;
         let pool = ThreadPoolBuilder::new()
             .stack_size(WORKER_STACK_BYTES)
             .thread_name(|index| format!("akita-secret-{index}"))
-            .start_handler(|_| {
+            .start_handler(move |_| {
                 #[cfg(target_arch = "aarch64")]
-                WORKER_DIT.set(Some(DIT.enable()));
+                WORKER_DIT.set(Some(dit.enable()));
                 SECRET_WORKER.set(true);
             })
             .build()

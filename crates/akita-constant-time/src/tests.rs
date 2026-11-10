@@ -158,3 +158,69 @@ fn initialization_ignores_caller_pool_width() -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn dit_guards_restore_the_calling_threads_previous_state() {
+    let dit = super::dit::Dit::init();
+    let before = dit.is_enabled();
+    {
+        let _outer = dit.enable();
+        assert_eq!(dit.is_enabled(), dit.is_supported());
+        {
+            let _inner = dit.enable();
+            assert_eq!(dit.is_enabled(), dit.is_supported());
+        }
+        assert_eq!(dit.is_enabled(), dit.is_supported());
+    }
+    assert_eq!(dit.is_enabled(), before);
+}
+
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+#[test]
+fn failed_feature_query_is_cached_without_panicking() -> Result<(), Box<dyn Error>> {
+    const CHILD: &str = "AKITA_CONSTANT_TIME_FAILED_QUERY_CHILD";
+    if let Ok(first_call) = std::env::var(CHILD) {
+        if first_call == "status" {
+            assert_eq!(status(), TimingMode::Unavailable);
+        }
+        for _ in 0..3 {
+            let workers =
+                run_secret(|| rayon::broadcast(|_| (in_secret_pool(), dit_enabled(), status())))?;
+            assert_eq!(workers.len(), 2);
+            for (inside, enabled, mode) in workers {
+                assert!(inside);
+                assert!(!enabled);
+                assert_eq!(mode, TimingMode::Unavailable);
+            }
+            assert_eq!(status(), TimingMode::Unavailable);
+            assert!(!in_secret_pool());
+        }
+        assert_eq!(
+            super::dit::DETECTION_ATTEMPTS.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            super::dit::DETECTION_THREAD.get(),
+            Some(&thread::current().id())
+        );
+    } else {
+        for first_call in ["status", "run_secret"] {
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "tests::failed_feature_query_is_cached_without_panicking",
+                ])
+                .env(CHILD, first_call)
+                .env("RAYON_NUM_THREADS", "2")
+                .output()?;
+            assert!(
+                output.status.success(),
+                "child failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    Ok(())
+}

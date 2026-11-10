@@ -12,8 +12,8 @@ readme = "../../README.md"
 rayon = { workspace = true }
 tracing = { workspace = true }
 
-[target.'cfg(target_arch = "aarch64")'.dependencies]
-aarch64-dit = { workspace = true }
+[target.'cfg(all(target_arch = "aarch64", target_vendor = "apple"))'.dependencies]
+libc = "0.2"
 
 [lints]
 workspace = true
