@@ -511,9 +511,6 @@ fn p64_public_batch_layout_has_coefficients_and_no_projection_messages() {
                         )
                         .is_err());
                 }
-                assert!(BinaryFieldProfile::P64
-                    .admit_root(field_profile.modulus(), 2)
-                    .is_err());
             } else {
                 assert_eq!(plan.quotient_segment(), None);
             }

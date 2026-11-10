@@ -282,45 +282,6 @@ mod binary_source_tests {
     }
 
     #[test]
-    fn p64_binary_root_statement_rejects_on_both_channels() {
-        use akita_transcript::{new_prover_channel, new_verifier_channel};
-        type F = Prime64Offset59;
-        type E = jolt_field::Ext2<F>;
-        let manifest = manifest(BinaryFieldProfile::P64, 2, 1);
-        let prime = crate::binary::PrimePlaneManifest::with_field_profile(
-            manifest.descriptor(),
-            None,
-            BinaryFieldProfile::P128,
-        )
-        .unwrap();
-        let payload = vec![F::zero(); manifest.payload_coefficients().unwrap()];
-        let mut prover = new_prover_channel(b"p64-admission");
-        let mut verifier = new_verifier_channel(b"p64-admission", &[]);
-        let prove = crate::binary::binary_root_statement::<F, E, _>(
-            &mut prover,
-            &manifest,
-            None,
-            &prime,
-            &payload,
-            None,
-        );
-        let verify = crate::binary::binary_root_statement::<F, E, _>(
-            &mut verifier,
-            &manifest,
-            None,
-            &prime,
-            &payload,
-            None,
-        );
-        for result in [prove, verify] {
-            assert!(
-                matches!(result, Err(AkitaError::UnsupportedSchedule(message))
-                if message.contains("not yet supported"))
-            );
-        }
-    }
-
-    #[test]
     fn e64_uses_nonresidue_two_and_two_canonical_base_coordinates() {
         type F = Prime64Offset59;
         type E = jolt_field::Ext2<F>;

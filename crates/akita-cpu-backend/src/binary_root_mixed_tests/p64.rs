@@ -1,4 +1,4 @@
-//! Fixture-sized P64 prime and mixed roots, below public schedule admission.
+//! Fixture-sized P64 prime and mixed roots driven directly through the backend.
 use crate::binary_root::{prime_plane_digits, BinaryRootRelation};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::trinomial::{
