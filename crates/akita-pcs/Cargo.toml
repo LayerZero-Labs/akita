@@ -18,6 +18,8 @@ keywords = [
   "post-quantum",
 ]
 categories = ["cryptography", "algorithms"]
+# One integration test binary; see tests/integration.rs.
+autotests = false
 include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
@@ -155,6 +157,10 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 libc = "0.2"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [[example]]
 name = "profile"
