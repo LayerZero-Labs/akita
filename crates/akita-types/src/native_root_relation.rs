@@ -20,10 +20,12 @@ use crate::root_repacking::RootCoefficientRepacking;
 mod binary_commitment;
 mod embedding;
 mod profiles;
+mod ranges;
 mod structured;
 pub use binary_commitment::binary_commitment_group;
 pub(crate) use profiles::ProfileBuilder;
 pub use profiles::RootWeightProfiles;
+pub use ranges::RootWeightRanges;
 pub(crate) use structured::{
     weigh_units, RootEq, RootWeightFamily, SegmentLanes, TranslatedLanes, WEIGH_BATCH,
 };

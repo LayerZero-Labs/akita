@@ -12,7 +12,7 @@ use super::{
     BinaryAOperand, BinaryRootPublic, BinaryRootWitnessPlan, OrdinaryNativeRootBatch,
     OrdinaryNativeRootClaim, OrdinaryNativeRootPlan, PrimeClaims, ResearchTerminalMode,
 };
-use crate::native_root_relation::NativeRootWeights;
+use crate::native_root_relation::{NativeRootWeights, RootWeightRanges};
 use crate::opening_claims::GroupClaimKind;
 use crate::root_repacking::RootCoefficientRepacking;
 use crate::{AkitaExpandedSetup, AkitaSetupDescriptor};
@@ -310,14 +310,14 @@ impl ResearchBatchPlan {
 
     /// One independent coefficient per original row, including every K equation.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    pub fn relation<F: Field + CanonicalEncoding, E: Field>(
+    pub fn relation<'batches, F: Field + CanonicalEncoding, E: Field>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         binary: &[ResearchBinaryRelation<'_, E>],
         ordinary: &[OrdinaryNativeRootClaim<'_, E>],
         alpha: E,
-        batches: &[E],
-    ) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError> {
+        batches: &'batches [E],
+    ) -> Result<(NativeRootWeights<E>, RootWeightRanges<'batches, E>), AkitaError> {
         let ordinary_count = if self.mode == ResearchTerminalMode::E64TwoPointS11a {
             8
         } else {
@@ -442,25 +442,9 @@ impl ResearchBatchPlan {
             return Err(AkitaError::InvalidProof);
         }
         _span.record("ranges", tasks.len());
-        let mut negative = Vec::new();
-        negative
-            .try_reserve_exact(negative_count)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        // Range and challenge slices have equal lengths. Indexed extension
-        // retains the original segment/element/digit/coefficient pairing.
-        for (addresses, coefficients) in tasks {
-            #[cfg(feature = "parallel")]
-            negative.par_extend(
-                addresses
-                    .into_par_iter()
-                    .zip(coefficients.par_iter().copied()),
-            );
-            #[cfg(not(feature = "parallel"))]
-            negative.extend(addresses.zip(coefficients.iter().copied()));
-        }
         Ok((
             NativeRootWeights::concatenate(self.domain_len, components)?,
-            negative,
+            RootWeightRanges::new(self.domain_len, tasks)?,
         ))
     }
 }

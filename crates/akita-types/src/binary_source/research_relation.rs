@@ -1,7 +1,7 @@
 //! Assemble the direct research relation from the same public compiler on both sides.
 
 use super::{BinaryAOperand, OrdinaryNativeRootClaim, ResearchBatchPlan, ResearchBinaryRelation};
-use crate::native_root_relation::NativeRootWeights;
+use crate::native_root_relation::{NativeRootWeights, RootWeightRanges};
 use crate::{AkitaExpandedSetup, OpeningClaims};
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 /// Bind payload slices to their exact local row ranges; no row is rebated or omitted.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn research_batch_relation<F, E, C>(
+pub fn research_batch_relation<'batches, F, E, C>(
     plan: &ResearchBatchPlan,
     setup: &AkitaExpandedSetup<F>,
     claims: &OpeningClaims<'_, E, C>,
@@ -20,9 +20,9 @@ pub fn research_batch_relation<F, E, C>(
     d_payload: &[F],
     matrices: &[Arc<Vec<Vec<[i128; 648]>>>],
     alpha: E,
-    batches: &[E],
+    batches: &'batches [E],
     payload: impl for<'a> Fn(&'a C) -> &'a [F],
-) -> Result<(NativeRootWeights<E>, Vec<(usize, E)>), AkitaError>
+) -> Result<(NativeRootWeights<E>, RootWeightRanges<'batches, E>), AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,

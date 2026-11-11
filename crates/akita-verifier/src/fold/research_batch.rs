@@ -15,7 +15,6 @@ use akita_types::binary_source::{
     binary_root_challenges, binary_root_matrix, binary_root_p64_batch_challenges,
     research_batch_relation, research_batch_statement, ResearchBatchPlan,
 };
-use akita_types::native_root_relation::NativeRootWeights;
 use akita_types::opening_claims::GroupClaimKind;
 use akita_types::{
     AkitaVerifierSetup, CommittedGroup, DigitRangeEqualityPoint, FpExtEncoding, GrindingReplay,
@@ -158,8 +157,7 @@ where
         akita_sumcheck::SumcheckShape::new(num_vars, 3)?,
     )?;
     let witness_eval = akita_types::stage2_w_eval::<F, E, _>(grinding, 0, E::zero())?;
-    let negative_weight = NativeRootWeights::new(plan.domain_len(), negative, E::zero())?
-        .evaluate(&replay.challenges)?;
+    let negative_weight = negative.evaluate(&replay.challenges)?;
     let expected = relation.evaluate(&replay.challenges)? * witness_eval
         + (negative_weight + gamma * EqPolynomial::mle(&stage1.point, &replay.challenges)?)
             * witness_eval

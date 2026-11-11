@@ -293,7 +293,8 @@ where
         &batches,
         |commitment| commitment.rows().coeffs(),
     )?;
-    compile.record("negative_count", negative.len());
+    compile.record("negative_count", negative.term_count());
+    let negative = negative.into_terms()?;
     let relation_claim = relation.claim();
     drop(compile);
     drop(stage);
