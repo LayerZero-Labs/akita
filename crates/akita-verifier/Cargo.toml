@@ -74,6 +74,7 @@ zk = [
 # readout per sum on a field-inline guest). The scan-path kernels are unchanged.
 setup-sop-structured = []
 parallel = [
+  "jolt-poly/parallel",
   "dep:rayon",
   "akita-algebra/parallel",
   "jolt-crypto/parallel",

@@ -364,6 +364,7 @@ name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
  "akita-error",
+ "akita-transcript",
  "jolt-algebra",
  "jolt-transcript",
  "sha3",

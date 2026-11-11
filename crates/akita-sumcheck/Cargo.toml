@@ -23,7 +23,7 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-fe
 default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
-parallel = ["akita-algebra/parallel", "jolt-algebra/parallel"]
+parallel = ["jolt-poly/parallel", "akita-algebra/parallel", "jolt-algebra/parallel"]
 
 [lints]
 workspace = true

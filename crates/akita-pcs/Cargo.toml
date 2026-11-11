@@ -74,6 +74,7 @@ setup-sop-structured = ["akita-verifier/setup-sop-structured"]
 # Keccak-256 instead of SHA3-256 digests; see `akita-transcript`.
 keccak256-digests = ["akita-transcript/keccak256-digests"]
 parallel = [
+  "jolt-poly/parallel",
   "dep:rayon",
   "akita-algebra/parallel",
   "jolt-algebra/parallel",

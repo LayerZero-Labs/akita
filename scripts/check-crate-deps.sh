@@ -32,6 +32,9 @@ else
     akita-verifier)
       forbidden=(akita-planner akita-prover akita-cpu-backend akita-pcs akita-metal jolt-metal)
       ;;
+    akita-types)
+      forbidden=(akita-planner akita-config akita-prover akita-verifier akita-cpu-backend akita-setup akita-pcs)
+      ;;
     akita-prover)
       forbidden=(akita-planner akita-verifier akita-cpu-backend akita-setup akita-pcs akita-metal jolt-metal)
       ;;
@@ -113,6 +116,28 @@ if [ "${pkg}" = "akita-verifier" ]; then
 fi
 
 echo "${pkg} dependency hygiene check passed"
+
+if [[ "${pkg}" = "akita-verifier" || "${pkg}" = "akita-types" ]]; then
+  # Tests may use OS entropy. Check only production edges, including every
+  # verifier-side feature with each mutually exclusive transcript backend.
+  # akita-types/prover intentionally enables entropy and is not a verifier mode.
+  verifier_features="$(cargo metadata --format-version 1 --no-deps | jq -r --arg pkg "${pkg}" '
+    .packages[] | select(.name == $pkg) | .features | keys
+    | map(select(. != "default" and . != "prover" and (startswith("transcript-") | not)))
+    | join(",")')"
+  for mode in default transcript-keccak transcript-blake2b; do
+    feature_args=(--locked)
+    if [[ "${mode}" != default ]]; then
+      feature_args=(--locked --no-default-features --features "${verifier_features:+${verifier_features},}${mode}")
+    fi
+    normal_tree="$(cargo tree --color never -p "${pkg}" --edges normal --prefix none "${feature_args[@]}")"
+    if grep -E '^(getrandom|chacha20) ' <<<"${normal_tree}"; then
+      echo "${pkg} reaches prover entropy or ChaCha through normal edges (${mode})" >&2
+      exit 1
+    fi
+  done
+  echo "${pkg} verifier entropy closure check passed"
+fi
 
 if [ "${pkg}" = "akita-prover" ]; then
   # Kernel contracts are backend-neutral under every feature combination.

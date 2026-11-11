@@ -102,6 +102,7 @@ labinius-trinomial = [
   "akita-types/labinius-trinomial",
 ]
 parallel = [
+  "jolt-poly/parallel",
   "akita-prover/parallel",
   "dep:rayon",
   "jolt-crypto/parallel",

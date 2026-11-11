@@ -78,6 +78,7 @@ zk = [
   "akita-config/zk",
 ]
 parallel = [
+  "jolt-poly/parallel",
   "jolt-crypto/parallel",
   "jolt-algebra/parallel",
   "akita-sumcheck/parallel",

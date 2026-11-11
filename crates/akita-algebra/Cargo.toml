@@ -50,7 +50,7 @@ required-features = ["labinius-trinomial"]
 [features]
 default = []
 labinius-binary = []
-parallel = ["dep:rayon", "jolt-algebra/parallel"]
+parallel = ["jolt-poly/parallel", "dep:rayon", "jolt-algebra/parallel"]
 labinius-trinomial = []
 
 tensor-no-carry = []

@@ -54,6 +54,7 @@ transcript-keccak = [
   "akita-params/transcript-keccak",
 ]
 parallel = [
+  "jolt-poly/parallel",
   "akita-params/parallel",
   "akita-algebra/parallel",
   "jolt-algebra/parallel",

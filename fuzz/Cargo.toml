@@ -22,6 +22,7 @@ end-to-end = []
 # Rayon-parallel production paths. Build with `--no-default-features` for the
 # sequential feature graph, which CI otherwise never executes.
 parallel = [
+  "jolt-poly/parallel",
   "akita-cpu-backend/parallel",
   "akita-pcs/parallel",
   "akita-prover/parallel",
