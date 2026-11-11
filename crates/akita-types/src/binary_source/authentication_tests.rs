@@ -92,9 +92,17 @@ fn check_equality_kernels<E: Field>(modulus: SetupStreamModulus, extension: E) {
                 let actual = family.evaluate(&eq).unwrap();
                 // The pre-batching evaluator's scalar column reader, using
                 // the same low-kernel/dot arithmetic and column order.
-                SCALAR_SETUP.with(|flag| flag.set(true));
-                let scalar = family.evaluate(&eq);
-                SCALAR_SETUP.with(|flag| flag.set(false));
+                let scalar = {
+                    struct Reset(bool);
+                    impl Drop for Reset {
+                        fn drop(&mut self) {
+                            SCALAR_SETUP.with(|flag| flag.set(self.0));
+                        }
+                    }
+                    let _reset = Reset(SCALAR_SETUP.with(|flag| flag.get()));
+                    SCALAR_SETUP.with(|flag| flag.set(true));
+                    family.evaluate(&eq)
+                };
                 assert_eq!(actual, scalar.unwrap());
                 assert_eq!(actual, expected);
             }
