@@ -123,7 +123,7 @@ every dimension and the terminal image becomes 256 bytes:
 | q64 | D=64: 1,024 / 30,230 | D=32: 128 / 1,200 |
 | q32 | D=128: 512 / 15,115 | D=64: 64 / 600 |
 
-The compression policy becomes `NegativeBinaryTwoMapExactMonotoneCutover8KiBV4`
+The compression policy becomes `NegativeBinaryTwoMapExactMonotoneCutover8KiB`
 (tag `4`). Every compressed payload costs 128 more proof bytes.
 
 Recomposition rebuilds each B or D ring element from whole first-map digit

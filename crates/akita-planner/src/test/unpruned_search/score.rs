@@ -61,7 +61,7 @@ pub(super) fn score(
         .first_direct_setup_field_len
         .map(|natural_len| padded_setup_prefix_len(natural_len.get()));
     let objective = match policy.selection_policy {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork => {
             OracleObjective::SetupFirst {
                 first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
                     AkitaError::InvalidSetup(
@@ -73,7 +73,7 @@ pub(super) fn score(
                 setup_field_elements: candidate.setup_field_elements,
             }
         }
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork => {
             OracleObjective::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity: padded_setup_prefix_len(candidate.setup_field_elements),
                 first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
@@ -91,7 +91,7 @@ pub(super) fn score(
     Ok(OracleScore {
         objective,
         legacy_root_output_witness_len: (policy.selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork)
             .then(|| {
                 candidate
                     .folds

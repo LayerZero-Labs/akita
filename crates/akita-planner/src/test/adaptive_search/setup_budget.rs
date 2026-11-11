@@ -29,7 +29,7 @@ fn assert_budgeted_search_matches_unbounded_pass<C: akita_config::CommitmentConf
     assert_eq!(policy.setup_field_budget, None, "{label}");
     assert_eq!(
         policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork,
         "{label}"
     );
     let mut unbounded = policy;
@@ -83,7 +83,7 @@ fn padded_setup_budget_passes_match_one_unbounded_pass() {
     type Recursive = RecursiveCommitmentConfig<OneHot>;
 
     // Restricted domains from the unpruned-oracle fixtures. The oracle itself
-    // does not model setup-prefix offloading, so it cannot rank V6 schedules.
+    // does not model setup-prefix offloading, so it cannot rank schedules with setup-prefix offloading.
     let oracle_domains = [
         RingDimensionSearchDomain::new([
             CommitmentRingDims::uniform(64),
@@ -139,7 +139,7 @@ fn padded_setup_budget_passes_match_one_unbounded_pass() {
     }
 }
 
-// The drift job already checks every V6 catalog row against artifacts that the
+// The drift job already checks every recursive setup catalog row against artifacts that the
 // unbudgeted search produced. Only the unbounded comparison passes are slow.
 #[test]
 #[ignore = "plans three catalog rows without a setup budget; takes about 100 s"]

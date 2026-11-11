@@ -35,11 +35,11 @@ pub(crate) const MAX_TRUSTED_CATALOG_ROWS: usize = 1 << 14;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ScheduleCatalogArtifactRowV1 {
+struct ScheduleCatalogArtifactRow {
     schedule: FoldSchedule,
 }
 
-impl ScheduleCatalogArtifactRowV1 {
+impl ScheduleCatalogArtifactRow {
     fn into_profile_and_schedule(
         self,
     ) -> Result<(CommittedGroupBatchProfile, FoldSchedule), AkitaError> {
@@ -62,7 +62,7 @@ impl ScheduleCatalogArtifactRowV1 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ScheduleCatalogArtifactEnvelopeV1<'a> {
+struct ScheduleCatalogArtifactEnvelope<'a> {
     magic: [u8; 8],
     version: u32,
     protocol_epoch: u32,
@@ -266,7 +266,7 @@ impl ValidatedScheduleCatalog {
                     "failed to encode trusted schedule family name: {error}"
                 ))
             })?;
-        let envelope: ScheduleCatalogArtifactEnvelopeV1 =
+        let envelope: ScheduleCatalogArtifactEnvelope =
             serde_json::from_slice(bytes).map_err(|error| {
                 AkitaError::InvalidSetup(format!("invalid schedule artifact envelope: {error}"))
             })?;
@@ -304,8 +304,8 @@ impl ValidatedScheduleCatalog {
             .into_iter()
             .enumerate()
             .map(|(index, raw_row)| {
-                let row: ScheduleCatalogArtifactRowV1 = serde_json::from_str(raw_row.get())
-                    .map_err(|error| {
+                let row: ScheduleCatalogArtifactRow =
+                    serde_json::from_str(raw_row.get()).map_err(|error| {
                         AkitaError::InvalidSetup(format!(
                             "invalid schedule artifact row {index}: {error}"
                         ))
@@ -326,7 +326,7 @@ impl ValidatedScheduleCatalog {
     /// Encode this validated catalog as the canonical versioned artifact.
     pub fn to_artifact_bytes(&self) -> Result<Vec<u8>, AkitaError> {
         self.validate_complete()?;
-        let artifact = ScheduleCatalogArtifactRefV1 {
+        let artifact = ScheduleCatalogArtifactRef {
             magic: ARTIFACT_MAGIC,
             version: ARTIFACT_VERSION,
             protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
@@ -470,7 +470,7 @@ impl ValidatedScheduleCatalog {
 }
 
 #[derive(Serialize)]
-struct ScheduleCatalogArtifactRefV1<'a> {
+struct ScheduleCatalogArtifactRef<'a> {
     magic: [u8; 8],
     version: u32,
     protocol_epoch: u32,
@@ -491,7 +491,7 @@ impl Serialize for ScheduleCatalogArtifactRowsRef<'_> {
     {
         let mut rows = serializer.serialize_seq(Some(self.rows.len()))?;
         for (index, row) in self.rows.iter().enumerate() {
-            let artifact_row = ScheduleCatalogArtifactRowRefV1 {
+            let artifact_row = ScheduleCatalogArtifactRowRef {
                 schedule: row.schedule(),
             };
             encoded_row_token_with_limit(&artifact_row, self.row_byte_limit).map_err(|error| {
@@ -506,7 +506,7 @@ impl Serialize for ScheduleCatalogArtifactRowsRef<'_> {
 }
 
 #[derive(Serialize)]
-struct ScheduleCatalogArtifactRowRefV1<'a> {
+struct ScheduleCatalogArtifactRowRef<'a> {
     #[serde(serialize_with = "serialize_artifact_schedule")]
     schedule: &'a FoldSchedule,
 }
@@ -943,7 +943,7 @@ mod tests {
             "fp64_dense",
             "fp64_onehot",
             "A0",
-            "family-name.v1",
+            "family-name.catalog",
         ] {
             validate_family_name(family_name).expect("shipped-style family name must be valid");
             let token = serde_json::to_string(family_name).expect("family name is serializable");

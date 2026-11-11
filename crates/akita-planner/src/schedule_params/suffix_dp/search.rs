@@ -192,7 +192,7 @@ fn price_planned_fold_candidate(
             });
     if matches!(
         ctx.policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork
     ) && matches!(search.guide_scope, Some(GuideScope::CompleteRoot))
         && guide.is_some_and(|(lower_bound, _)| {
             complete_root_setup_bound_is_strictly_worse(lower_bound, &frontiers.projected)
@@ -382,9 +382,10 @@ pub(crate) fn derive_selected_suffix_schedule(
     let memo_key = state.memo_key(policy);
     // Memo entries are objective optima under the context's setup budget,
     // independent of any root query-prefix restriction. The setup budget is
-    // not part of the memo key, so a memo must not outlive its budget; the V6
-    // planner builds a fresh memo for every budget pass. A restricted caller
-    // reuses the cached result when it fits its exact root prefix; otherwise
+    // not part of the memo key, so a memo must not outlive its budget. The
+    // setup-envelope planner builds a fresh memo for every budget pass. A
+    // restricted caller reuses the cached result when it fits its exact root
+    // prefix; otherwise
     // it recomputes this state locally and never replaces the primary entry.
     if let QuerySearch::Restricted(prefix) = &query_search {
         let cached = memo.get(&memo_key).cloned().map_or_else(

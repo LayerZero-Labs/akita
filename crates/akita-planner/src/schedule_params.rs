@@ -587,16 +587,16 @@ pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 
 /// Retain the root slices that reach the smallest padded first-direct setup.
 ///
-/// Under [`crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5`]
+/// Under [`crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork`]
 /// the root is the first direct edge, so its padded setup capacity is the
 /// leading objective coordinate and a root slice with a larger capacity can
 /// never win. Equal-capacity slices can still differ in proof size or the
 /// complete descriptor, so all of them are kept.
 ///
 /// No other level or objective admits this pruning. A recursive fold's setup
-/// enters the V5 objective only as a tie-breaker after proof bytes and work,
-/// and the V6 envelope is the maximum over every level, so another level can
-/// tie it while a larger-setup slice wins on proof bytes.
+/// enters the direct-setup objective only as a tie-breaker after proof bytes
+/// and work, and the setup envelope is the maximum over every level, so another
+/// level can tie it while a larger-setup slice wins on proof bytes.
 pub(crate) fn prune_root_slices_by_first_direct_setup(
     policy: &PlannerPolicy,
     opening_layout: &OpeningClaimsLayout,
@@ -604,7 +604,7 @@ pub(crate) fn prune_root_slices_by_first_direct_setup(
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
     if candidates.len() <= 1
         || policy.selection_policy
-            != crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5
+            != crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork
     {
         return Ok(candidates);
     }

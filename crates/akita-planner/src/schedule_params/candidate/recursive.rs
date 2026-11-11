@@ -793,7 +793,7 @@ pub(crate) fn derive_terminal_candidates(
     };
     let retain_setup_frontier = matches!(
         request.policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork
     );
     let modeled = if retain_setup_frontier {
         all_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?

@@ -155,9 +155,9 @@ mod tests {
         const INNER_WIDTH: usize = 6_400_000_000_001;
         const RING_DIMENSION: usize = 64;
         let policy = PlannerPolicy {
-            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
+            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -213,9 +213,9 @@ mod tests {
         const RING_DIMENSION: usize = 128;
         const RESPONSE_CAP: u128 = 1 << 20;
         let policy = PlannerPolicy {
-            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
+            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,

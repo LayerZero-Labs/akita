@@ -13,7 +13,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
     // The recursive selection rule returns the independent searches as they
     // are. Only the direct rule runs the combined search, so test both.
     let direct_policy = PlannerPolicy {
-        selection_policy: crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+        selection_policy: crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork,
         ..recursive_policy
     };
     let opening = PlannerOpeningCandidate::evaluation_trace(
