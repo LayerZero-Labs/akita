@@ -392,7 +392,9 @@ impl<E: Field> DigitAuthenticationWeights<E> {
             kernel.field_kernel_into(window, &mut reduced)?;
             low_kernels.push(reduced);
         }
-        let column_sum = |column: usize| -> Result<E, AkitaError> {
+        let column_sum = |column: usize,
+                          prepared: Option<&[[u128; BINARY_DIGIT_COMMITMENT_DEGREE]]>|
+         -> Result<E, AkitaError> {
             let mut addresses = [0usize; BINARY_DIGIT_COMMITMENT_DEGREE];
             let filled = self.column_addresses(column, &mut addresses)?;
             let addresses = addresses.get(..filled).ok_or(AkitaError::InvalidProof)?;
@@ -426,8 +428,14 @@ impl<E: Field> DigitAuthenticationWeights<E> {
             };
             let mut sum = E::zero();
             if self.label.rank == 2 {
-                let entries = digit_commitment_setup_column(&self.seed, self.label, column)?;
-                for (&batch, entry) in self.row_batches.iter().zip(&entries) {
+                let scalar;
+                let entries = if let Some(entries) = prepared {
+                    entries
+                } else {
+                    scalar = digit_commitment_setup_column(&self.seed, self.label, column)?;
+                    &scalar
+                };
+                for (&batch, entry) in self.row_batches.iter().zip(entries) {
                     sum += batch
                         * entry
                             .iter()
@@ -452,10 +460,42 @@ impl<E: Field> DigitAuthenticationWeights<E> {
             }
             Ok(scale * sum)
         };
-        let sums = cfg_into_iter!(0..self.columns)
-            .map(column_sum)
+        let use_four =
+            self.label.rank == 2 && self.label.modulus == SetupStreamModulus::Prime64Offset59;
+        #[cfg(test)]
+        let use_four = use_four && !tests::SCALAR_SETUP.with(std::cell::Cell::get);
+        let sums = cfg_into_iter!(0..self.columns.div_ceil(2))
+            .map(|pair| {
+                let column = pair * 2;
+                let has_second = column + 1 < self.columns;
+                let entries = if has_second && use_four {
+                    let first = u64::try_from(column).map_err(|_| AkitaError::InvalidProof)?;
+                    let second = u64::try_from(column + 1).map_err(|_| AkitaError::InvalidProof)?;
+                    let labels =
+                        [(0, first), (1, first), (0, second), (1, second)].map(|(row, column)| {
+                            SetupStreamLabel {
+                                row,
+                                column,
+                                ..self.label
+                            }
+                        });
+                    Some(TypedSetupStream::p64_four_entries(&self.seed, labels)?)
+                } else {
+                    None
+                };
+                let first = column_sum(column, entries.as_ref().map(|rows| &rows[..2]))?;
+                let second = if has_second {
+                    column_sum(column + 1, entries.as_ref().map(|rows| &rows[2..]))?
+                } else {
+                    E::zero()
+                };
+                Ok([first, second])
+            })
             .collect::<Result<Vec<_>, AkitaError>>()?;
-        Ok(sums.into_iter().fold(E::zero(), |sum, column| sum + column))
+        Ok(sums
+            .into_iter()
+            .flatten()
+            .fold(E::zero(), |sum, column| sum + column))
     }
 
     /// `sum_r batch_r * K(M_rc) = K(sum_r batch_r * M_rc)`, the weights of

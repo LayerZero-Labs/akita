@@ -4,6 +4,10 @@ use jolt_field::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
 
+std::thread_local! {
+    pub(super) static SCALAR_SETUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn check_equality_kernels<E: Field>(modulus: SetupStreamModulus, extension: E) {
     use crate::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
     use akita_params::{RelationPolynomial, RelationRowGeometry};
@@ -12,7 +16,12 @@ fn check_equality_kernels<E: Field>(modulus: SetupStreamModulus, extension: E) {
     // and a final partial column crossing two differently sized segments.
     for shape in [
         vec![(8, 1)],
+        vec![(64, 1)],
         vec![(64, 2)],
+        vec![(64, 3)],
+        vec![(64, 4)],
+        vec![(64, 5)],
+        vec![(64, 7)],
         vec![(648, 2)],
         vec![(162, 9)],
         vec![(648, 1), (162, 1), (8, 1)],
@@ -79,10 +88,15 @@ fn check_equality_kernels<E: Field>(modulus: SetupStreamModulus, extension: E) {
                     .iter()
                     .zip(akita_algebra::eq_poly::EqPolynomial::evals(&point).unwrap())
                     .fold(E::zero(), |sum, (&weight, eq)| sum + weight * eq);
-                assert_eq!(
-                    family.evaluate(&RootEq::new(&point).unwrap()).unwrap(),
-                    expected
-                );
+                let eq = RootEq::new(&point).unwrap();
+                let actual = family.evaluate(&eq).unwrap();
+                // The pre-batching evaluator's scalar column reader, using
+                // the same low-kernel/dot arithmetic and column order.
+                SCALAR_SETUP.with(|flag| flag.set(true));
+                let scalar = family.evaluate(&eq);
+                SCALAR_SETUP.with(|flag| flag.set(false));
+                assert_eq!(actual, scalar.unwrap());
+                assert_eq!(actual, expected);
             }
         }
         if family.table_len > 64 {
@@ -95,7 +109,7 @@ fn check_equality_kernels<E: Field>(modulus: SetupStreamModulus, extension: E) {
 }
 
 #[test]
-fn authentication_low_kernels_preserve_p128_and_extension_evaluations() {
+fn authentication_four_way_matches_scalar_evaluator() {
     use jolt_field::{Ext2, ExtField, Prime64Offset59 as Base};
     check_equality_kernels(SetupStreamModulus::Prime128Offset275, F::from_u64(17));
     check_equality_kernels::<Ext2<Base>>(

@@ -249,8 +249,15 @@ struct ShakeSqueeze {
 }
 
 impl ShakeSqueeze {
-    /// Absorb a message shorter than one block, pad it and permute.
+    #[cfg(test)]
     fn new(message: &[&[u8]]) -> Result<Self, AkitaError> {
+        let mut squeeze = Self::unpermuted(message)?;
+        squeeze.permute();
+        Ok(squeeze)
+    }
+
+    /// Absorb and pad a message shorter than one block, before permutation.
+    fn unpermuted(message: &[&[u8]]) -> Result<Self, AkitaError> {
         let length = message.iter().map(|part| part.len()).sum::<usize>();
         let mut padded = [0u8; SHAKE256_RATE];
         if length >= SHAKE256_RATE {
@@ -274,14 +281,12 @@ impl ShakeSqueeze {
             word.copy_from_slice(bytes);
             *lane = u64::from_le_bytes(word);
         }
-        let mut squeeze = Self {
+        Ok(Self {
             keccak: Keccak::new(),
             state,
             block: [0; SHAKE256_RATE],
             read: 0,
-        };
-        squeeze.permute();
-        Ok(squeeze)
+        })
     }
 
     fn permute(&mut self) {
@@ -446,6 +451,12 @@ impl TypedSetupStream {
     /// # Errors
     /// Rejects invalid rank, row, degree or coefficient modulus.
     pub fn new(seed: &[u8; 32], label: SetupStreamLabel) -> Result<Self, AkitaError> {
+        let mut stream = Self::unpermuted(seed, label)?;
+        stream.squeeze.permute();
+        Ok(stream)
+    }
+
+    fn unpermuted(seed: &[u8; 32], label: SetupStreamLabel) -> Result<Self, AkitaError> {
         if label.rank == 0
             || label.row >= label.rank
             || label.degree == 0
@@ -458,7 +469,7 @@ impl TypedSetupStream {
             SetupStreamModulus::Prime128Offset275 => (2u8, BINARY_SETUP_P, 0),
             SetupStreamModulus::Prime64Offset59 => (3u8, u128::from(BINARY_SETUP_P64), 0),
         };
-        let squeeze = ShakeSqueeze::new(&[
+        let squeeze = ShakeSqueeze::unpermuted(&[
             label.modulus.domain(),
             seed,
             &[label.role as u8],
@@ -516,17 +527,7 @@ impl TypedSetupStream {
                 "non-p64 setup stream requested as p64".into(),
             ));
         }
-        for _ in 0..MAX_REJECTION_ATTEMPTS {
-            let mut bytes = [0u8; 8];
-            self.squeeze.read(&mut bytes);
-            let candidate = u64::from_le_bytes(bytes);
-            if candidate < BINARY_SETUP_P64 {
-                return Ok(candidate);
-            }
-        }
-        Err(AkitaError::InvalidSetup(
-            "p64 setup rejection budget exhausted".into(),
-        ))
+        sample_p64_from(|bytes| self.squeeze.read(bytes))
     }
 
     /// Draw a canonical residue in the selected prime, accepting candidates below it.
@@ -675,3 +676,19 @@ pub fn derive_centered_q_matrix(
 
 #[cfg(test)]
 mod tests;
+
+mod four_streams;
+
+fn sample_p64_from(mut read: impl FnMut(&mut [u8])) -> Result<u64, AkitaError> {
+    for _ in 0..MAX_REJECTION_ATTEMPTS {
+        let mut bytes = [0u8; 8];
+        read(&mut bytes);
+        let candidate = u64::from_le_bytes(bytes);
+        if candidate < BINARY_SETUP_P64 {
+            return Ok(candidate);
+        }
+    }
+    Err(AkitaError::InvalidSetup(
+        "p64 setup rejection budget exhausted".into(),
+    ))
+}

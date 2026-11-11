@@ -14,6 +14,8 @@ pub use dispatch::{
     validate_role_dims_for_field, ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
 pub mod golomb_rice;
+#[cfg(target_arch = "x86_64")]
+pub mod keccak_four_way;
 pub mod layout;
 #[cfg(feature = "labinius-trinomial")]
 pub mod ordinary_source;
