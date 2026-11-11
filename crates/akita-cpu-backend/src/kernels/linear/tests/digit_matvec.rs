@@ -48,9 +48,7 @@ fn mat_vec_mul_digits_i8_matches_num_digits_one_roundtrip() {
     let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let via_roundtrip = mat_vec_mul_i8_with_params_for_log_basis(
@@ -131,9 +129,7 @@ fn mat_vec_mul_i8_matches_direct_digits_on_block_parallel_path() {
     let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let via_roundtrip = mat_vec_mul_i8_with_params_for_log_basis(
@@ -217,9 +213,7 @@ fn mat_vec_mul_i8_roundtrip_matches_direct_digits_on_multi_tile_path() {
     let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let via_roundtrip = mat_vec_mul_i8_with_params_for_log_basis(
@@ -290,9 +284,7 @@ fn mat_vec_mul_i8_dense_fast_path_matches_generic_on_block_parallel_path() {
         ring_blocks.iter().map(Vec::as_slice).collect();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let generic = mat_vec_mul_i8_with_params_for_log_basis(
@@ -352,9 +344,7 @@ fn mat_vec_mul_i8_dense_single_row_matches_generic_on_block_parallel_path() {
         ring_blocks.iter().map(Vec::as_slice).collect();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let generic = mat_vec_mul_i8_dense_with_params_for_log_basis(
@@ -421,9 +411,7 @@ fn mat_vec_mul_i8_dense_three_rows_match_schoolbook_on_block_parallel_path() {
         ring_blocks.iter().map(Vec::as_slice).collect();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let generic = mat_vec_mul_i8_dense_with_params_for_log_basis(
@@ -479,9 +467,7 @@ fn mat_vec_mul_digits_i8_three_rows_match_schoolbook_on_block_parallel_path() {
     let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let generic = mat_vec_mul_digits_i8_with_params_for_log_basis::<
@@ -676,9 +662,7 @@ fn mat_vec_mul_digits_i8_sparse_batches_match_schoolbook() {
 
         let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
         match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-            ProtocolCrtNttParams::Q32(params)
-                if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-            {
+            ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
                 let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
                 let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
                 let expected = schoolbook_digit_mat_vec(&mat, &digit_blocks);
@@ -737,9 +721,7 @@ fn mat_vec_mul_digits_i8_sparse_ragged_tail_matches_schoolbook() {
     let block_slices = digit_blocks.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let expected = schoolbook_digit_mat_vec(&mat, &digit_blocks);
@@ -791,11 +773,7 @@ fn mat_vec_mul_digits_i8_ragged_sparse_batches_match_schoolbook() {
     let block_slices = blocks.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let expected = schoolbook_digit_mat_vec(&mat, &blocks);
     let params = match select_crt_ntt_params::<F, D>().unwrap() {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
-            params
-        }
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => params,
         _ => panic!("unexpected parameter family"),
     };
     let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
@@ -856,9 +834,7 @@ fn mat_vec_mul_i8_block_parallel_path_matches_predecomposed_digits() {
     let digit_block_slices = digit_blocks.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let block_path = mat_vec_mul_i8_with_params_for_log_basis(
@@ -941,9 +917,7 @@ fn mat_vec_mul_i8_matches_direct_digits_on_multi_tile_path() {
     let digit_block_slices = digit_blocks.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
     match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let via_roundtrip = mat_vec_mul_i8_with_params_for_log_basis(

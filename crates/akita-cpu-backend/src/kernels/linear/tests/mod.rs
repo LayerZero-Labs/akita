@@ -7,8 +7,8 @@ use super::{
 };
 use akita_params::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
-    crt_profile_selectable, prepare_ntt_cache, select_crt_ntt_params, CrtNttProfile, NttCacheMode,
-    PreparedNttCache, ProtocolCrtNttParams,
+    prepare_ntt_cache, select_crt_ntt_params, FieldCrtBases, NttCacheMode, PreparedNttCache,
+    ProtocolCrtNttParams,
 };
 use jolt_algebra::ntt::{
     tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES},

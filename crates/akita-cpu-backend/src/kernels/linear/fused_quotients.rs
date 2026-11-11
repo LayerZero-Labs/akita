@@ -519,22 +519,16 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
         }};
     }
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } =>
-        {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             run!(params)
         }
-        ProtocolCrtNttParams::Q64(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } =>
-        {
+        ProtocolCrtNttParams::Q64(params) if const { FieldCrtBases::<F>::Q64 } => {
             run!(params)
         }
-        ProtocolCrtNttParams::Q128(params)
-            if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } =>
-        {
+        ProtocolCrtNttParams::Q128(params) if const { FieldCrtBases::<F>::Q128 } => {
             run!(params)
         }
-        _ => Err(unselectable_crt_profile_error::<F>()),
+        _ => Err(FieldCrtBases::<F>::unselectable_base()),
     }
 }
 
@@ -805,17 +799,17 @@ fn fused_split_eq_quotients_with_digit_bound<F: Field + CanonicalEncoding, const
             )
         }};
     }
-    if const { crt_profile_selectable::<F>(CrtNttProfile::Q32) } {
+    if const { FieldCrtBases::<F>::Q32 } {
         if let (Some(neg), Some(cyc)) = (negacyclic_slot.q32_base(), cyclic_slot.q32_base()) {
             return run!(neg, cyc);
         }
     }
-    if const { crt_profile_selectable::<F>(CrtNttProfile::Q64) } {
+    if const { FieldCrtBases::<F>::Q64 } {
         if let (Some(neg), Some(cyc)) = (negacyclic_slot.q64_base(), cyclic_slot.q64_base()) {
             return run!(neg, cyc);
         }
     }
-    if const { crt_profile_selectable::<F>(CrtNttProfile::Q128) } {
+    if const { FieldCrtBases::<F>::Q128 } {
         if let (Some(neg), Some(cyc)) = (negacyclic_slot.q128_base(), cyclic_slot.q128_base()) {
             return run!(neg, cyc);
         }

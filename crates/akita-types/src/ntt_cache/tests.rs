@@ -190,7 +190,7 @@ fn dense_i8_exact_ifma52_requires_q128_tail_capacity() {
     ));
 }
 
-/// The selector returns the base its field's `crt_profile_selectable` predicates expect.
+/// The selector returns the base its field's `FieldCrtBases` predicates expect.
 /// Only a 32-bit modulus admits two bases: one above `Q32_MODULUS` selects Q64.
 fn assert_field_crt_bases_admit_selector<F: Field + CanonicalEncoding>(
     admitted: [bool; 3],
@@ -205,9 +205,9 @@ fn assert_field_crt_bases_admit_selector<F: Field + CanonicalEncoding>(
     assert_eq!(
         admitted,
         [
-            const { crt_profile_selectable::<F>(CrtNttProfile::Q32) },
-            const { crt_profile_selectable::<F>(CrtNttProfile::Q64) },
-            const { crt_profile_selectable::<F>(CrtNttProfile::Q128) },
+            const { FieldCrtBases::<F>::Q32 },
+            const { FieldCrtBases::<F>::Q64 },
+            const { FieldCrtBases::<F>::Q128 },
         ]
     );
 }
