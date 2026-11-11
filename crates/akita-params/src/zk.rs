@@ -606,7 +606,7 @@ pub struct DigitAlphabet {
 ///
 /// # Errors
 ///
-/// Returns an error for a zero ring dimension, an alphabet outside `1..=8`,
+/// Returns an error for a zero ring dimension, an alphabet outside `1..=6`,
 /// or an overflowing size.
 pub fn hiding_randomness_columns(
     image: ImageShape,

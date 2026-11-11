@@ -19,11 +19,21 @@ jolt-poly = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch =
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 
+[dev-dependencies]
+# Tests build standalone prover channels.
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false, features = [
+  "prover",
+] }
+
 [features]
 default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
-parallel = ["jolt-poly/parallel", "akita-algebra/parallel", "jolt-algebra/parallel"]
+parallel = [
+  "jolt-poly/parallel",
+  "akita-algebra/parallel",
+  "jolt-algebra/parallel",
+]
 
 [lints]
 workspace = true

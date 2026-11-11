@@ -188,3 +188,15 @@ fn transform_root_orders_cover_the_initial_tower() {
         }
     }
 }
+
+#[test]
+fn auxiliary_root_has_exact_order_17496() {
+    use super::TrinomialAuxiliary as A;
+    use jolt_algebra::fft::field_pow;
+    let root = A::from_u128_checked(<A as TrinomialField>::SMOOTH_OMEGA).expect("canonical root");
+    let order = <A as TrinomialField>::SMOOTH_SUBGROUP_ORDER as u64;
+    assert_eq!(order, 8 * 2_187);
+    assert_eq!(field_pow(root, order), A::one());
+    assert_ne!(field_pow(root, order / 2), A::one());
+    assert_ne!(field_pow(root, order / 3), A::one());
+}

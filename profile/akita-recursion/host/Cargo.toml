@@ -23,7 +23,7 @@ jolt-sdk = { git = "https://github.com/a16z/jolt", branch = "whiteout/preview", 
 # its own `cfg(feature = "guest-std")` at host compile time). Going through
 # `jolt-sdk/guest-std` would also pull `zeroos-runtime-musl` in for the
 # host build, which fails to link on macOS / non-musl platforms.
-jolt-sdk-macros = { git = "https://github.com/a16z/jolt", branch = "whiteout/preview", features = [
+jolt-sdk-macros = { git = "https://github.com/a16z/jolt", branch = "whiteout/preview", default-features = false, features = [
   "guest-std",
 ] }
 guest = { package = "akita-recursion-guest", path = "../guest", features = [

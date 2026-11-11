@@ -17,9 +17,10 @@ use rayon::prelude::*;
 
 use super::{internal, TrinomialAdjoint};
 use crate::trinomial::TrinomialModulus;
-use jolt_algebra::fft::{primitive_nth_root, FftWorkspace, SmoothDomain, SmoothFftField};
+use jolt_algebra::fft::{FftWorkspace, SmoothDomain};
 
 use crate::trinomial::TrinomialAuxiliary as Auxiliary;
+use crate::trinomial::TrinomialField;
 
 /// Per-worker transform buffers.
 struct Scratch {
@@ -92,7 +93,7 @@ impl<const D: usize, M: TrinomialModulus> TrinomialAdjoint<D, M> {
                 "integer adjoint coefficient exceeds its bound".into(),
             ));
         }
-        let root = primitive_nth_root::<Auxiliary>(length)
+        let root = Auxiliary::primitive_root(length)
             .map_err(|_| internal("integer adjoint auxiliary root"))?;
         let domain = SmoothDomain::new(root, length)
             .map_err(|_| internal("integer adjoint auxiliary domain"))?;

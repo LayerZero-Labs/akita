@@ -173,9 +173,20 @@ impl ClearChannel for VerifierChannel<'_> {
 
 /// Bind a versioned geometry header and little-endian `u32` residues.
 /// The header fixes the residue count, so fixed-size absorption is injective.
+///
+/// The digest only absorbs public bytes and draws one challenge, so it runs on
+/// a verifier sponge over an empty proof and needs no prover entropy. Its
+/// output equals the same absorption on a prover channel.
 pub fn matrix_digest(tagged_bytes: &[u8], residues: &[u32]) -> Result<[u8; 32], AkitaError> {
+    let channel = akita_transcript::new_verifier_channel(tagged_bytes, &[]);
+    matrix_digest_on(channel, residues)
+}
+
+fn matrix_digest_on<S: ProofChannel>(
+    mut channel: S,
+    residues: &[u32],
+) -> Result<[u8; 32], AkitaError> {
     const CHUNK: usize = 1 << 12;
-    let mut channel = akita_transcript::new_prover_channel(tagged_bytes);
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(CHUNK * size_of::<u32>())
@@ -190,6 +201,7 @@ pub fn matrix_digest(tagged_bytes: &[u8], residues: &[u32]) -> Result<[u8; 32], 
     challenge_block(&mut channel)
 }
 
+#[cfg(feature = "prover")]
 pub fn new_prover() -> ProverChannel {
     akita_transcript::new_prover_channel(b"akita/labinius/clear-binary-opening/v1")
 }
@@ -458,6 +470,7 @@ pub fn bind_root_context<S: ProofChannel>(
 const ROOT_SESSION: &[u8] = b"akita/labinius/root-reduction/v1";
 
 /// Standalone root session; separate from the clear-opening session domain.
+#[cfg(feature = "prover")]
 pub fn new_root_prover() -> ProverChannel {
     akita_transcript::new_prover_channel(ROOT_SESSION)
 }
@@ -564,5 +577,25 @@ impl<F: Field + CanonicalEncoding, E: ExtField<F> + ChallengeCodec> RootChalleng
     }
     fn finish_schedule(&mut self) -> Result<(), AkitaError> {
         self.cursor.finish()
+    }
+}
+
+#[cfg(all(test, feature = "prover"))]
+#[allow(clippy::unwrap_used)]
+mod matrix_digest_tests {
+    use super::{matrix_digest, matrix_digest_on};
+
+    #[test]
+    fn verifier_digest_matches_the_prover_channel() {
+        let header = b"akita/labinius/matrix-digest-test/v1";
+        for len in [0u32, 1, 4_095, 4_096, 4_097, 10_000] {
+            let residues: Vec<u32> = (0..len).map(|i| i.wrapping_mul(2_654_435_761)).collect();
+            let prover = akita_transcript::new_prover_channel(header);
+            assert_eq!(
+                matrix_digest(header, &residues).unwrap(),
+                matrix_digest_on(prover, &residues).unwrap(),
+                "length {len}"
+            );
+        }
     }
 }

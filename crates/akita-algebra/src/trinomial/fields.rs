@@ -1,13 +1,13 @@
 //! Coefficient fields of the trinomial transform and their smooth roots.
 
-use jolt_algebra::fft::{field_pow, SmoothFftField};
+use jolt_algebra::fft::field_pow;
 use jolt_algebra::{CanonicalEncoding, Ext2Config, Field, Fp64, FpExt2, PseudoMersenne, Ring};
 
 use super::TrinomialError;
 
 /// A coefficient field with a declared smooth multiplicative subgroup.
 ///
-/// Akita-local bridge for coefficient fields not yet covered by Jolt’s
+/// Akita-local bridge for coefficient fields not covered by Jolt’s
 /// `SmoothFftField`. The shared trait and field types are foreign, so the
 /// trinomial transform supplies their root configuration through this trait
 /// while using Jolt’s generic FFT implementation.
@@ -52,12 +52,15 @@ impl TrinomialField for jolt_algebra::Prime128Offset6A23801F {
 /// degree-162/486 scalar and degree-648 commitment transforms; the protocol
 /// field's 3^3 subgroup cannot replace it. Exact centered lifts below enforce
 /// the integer-convolution bound before mapping results into the proof field.
-/// The generic Jolt field also supplies its canonical smooth-FFT implementation.
 pub type TrinomialAuxiliary = jolt_algebra::Fp128<{ u128::MAX - 4_294_944_758 }>;
 
+// Jolt dropped its smooth-FFT configuration for this modulus when it retired
+// the field, so the subgroup is declared here. `2^3 * 3^7 = 17_496`; the
+// generator is `g^((p - 1) / 17_496)` for the smallest primitive root `g`,
+// as Jolt's former `SmoothFftField` impl recorded it.
 impl TrinomialField for TrinomialAuxiliary {
-    const SMOOTH_SUBGROUP_ORDER: usize = <Self as SmoothFftField>::SMOOTH_SUBGROUP_ORDER;
-    const SMOOTH_OMEGA: u128 = <Self as SmoothFftField>::SMOOTH_OMEGA;
+    const SMOOTH_SUBGROUP_ORDER: usize = 17_496;
+    const SMOOTH_OMEGA: u128 = 0x4e9f_650b_7003_d201_9945_e1da_c47c_8b18;
 }
 
 /// Modulus `2^64 - 23_703`, whose multiplicative group contains the
