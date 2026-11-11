@@ -73,13 +73,13 @@ dense_config!(
     "test_q128_offset275_dense"
 );
 dense_config!(
-    Offset275FieldWithA7f7Profile,
+    Offset275FieldWith6A23801FProfile,
     Prime128Offset275,
     Q128Offset6A23801F,
     "test_q128_offset275_field_6a23801f_profile"
 );
 dense_config!(
-    A7f7FieldWithOffset275Profile,
+    Offset6A23801FFieldWithOffset275Profile,
     fp128::Field,
     Q128Offset275,
     "test_q128_6a23801f_field_offset275_profile"
@@ -130,8 +130,8 @@ fn profiles_stay_bound_to_their_exact_modulus() {
     // Sharing table rows does not make the two 128-bit profiles
     // interchangeable: each one admits only its own field.
     for error in [
-        validate_config_policy::<Offset275FieldWithA7f7Profile>(CHUNKING).unwrap_err(),
-        validate_config_policy::<A7f7FieldWithOffset275Profile>(CHUNKING).unwrap_err(),
+        validate_config_policy::<Offset275FieldWith6A23801FProfile>(CHUNKING).unwrap_err(),
+        validate_config_policy::<Offset6A23801FFieldWithOffset275Profile>(CHUNKING).unwrap_err(),
     ] {
         assert!(
             error.to_string().contains("does not match field modulus"),
