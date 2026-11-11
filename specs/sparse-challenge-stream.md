@@ -756,8 +756,12 @@ unfiltered family is the case where the predicate always accepts. The
 operator-norm accepted distribution is unchanged. On the standard profile the
 squeezed message bytes drop from 57480 to 56536, about 7 Keccak permutations
 fewer; the fold proof-of-work difficulties are unchanged. The challenges and
-message lengths change, so this is a transcript change within the same
-protocol version stack.
+message lengths change. The `PROTOCOL_VERSION` doc lists the sparse-message
+codec and the pool rates among the values the version binds, so the revision
+moves `PROTOCOL_VERSION` from 8 to 9 and every `akita-pcs/.../v8` tag to `v9`.
+The two versions absorb different protocol tags, so a version mismatch shows
+up as a different tag rather than as a silent disagreement on fold
+challenges.
 
 ## Measured effect
 

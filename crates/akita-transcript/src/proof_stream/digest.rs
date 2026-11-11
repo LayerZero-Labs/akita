@@ -14,12 +14,12 @@ use super::{
 pub const FIELD_DIGEST_BYTES: usize = 32;
 
 /// Domain tag hashed ahead of the values of every [`field_digest`].
-const FIELD_DIGEST_TAG: [u8; TAG_BYTES] = protocol_tag(b"akita-pcs/field-digest/v8");
+const FIELD_DIGEST_TAG: [u8; TAG_BYTES] = protocol_tag(b"akita-pcs/field-digest/v9");
 
 /// Collision-resistant digest of the canonical encoding of `values`.
 ///
 /// The digest is [`jolt_transcript::DIGEST_HASH`] of the protocol tag
-/// `akita-pcs/field-digest/v8` followed by each value's canonical
+/// `akita-pcs/field-digest/v9` followed by each value's canonical
 /// little-endian bytes, the hash that
 /// commitment digests use and that the protocol tag names. It is computed
 /// outside any proof channel, so the prover can bind values the verifier only

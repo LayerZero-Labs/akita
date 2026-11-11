@@ -111,14 +111,14 @@ fn tags_are_the_padded_protocol_names() {
         assert_eq!(&tag[..name.len()], name.as_bytes());
         assert!(tag[name.len()..].iter().all(|&byte| byte == 0));
     };
-    assert_eq!(PROTOCOL_VERSION, 8);
+    assert_eq!(PROTOCOL_VERSION, 9);
     padded(
         &PROTOCOL_TAG,
         &format!("akita-pcs/transcript/v{PROTOCOL_VERSION}/{digest}"),
     );
-    padded(&STANDALONE_SESSION_TAG, "akita-pcs/standalone-session/v8");
-    padded(&COMMITMENT_DIGEST_TAG, "akita-pcs/commitment-digest/v8");
-    assert_eq!(&CONTEXT_DOMAIN[..27], b"akita-pcs/native-context/v8");
+    padded(&STANDALONE_SESSION_TAG, "akita-pcs/standalone-session/v9");
+    padded(&COMMITMENT_DIGEST_TAG, "akita-pcs/commitment-digest/v9");
+    assert_eq!(&CONTEXT_DOMAIN[..27], b"akita-pcs/native-context/v9");
 }
 
 /// The standalone session and an embedding caller's session reach different
@@ -479,13 +479,13 @@ fn transcript_has_a_known_answer() {
     // The protocol tag names the digest hash, so it changes every output.
     #[cfg(feature = "transcript-blake2b")]
     let expected = match DIGEST_HASH {
-        DigestHash::Sha3_256 => "[FpExt4 { coeffs: [Fp32(2078537693), Fp32(3820402426), Fp32(718280182), Fp32(1765994312)] }, FpExt4 { coeffs: [Fp32(1910168669), Fp32(3377925487), Fp32(3968304959), Fp32(357759526)] }] [250, 104, 138, 7, 199, 56, 28, 85, 254, 234, 61, 62, 140, 134, 28, 240, 47, 181, 8, 185, 61, 226, 128, 237, 214, 108, 14, 174, 68, 103, 47, 171]",
-        DigestHash::Keccak256 => "[FpExt4 { coeffs: [Fp32(811873273), Fp32(2718273516), Fp32(3402320926), Fp32(3699840647)] }, FpExt4 { coeffs: [Fp32(827200401), Fp32(1290266527), Fp32(1624312049), Fp32(220072360)] }] [155, 151, 11, 84, 153, 41, 114, 44, 164, 119, 49, 142, 183, 246, 0, 119, 141, 191, 96, 92, 161, 158, 138, 244, 233, 39, 69, 137, 95, 126, 156, 209]",
+        DigestHash::Sha3_256 => "[FpExt4 { coeffs: [Fp32(1730755233), Fp32(943963283), Fp32(1255738062), Fp32(2513675418)] }, FpExt4 { coeffs: [Fp32(2801894191), Fp32(709346627), Fp32(1229129368), Fp32(62370120)] }] [0, 146, 191, 236, 192, 102, 177, 195, 15, 125, 242, 136, 163, 70, 101, 107, 168, 184, 145, 160, 118, 149, 44, 83, 170, 196, 196, 208, 55, 54, 102, 3]",
+        DigestHash::Keccak256 => "[FpExt4 { coeffs: [Fp32(1326805312), Fp32(1901770969), Fp32(74516674), Fp32(3450037073)] }, FpExt4 { coeffs: [Fp32(50441031), Fp32(4109369074), Fp32(3096092093), Fp32(4159809947)] }] [125, 69, 159, 84, 125, 190, 223, 72, 96, 41, 173, 60, 4, 230, 104, 132, 18, 133, 242, 249, 161, 129, 98, 245, 145, 93, 72, 153, 3, 113, 206, 227]",
     };
     #[cfg(feature = "transcript-keccak")]
     let expected = match DIGEST_HASH {
-        DigestHash::Sha3_256 => "[FpExt4 { coeffs: [Fp32(1538086018), Fp32(2356685772), Fp32(939000672), Fp32(3159938612)] }, FpExt4 { coeffs: [Fp32(1640874697), Fp32(1035798056), Fp32(3581879581), Fp32(891095212)] }] [54, 72, 90, 56, 239, 211, 128, 30, 12, 80, 158, 176, 19, 198, 95, 96, 222, 120, 215, 81, 16, 223, 98, 231, 87, 39, 214, 184, 63, 131, 16, 17]",
-        DigestHash::Keccak256 => "[FpExt4 { coeffs: [Fp32(219517373), Fp32(1460299387), Fp32(770638488), Fp32(354388703)] }, FpExt4 { coeffs: [Fp32(2315217163), Fp32(3996746789), Fp32(1649955996), Fp32(903286857)] }] [45, 189, 119, 79, 141, 42, 244, 166, 109, 51, 121, 195, 225, 65, 69, 175, 160, 233, 76, 180, 209, 158, 20, 150, 31, 42, 189, 172, 221, 107, 54, 59]",
+        DigestHash::Sha3_256 => "[FpExt4 { coeffs: [Fp32(854747508), Fp32(1573603040), Fp32(2975532349), Fp32(2756252736)] }, FpExt4 { coeffs: [Fp32(2228606778), Fp32(1359755244), Fp32(4233129227), Fp32(2241336624)] }] [204, 157, 236, 23, 178, 221, 132, 138, 231, 118, 246, 22, 79, 236, 255, 55, 123, 78, 132, 233, 174, 143, 0, 140, 132, 241, 41, 106, 80, 25, 229, 228]",
+        DigestHash::Keccak256 => "[FpExt4 { coeffs: [Fp32(343499222), Fp32(421777635), Fp32(2659550122), Fp32(260247918)] }, FpExt4 { coeffs: [Fp32(3870063044), Fp32(1193787274), Fp32(3171412189), Fp32(3321346504)] }] [63, 21, 40, 197, 151, 206, 108, 156, 83, 210, 95, 165, 183, 39, 150, 22, 160, 69, 203, 36, 240, 253, 134, 51, 126, 218, 65, 200, 47, 99, 190, 11]",
     };
     assert_eq!(rendered, expected);
 }
@@ -495,9 +495,9 @@ fn commitment_digest_has_a_known_answer() {
     let digest = CommitmentDigest::of_canonical_bytes(b"kat/commitment");
     let rendered = format!("{:?}", digest.as_bytes());
     #[cfg(not(feature = "keccak256-digests"))]
-    let expected = "[176, 17, 105, 186, 141, 114, 82, 250, 9, 177, 167, 124, 5, 5, 89, 33, 111, 209, 20, 247, 89, 5, 169, 150, 223, 1, 26, 197, 206, 26, 216, 200]";
+    let expected = "[237, 15, 98, 61, 105, 153, 71, 195, 235, 26, 52, 244, 73, 236, 101, 86, 126, 165, 38, 57, 60, 205, 70, 183, 74, 19, 84, 70, 236, 118, 195, 221]";
     #[cfg(feature = "keccak256-digests")]
-    let expected = "[231, 43, 247, 28, 199, 65, 243, 106, 211, 102, 169, 32, 222, 237, 118, 31, 29, 18, 4, 66, 30, 243, 72, 227, 153, 236, 242, 73, 22, 152, 224, 17]";
+    let expected = "[242, 88, 20, 35, 42, 245, 93, 255, 142, 174, 87, 218, 98, 221, 178, 52, 186, 216, 66, 200, 186, 77, 232, 163, 167, 250, 190, 237, 207, 94, 29, 194]";
     assert_eq!(rendered, expected);
     assert_ne!(
         digest,

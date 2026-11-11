@@ -18,7 +18,7 @@ on a state it borrows, so it can run either on its own session or inside a
 caller's transcript.
 
 A standalone proof builds its own state. The session identifier is derived
-with SHAKE128 from `STANDALONE_SESSION_TAG`, `akita-pcs/standalone-session/v8`
+with SHAKE128 from `STANDALONE_SESSION_TAG`, `akita-pcs/standalone-session/v9`
 zero-padded to 32 bytes. The Spongefish instance is the caller's session
 bytes, as a `u64` little-endian length word, the bytes, and zero padding to
 the next 8-byte word.
@@ -26,8 +26,8 @@ the next 8-byte word.
 In both modes, Akita's first absorbs are its binding of the instance, made by
 `bind_instance` as one public message:
 
-1. Akita's protocol tag, `akita-pcs/transcript/v8/sha3` zero-padded to 32
-   bytes (`akita-pcs/transcript/v8/keccak` when the application selects
+1. Akita's protocol tag, `akita-pcs/transcript/v9/sha3` zero-padded to 32
+   bytes (`akita-pcs/transcript/v9/keccak` when the application selects
    Keccak-256 digests). The tag names the protocol, its version and the digest
    hash. The version fixes the field challenge codec, the proof-of-work
    layout, the absorb layout and the sparse message codec, so changing any of
@@ -68,7 +68,7 @@ therefore does not depend on what the caller absorbed. The caller must:
 The root binds each commitment group by a 32-byte `CommitmentDigest`, not by
 its rows. The digest is the selected digest hash (SHA3-256, or Keccak-256
 under `keccak256-digests`) of `COMMITMENT_DIGEST_TAG`,
-`akita-pcs/commitment-digest/v8` zero-padded to 32 bytes, followed by the
+`akita-pcs/commitment-digest/v9` zero-padded to 32 bytes, followed by the
 uncompressed serialization of the group: its profile, then its rows in
 canonical form. `CommittedGroup` computes the digest when it is built or
 decoded, and no path accepts a digest from outside. The verifier therefore

@@ -27,7 +27,7 @@ pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, N
 
 /// Proof channel and proof-stream format version, named by [`PROTOCOL_TAG`].
 ///
-/// Version 8 fixes:
+/// Version 9 fixes:
 ///
 /// - **The challenge codec.** Jolt's pooled rejection codec, within total
 ///   variation `2^-161` of uniform per message; pools of 4-byte fields round
@@ -45,18 +45,23 @@ pub use nonce::{nonce_encoded_len, nonce_max_bytes, receive_nonce, send_nonce, N
 ///   group, squeezed directly after the fold's proof of work with nothing
 ///   absorbed in between. Its length is the candidate bits rounded up to
 ///   whole words, and candidate `c` occupies bits `[c·K, (c + 1)·K)` of the
-///   message read as little-endian `u64` words.
+///   message read as little-endian `u64` words. A candidate is `w` sign bits
+///   then an `m`-bit rank word, mapped onto the whole shell by Lemire's
+///   multiply-shift reduction with rejection; every family is a fail-closed
+///   pool. Version 9 introduced this layout, the full-shell revision of
+///   `specs/sparse-challenge-stream.md`; version 8 read unfiltered challenges
+///   from a power-of-two prefix of the shell.
 ///
 /// The fold draw absorbs no payload, so these values are bound only by this
 /// version and change it when they change: the `OperatorNormRejection`
 /// constants, the pool rates that set a sparse message's length, and the
 /// meaning of the coefficient-packing draw domain.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// Akita protocol tag, absorbed first in every Akita sub-transcript: the
 /// protocol name, [`PROTOCOL_VERSION`] and the digest hash
 /// ([`jolt_transcript::DIGEST_HASH`]), zero-padded to 32 bytes:
-/// `akita-pcs/transcript/v8/sha3`, or `akita-pcs/transcript/v8/keccak` under
+/// `akita-pcs/transcript/v9/sha3`, or `akita-pcs/transcript/v9/keccak` under
 /// `keccak256-digests`.
 ///
 /// Akita absorbs it whether it runs in its own session or inside a caller's.
@@ -64,22 +69,22 @@ pub const PROTOCOL_VERSION: u32 = 8;
 /// verifying under the other. The tag does not name the sponge: a different
 /// sponge is a different hash function and already changes every output.
 pub const PROTOCOL_TAG: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
-    DigestHash::Sha3_256 => b"akita-pcs/transcript/v8/sha3".as_slice(),
-    DigestHash::Keccak256 => b"akita-pcs/transcript/v8/keccak".as_slice(),
+    DigestHash::Sha3_256 => b"akita-pcs/transcript/v9/sha3".as_slice(),
+    DigestHash::Keccak256 => b"akita-pcs/transcript/v9/keccak".as_slice(),
 });
 
 /// Spongefish session tag of a standalone Akita proof.
 pub const STANDALONE_SESSION_TAG: [u8; TAG_BYTES] =
-    protocol_tag(b"akita-pcs/standalone-session/v8");
+    protocol_tag(b"akita-pcs/standalone-session/v9");
 
 /// Domain tag hashed ahead of a root commitment's canonical bytes.
-pub const COMMITMENT_DIGEST_TAG: [u8; TAG_BYTES] = protocol_tag(b"akita-pcs/commitment-digest/v8");
+pub const COMMITMENT_DIGEST_TAG: [u8; TAG_BYTES] = protocol_tag(b"akita-pcs/commitment-digest/v9");
 
 /// Byte length of a root-commitment digest.
 pub const COMMITMENT_DIGEST_LEN: usize = 32;
 
 /// Domain tag stored in every diagnostic context record.
-pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v8\0\0\0\0\0";
+pub const CONTEXT_DOMAIN: [u8; 32] = *b"akita-pcs/native-context/v9\0\0\0\0\0";
 
 /// Bytes in one transcript word. Every absorb and every squeeze covers whole
 /// words, so a sponge over `u64` lanes reproduces the byte sponge exactly.
