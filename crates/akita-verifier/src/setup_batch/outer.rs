@@ -15,7 +15,7 @@ pub(crate) struct PreparedOuterSetup<E: Field> {
     pub(crate) relation_weight: E,
 }
 
-/// Bind the inherited batch together with this fold's query.
+/// Reject scoped prefixes, then bind the inherited batch with this fold's query.
 pub(crate) fn prepare_outer_setup<F, E>(
     setup: &AkitaVerifierSetup<F>,
     rs: &RingSwitchVerifyOutput<E>,
@@ -33,6 +33,11 @@ where
         .setup_prefix()
         .and_then(|prefix| prefix.slot_id())
         .ok_or(AkitaError::InvalidProof)?;
+    if setup.prefix_context(&id).is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "offloaded Stage 3 cannot consume a scoped setup prefix".into(),
+        ));
+    }
     let slot = setup
         .prefix_slots()
         .get(&id)

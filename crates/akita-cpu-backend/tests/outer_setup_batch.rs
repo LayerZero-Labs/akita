@@ -56,7 +56,7 @@ fn quartic_outer_round_trips_collected_claims_through_transport() {
 }
 
 #[test]
-fn offloaded_outer_consumes_inherited_claims_in_both_modes() {
+fn offloaded_outer_consumes_inherited_claims_and_rejects_scoped_prefix_in_both_modes() {
     run::<akita_config::RecursiveCommitmentConfig<akita_config::proof_optimized::fp128::Dense>>(
         24, true,
     );
@@ -429,6 +429,56 @@ where
         assert_eq!(value, claim.value());
     }
     if offloaded {
+        let id = row.schedule().recursive_folds[level as usize]
+            .params
+            .setup_prefix()
+            .unwrap()
+            .slot_id()
+            .unwrap();
+        assert!(verifier.setup().prefix_context(&id).is_none());
+        // Keep the accepted proof and commitment, changing only the slot's context.
+        let scoped_setup = verifier
+            .setup()
+            .clone()
+            .with_prefix_context(id.clone(), b"scoped-prefix-test".to_vec())
+            .unwrap();
+        assert!(scoped_setup.prefix_context(&id).is_some());
+        let scoped =
+            AkitaVerifier::<Cfg>::for_selection(scoped_setup, catalog.clone(), selection, None)
+                .unwrap();
+        for defer in [false, true] {
+            let mut rejected = SetupClaimAccumulator::from_batch(level, inherited.clone());
+            if defer {
+                rejected = rejected.with_advice(&mut advice);
+            }
+            assert!(matches!(
+                scoped.batched_verify(
+                    &outer,
+                    SESSION,
+                    GroupBatchStatement::new(selection, claims()).unwrap(),
+                    BasisMode::Lagrange,
+                    if defer {
+                        SetupPolicy::Defer(&mut rejected)
+                    } else {
+                        SetupPolicy::Check(Some(&mut rejected))
+                    },
+                ),
+                Err(AkitaError::InvalidSetup(message))
+                    if message == "offloaded Stage 3 cannot consume a scoped setup prefix"
+            ));
+            let pending = rejected.into_pending();
+            assert_eq!(pending.len(), inherited.claims().len());
+            let recovered = SetupBatchStatement::new(
+                inherited.polynomial().clone(),
+                inherited.coefficient_len(),
+                pending,
+            )
+            .unwrap();
+            assert_eq!(
+                recovered.descriptor_bytes::<Cfg::Field>().unwrap(),
+                inherited.descriptor_bytes::<Cfg::Field>().unwrap()
+            );
+        }
         let next_input = SetupBatchStatement::new(polynomial.clone(), 32, carried).unwrap();
         let next_proof = prove(Some((level, &next_input))).unwrap();
         let mut checked = SetupClaimAccumulator::from_batch(level, next_input.clone());
