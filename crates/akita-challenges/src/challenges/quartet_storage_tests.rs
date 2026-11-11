@@ -1,5 +1,5 @@
 use super::*;
-use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::Prime128Offset6A23801F as F;
 
 fn compact(blocks: usize, claims: usize) -> Challenges {
     let codes = include_bytes!("../../testdata/checked_hint_codes.bin")
