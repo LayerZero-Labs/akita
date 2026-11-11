@@ -8,13 +8,17 @@ description = "Fiat-Shamir transcripts for the Akita polynomial commitment schem
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
+# The self dev-dependency enables `prover` for this crate's tests, which machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["akita-transcript"]
+
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "25d87ba68bde9f4a85ac986f5487b2e7b7db2699", default-features = false, features = [
   "asm",
   "solinas",
 ] }
-jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "a956128715473586423edb2085cc5dd889c9193d", default-features = false, features = [
+jolt-transcript = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "25d87ba68bde9f4a85ac986f5487b2e7b7db2699", default-features = false, features = [
   "solinas",
 ] }
 sha3 = "0.12.0"
@@ -31,8 +35,18 @@ transcript-keccak = ["jolt-transcript/transcript-keccak"]
 keccak256-digests = ["jolt-transcript/keccak256-digests"]
 # The prover's proof-of-work and fold-response searches copy the public sponge
 # state, which spongefish 0.8.0 exposes only under `yolocrypto`. Verifier
-# builds leave this feature off.
-prover = ["jolt-transcript/prover-grinding", "spongefish/yolocrypto"]
+# builds leave this feature off. Standalone prover channels also require OS
+# entropy to initialize their private randomness.
+prover = [
+  "jolt-transcript/prover-grinding",
+  "jolt-transcript/prover-entropy",
+  "spongefish/yolocrypto",
+]
+
+[dev-dependencies]
+akita-transcript = { path = ".", default-features = false, features = [
+  "prover",
+] }
 
 [lints]
 workspace = true

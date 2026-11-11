@@ -7,9 +7,10 @@ use jolt_transcript::{
     TAG_BYTES,
 };
 use sha3::Digest;
+#[cfg(feature = "prover")]
+use spongefish::ProverState;
 use spongefish::{
-    Encoding, FromNarg, NargReader, ProverState, SessionId, Transcript, VerificationError,
-    VerifierState,
+    Encoding, FromNarg, NargReader, SessionId, Transcript, VerificationError, VerifierState,
 };
 use std::marker::PhantomData;
 #[cfg(feature = "prover")]
@@ -233,6 +234,7 @@ fn standalone_session_id() -> SessionId {
 ///
 /// The channel carries no Akita statement yet; the proof entry absorbs it with
 /// [`bind_instance`], as it does on a caller's channel.
+#[cfg(feature = "prover")]
 #[must_use]
 pub fn new_prover_channel(session: &[u8]) -> ProverChannel {
     ProverState::new(&standalone_session_id(), &BytesMsg(session.to_vec()))
