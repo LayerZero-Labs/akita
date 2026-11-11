@@ -273,6 +273,18 @@ commitment, direct witness, or transcript input must be rejected with
 `AkitaError` or `SerializationError`, never by panicking.
 `AkitaError` has one canonical definition in `akita-error`.
 
+### Checked challenge advice
+
+Preview delegates sparse challenge decoding to `jolt-crypto`. Its selected
+sampler does not expose main's checked-advice installation API, so preview
+recomputes sparse challenges from the transcript and accepts no advice tape.
+
+Any future advice ingress must enforce a trusted byte budget before allocation,
+independent of the input's declared length, and authenticate every supplied
+rank and sign against the transcript. The
+[advice frame specification](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame)
+records main's design; it is not an enabled preview feature.
+
 ### Crates in scope
 
 - `akita-verifier`

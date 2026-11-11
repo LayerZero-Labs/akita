@@ -28,7 +28,7 @@ mod bench {
     use akita_params::FlatMatrix;
     use criterion::{BenchmarkId, Criterion, Throughput};
     use jolt_algebra::{
-        AdditiveGroup, CanonicalEncoding, Prime128OffsetA7F7, Prime64Offset59,
+        AdditiveGroup, CanonicalEncoding, Prime128Offset6A23801F, Prime64Offset59,
         WithCommitAccumulator,
     };
     use jolt_metal::MetalField;
@@ -164,9 +164,9 @@ mod bench {
                 positions: 16384,
             },
         ] {
-            bench_shape::<Prime128OffsetA7F7, 256>(c, &metal, &shape);
+            bench_shape::<Prime128Offset6A23801F, 256>(c, &metal, &shape);
         }
-        bench_shape::<Prime128OffsetA7F7, 512>(
+        bench_shape::<Prime128Offset6A23801F, 512>(
             c,
             &metal,
             &Shape {
@@ -175,7 +175,7 @@ mod bench {
                 positions: 4096,
             },
         );
-        bench_shape::<Prime128OffsetA7F7, 512>(
+        bench_shape::<Prime128Offset6A23801F, 512>(
             c,
             &metal,
             &Shape {

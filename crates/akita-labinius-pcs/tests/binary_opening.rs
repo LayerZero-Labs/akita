@@ -275,8 +275,8 @@ fn binary_proof_bytes_are_pinned_for_both_families() {
             .collect()
     }
     let expected = (
-        "bd7eaacb397dd2f471c0aaf02c24e4e6df18c0c99b93febc89121426e3bc49bb",
-        "75f0bd290a132573fa7afd072a1901d6e6bd4ae121839d3f6ae08600f8d2a32f",
+        "4c34ac110ad268ee744a04dfc554cf682d91d85be958bad86fea4c1682117d7a",
+        "5529f74c73cf7864ab5b1e0cd5eadff0646d6576f2477bf8cf5fa8493c91b55b",
     );
     assert_eq!(
         (digest::<Family64>(), digest::<Family128>()),

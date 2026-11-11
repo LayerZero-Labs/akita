@@ -107,9 +107,16 @@ pub(crate) fn mat_vec_mul_crt_ntt<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     let out = match &params {
-        ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_with_params(mat, vec, p),
-        ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_with_params(mat, vec, p),
-        ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_with_params(mat, vec, p),
+        ProtocolCrtNttParams::Q32(p) if const { FieldCrtBases::<F>::Q32 } => {
+            mat_vec_mul_dense_with_params(mat, vec, p)
+        }
+        ProtocolCrtNttParams::Q64(p) if const { FieldCrtBases::<F>::Q64 } => {
+            mat_vec_mul_dense_with_params(mat, vec, p)
+        }
+        ProtocolCrtNttParams::Q128(p) if const { FieldCrtBases::<F>::Q128 } => {
+            mat_vec_mul_dense_with_params(mat, vec, p)
+        }
+        _ => return Err(FieldCrtBases::<F>::unselectable_base()),
     };
     Ok(out)
 }
@@ -121,9 +128,16 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: Field + CanonicalEncoding, const D: us
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     let out = match &params {
-        ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
-        ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
-        ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
+        ProtocolCrtNttParams::Q32(p) if const { FieldCrtBases::<F>::Q32 } => {
+            mat_vec_mul_dense_many_with_params(mat, vecs, p)
+        }
+        ProtocolCrtNttParams::Q64(p) if const { FieldCrtBases::<F>::Q64 } => {
+            mat_vec_mul_dense_many_with_params(mat, vecs, p)
+        }
+        ProtocolCrtNttParams::Q128(p) if const { FieldCrtBases::<F>::Q128 } => {
+            mat_vec_mul_dense_many_with_params(mat, vecs, p)
+        }
+        _ => return Err(FieldCrtBases::<F>::unselectable_base()),
     };
     Ok(out)
 }

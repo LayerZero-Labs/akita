@@ -59,7 +59,13 @@ The initial supported shapes are:
 | Field profile | Plus degrees | Minus degrees |
 | --- | --- | --- |
 | `Prime64Offset23703` | 162 | 324, 648 |
-| `Prime128OffsetA7F7` | 162, 486 | 324, 648 |
+| `Prime128Offset6A23801F` | 18 | 18 |
+| `TrinomialAuxiliary` (`2^128 − 4294944759`) | 162, 486 | 324, 648 |
+
+`TrinomialAuxiliary` is an arithmetic field, separate from Akita’s protocol
+field `Prime128Offset6A23801F`. The latter has insufficient 3-adicity for
+these transform degrees. Integer convolutions check the centered-lift bound
+before mapping their exact result into the proof field.
 
 The generic implementation can accept another even degree when the same root
 condition holds.

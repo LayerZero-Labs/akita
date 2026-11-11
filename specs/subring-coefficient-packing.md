@@ -793,7 +793,7 @@ is a unit. Akita fixes these production field invariants:
 |---|---:|---:|---|
 | `Q32Offset99` | `2^32 - 99` | 2 | `q = 5 mod 8` |
 | `Q64Offset59` | `2^64 - 59` | 2 | `q = 5 mod 8` |
-| `Q128OffsetA7F7` | `2^128 - 2^32 + 22537` | 4 | `q = 9 mod 16` |
+| `Q128Offset6A23801F` | `2^128 - 1780711455` | 16 | `q = 33 mod 64` |
 
 Every production sparse challenge family has `c_max <= 2`. Therefore every
 coefficient of a challenge difference has magnitude at most

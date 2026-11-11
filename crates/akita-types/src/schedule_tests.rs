@@ -42,7 +42,7 @@ use akita_params::{
 };
 use akita_serialization::{AkitaSerialize, Compress};
 
-use jolt_algebra::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
+use jolt_algebra::{CanonicalEncoding, Field, Prime128Offset6A23801F, Zero};
 
 #[path = "schedule_tests/descriptor.rs"]
 mod descriptor;
@@ -54,7 +54,7 @@ mod group_topology;
 mod relation_mode;
 #[path = "schedule_tests/sis_occurrences.rs"]
 mod sis_occurrences;
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 const TEST_TERMINAL_A_BOUND: u128 = 104_244;
 fn provision_setup_prefix_capacity(params: &mut CommittedGroupParams, n_prefix: usize) {
     let d_setup = params.inner().matrix.ring_dimension();
@@ -567,7 +567,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 fn terminal_projection_preserves_the_fixed_inner_matrix() {
     let sparse = FoldChallengeDistribution::pm1_only(3);
     let mut committed = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         3,
         4,
@@ -708,7 +708,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         D,
         2,
         2,
@@ -720,7 +720,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
 
     for log_basis in 2..=6 {
         let lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             log_basis,
             2,
@@ -761,7 +761,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 
     for log_basis in 2..=6 {
         let mut lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             log_basis,
             2,
@@ -822,7 +822,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = FoldChallengeDistribution::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         D,
         2,
         2,
@@ -834,7 +834,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
 
     for log_basis in 2..=6 {
         let lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             log_basis,
             2,
@@ -962,7 +962,7 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
         akita_params::SisTableKey {
             policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
             table_digest: akita_params::SisTableDigest::CURRENT,
-            modulus_profile: akita_params::SisModulusProfileId::Q128OffsetA7F7,
+            modulus_profile: akita_params::SisModulusProfileId::Q128Offset6A23801F,
             role: akita_params::sis::SisMatrixRole::Inner,
             ring_dimension: 64,
             coeff_linf_bound: TEST_TERMINAL_A_BOUND,
@@ -987,7 +987,7 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
                 akita_params::SisTableKey {
                     policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                     table_digest: akita_params::SisTableDigest::CURRENT,
-                    modulus_profile: akita_params::SisModulusProfileId::Q128OffsetA7F7,
+                    modulus_profile: akita_params::SisModulusProfileId::Q128Offset6A23801F,
                     role: akita_params::sis::SisMatrixRole::Outer,
                     ring_dimension: 64,
                     coeff_linf_bound: 3,
@@ -1133,7 +1133,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
                 akita_params::SisTableKey {
                     policy: akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
                     table_digest: akita_params::SisTableDigest::CURRENT,
-                    modulus_profile: akita_params::SisModulusProfileId::Q128OffsetA7F7,
+                    modulus_profile: akita_params::SisModulusProfileId::Q128Offset6A23801F,
                     role: akita_params::sis::SisMatrixRole::Outer,
                     ring_dimension: 64,
                     coeff_linf_bound: 3,

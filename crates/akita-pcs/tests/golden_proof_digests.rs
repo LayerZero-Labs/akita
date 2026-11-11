@@ -35,11 +35,11 @@ use jolt_algebra::{ExtField, Ring};
 /// Digests under the current protocol: Akita main's (v8) bytes for the
 /// same rows, which a clear dev build must reproduce.
 const CURRENT_PROTOCOL: &[&str] = &[
-    "fp128_onehot final=12:1 commitments=d693010878a84b6562b79d753c7fe74204fb92115741504eecb4d1c5d5080119 proof_len=42621 proof=b08099ce626db5fd4ab1b2866ca8b58eb217c7cdd91dd9292219d4b1be0ecae1",
-    "fp128_dense final=14:1 commitments=59e7a284290a49719d282e05945912f5a9e9f0668286b57c0b1cebedc697288e proof_len=68809 proof=27ca568f5387caa58988d8f52128c97f62e84811246cdc8c700cfce2f233215e",
-    "fp128_onehot final=18:1 commitments=ece414efb98d4ec2a733517dd9e5128dd761b24b784b3f4dc0e2a21bff93fbc0 proof_len=66263 proof=346d111831a6fa8117043d28688bbd46c22a1e785e472e0f7451009af4901b02",
-    "fp128_onehot final=16:1;precommitted=14:1 commitments=c13a992e649895d0ca9eb4a80f718402d0fa669d8665c8556cec8ae4dc40c0a3 proof_len=65545 proof=8419433696032026be18676d53eab4d15422dfc9aebbebee59cd8c3dc271a9bb",
-    "fp64_dense final=14:1 commitments=51616667401b02eec741de1070a4f5a6cbd9234a9c515e5ee930c169dfa95053 proof_len=63845 proof=6457f41c3a80ee48f0aaafc306e04e386d6d613e850f4c91a7b0ce837d1809d3",
+    "fp128_onehot final=12:1 commitments=585a7fa528f7cdc42bbfee9ad971b2bee0acb2a1f6714f486de340ae06d16a2c proof_len=42590 proof=79d815aed68966d9b08bbf2cf9ac7e305e8e10ce660187e0300316741abab9ef",
+    "fp128_dense final=14:1 commitments=e31d644f319cc37df129d0cb1ba9bc191e657b7913595c27dfb4788c036713b2 proof_len=68796 proof=a92a6e6e5617a4e40fddca7cd2284530e6352a27fe09de12e2f52c3100081397",
+    "fp128_onehot final=18:1 commitments=fa674c084bc34e59763b2526da5c12c4266b8d6376a528fa2b46b76682ca3981 proof_len=66254 proof=e24649caab7ab6715bcb23979f24df56a45dccc1ee01003b267f9037473daa7c",
+    "fp128_onehot final=16:1;precommitted=14:1 commitments=152c73e0607a7d106c5abc1726adac8ac7b5058f849c514c1073bb44b71a8c0a proof_len=65529 proof=39550ec5e5d83612d930c14e92e6bc8a01c42bf201f0420bce6a6475cf6832e8",
+    "fp64_dense final=14:1 commitments=8009f78c8031d000921aca10a9a1be5d36831d5df8c9ffa7d2be70fee1402752 proof_len=63818 proof=8d7766eb3a2b6a60023f48afca1f44e7c20dd615dae7d86fa30950f6786fbeb8",
 ];
 
 /// Digests under the dev protocol (`akita_params::DEV_PROTOCOL`). On v8 the

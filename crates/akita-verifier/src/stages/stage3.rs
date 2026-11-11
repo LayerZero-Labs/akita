@@ -311,9 +311,9 @@ mod tests {
     use super::*;
 
     use akita_types::AkitaSetupDescriptor;
-    use jolt_algebra::{MulBaseUnreduced, Prime128OffsetA7F7, Ring};
+    use jolt_algebra::{MulBaseUnreduced, Prime128Offset6A23801F, Ring};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const RING_D: usize = 64;
 
     #[test]

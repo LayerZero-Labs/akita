@@ -239,7 +239,7 @@ impl Counter {
         // An `Err` means the counter is already saturated.
         let _ = self
             .0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
                 count.checked_add(amount).or(Some(usize::MAX))
             });
     }

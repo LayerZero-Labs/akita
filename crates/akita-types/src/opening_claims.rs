@@ -308,9 +308,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{Prime128Offset6A23801F, Ring, Zero};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     #[test]
     fn invalid_claim_arguments_name_the_bad_collection_or_index() {

@@ -114,6 +114,7 @@ explains which family to choose.
 | --- | --- |
 | `logging-transcript` | Records transcript schedule events and checks that wire values are absorbed before challenges |
 | `response-model-diagnostics` | Measures complete source and response energies for planner model calibration |
+| `experiment-capture` | Host-only capture of public fold-challenge messages; also requires `AKITA_CAPTURE_CHALLENGES` |
 | `compression-weights-crosscheck` | Checks every factored compression relation weight evaluation against the per-event evaluation and counts its evaluation tiers |
 
 `response-model-diagnostics` scans witness data that normal proving does not
@@ -126,6 +127,23 @@ grouped builder family with the per-event builder. A difference fails
 verification. Each evaluation emits one `tracing` event at `INFO` with its
 evaluation tiers and builder outcomes. It is for native diagnostic runs; it
 changes no proof, transcript or default build.
+
+`experiment-capture` is a feature of `akita-challenges`. On non-`riscv64`
+hosts, setting `AKITA_CAPTURE_CHALLENGES` (to any value) enables capture. The
+environment setting is cached on first use; set it before decoding and use a
+separate process to change modes. Preview captures messages at the fold-draw
+boundary and emits one stderr line per draw:
+
+```text
+EXPERIMENT_FOLD_MESSAGE message_hex
+```
+
+`message_hex` contains the entire squeezed message in byte order, with two
+lowercase hex digits per byte. Jolt owns sparse decoding on this branch, so
+capture does not emit main's candidate-rank records or install checked advice.
+Prover previews also emit messages; use a verification-only process when the
+order must correspond to verifier draws. Capture is disabled on `riscv64` and
+without the feature, and changes no challenge value or transcript byte.
 
 The `transcript_schedule` example uses `logging-transcript`:
 

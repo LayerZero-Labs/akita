@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-pkg="${1:?usage: scripts/check-crate-deps.sh <package> [forbidden-package ...]}"
+# Without a package, enforce every registered dependency boundary.
+if [ "$#" -eq 0 ]; then
+  for package in akita-params akita-sis-estimator akita-verifier akita-prover \
+    akita-cpu-backend akita-config akita-schedules akita-planner akita-metal \
+    akita-setup akita-labinius-verifier akita-labinius-prover akita-labinius-pcs; do
+    bash "$0" "$package"
+  done
+  exit 0
+fi
+
+pkg="$1"
 shift
 
 if ! cargo metadata --format-version 1 --no-deps | grep -q "\"name\":\"${pkg}\""; then

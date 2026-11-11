@@ -34,17 +34,17 @@ pub(crate) fn mat_vec_mul_ntt_single_i8<F: Field + CanonicalEncoding, const D: u
             return mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params());
         }};
     }
-    if FieldCrtBases::<F>::Q32 {
+    if const { FieldCrtBases::<F>::Q32 } {
         if let Some(base) = slot.q32_base() {
             run_base!(base);
         }
     }
-    if FieldCrtBases::<F>::Q64 {
+    if const { FieldCrtBases::<F>::Q64 } {
         if let Some(base) = slot.q64_base() {
             run_base!(base);
         }
     }
-    if FieldCrtBases::<F>::Q128 {
+    if const { FieldCrtBases::<F>::Q128 } {
         if let Some(base) = slot.q128_base() {
             run_base!(base);
         }
@@ -82,17 +82,17 @@ pub(crate) fn mat_vec_mul_ntt_single_i8_cyclic<F: Field + CanonicalEncoding, con
             return mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params());
         }};
     }
-    if FieldCrtBases::<F>::Q32 {
+    if const { FieldCrtBases::<F>::Q32 } {
         if let Some(base) = slot.q32_base() {
             run_base!(base);
         }
     }
-    if FieldCrtBases::<F>::Q64 {
+    if const { FieldCrtBases::<F>::Q64 } {
         if let Some(base) = slot.q64_base() {
             run_base!(base);
         }
     }
-    if FieldCrtBases::<F>::Q128 {
+    if const { FieldCrtBases::<F>::Q128 } {
         if let Some(base) = slot.q128_base() {
             run_base!(base);
         }

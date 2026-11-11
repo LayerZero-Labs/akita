@@ -26,7 +26,7 @@ fn shared_binary_integer_convolution_matches_dense_signed_products() {
             .map(|row| {
                 BinaryField162::from_words([
                     0x1234_5678_9abc_def0u64.rotate_left(row as u32),
-                    0xfedc_ba98_7654_3210u64.rotate_right(row as u32),
+                    0xfedcba98_76543210u64.rotate_right(row as u32),
                     (row as u64) & 3,
                 ])
                 .unwrap()

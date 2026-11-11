@@ -86,9 +86,10 @@
 
 #![allow(missing_docs)]
 
-mod common;
+use crate::common;
 #[path = "akita_fp128_e2e/heterogeneous.rs"]
 mod heterogeneous;
+#[path = "matrix_drivers/mod.rs"]
 mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, CommitmentConfig};

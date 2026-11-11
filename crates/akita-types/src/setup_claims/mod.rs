@@ -12,6 +12,8 @@ use jolt_algebra::{CanonicalEncoding, ExtField, Field};
 use jolt_crypto::lattice::PublicMatrixSeed as AkitaSetupSeed;
 pub use query::{SetupQuery, SetupWeightTerm};
 
+pub(crate) const MAX_SETUP_QUERY_TENSOR_AXES: usize = 8;
+
 /// Exact flat setup polynomial; the rectangular split is intentionally not its identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetupPolynomialId {

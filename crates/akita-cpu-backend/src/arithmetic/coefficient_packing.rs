@@ -284,8 +284,8 @@ mod tests {
     };
     use jolt_algebra::CyclotomicRing;
     use jolt_algebra::{
-        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
-        Prime64Offset59, Ring,
+        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128Offset6A23801F,
+        Prime32Offset99, Prime64Offset59, Ring,
     };
 
     type F = Prime32Offset99;
@@ -466,7 +466,7 @@ mod tests {
         assert_dense_matches_reference::<Prime32Offset99, FpExt4<Prime32Offset99>, 512>(64);
         assert_dense_matches_reference::<Prime32Offset99, FpExt4<Prime32Offset99>, 1024>(64);
         assert_dense_matches_reference::<Prime64Offset59, Ext2<Prime64Offset59>, 128>(64);
-        assert_dense_matches_reference::<Prime128OffsetA7F7, Prime128OffsetA7F7, 128>(64);
+        assert_dense_matches_reference::<Prime128Offset6A23801F, Prime128Offset6A23801F, 128>(64);
     }
 
     #[test]
@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn prepared_point_rejects_same_ring_count_with_different_source_arity() {
-        type Base = Prime128OffsetA7F7;
+        type Base = Prime128Offset6A23801F;
         const RING_D: usize = 128;
         let geometry = SubringCoefficientPackingGeometry::try_new(1, RING_D, 64).unwrap();
         let public_point = (0..6)

@@ -59,7 +59,7 @@ The implementation pinned by this specification uses ADPS16 quantum exponent
 `0.2650`, LGSA shape, coefficient `L-infinity` norm, target `128.0`, maximum
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
 modulus profiles with generated cells are `Q32Offset99`, `Q64Offset59`, and
-`Q128OffsetA7F7`.
+`Q128Offset6A23801F`.
 Production arithmetic otherwise uses the documented `f64` backend. Integer
 small-box branch boundaries are compared exactly, with a fast log-space
 precheck away from equality. The unimplemented high-precision backend fails
@@ -384,7 +384,7 @@ The initial profiles are:
 pub enum SisModulusProfileId {
     Q32Offset99,
     Q64Offset59,
-    Q128OffsetA7F7,
+    Q128Offset6A23801F,
 }
 ```
 
@@ -400,7 +400,7 @@ the one exception to the rule on generated cells. It is a separate profile: it
 has its own wire tags, and runtime configuration and commitment decoding check
 its exact modulus as for every other profile. It has no generated cells. Every
 table lookup first resolves `SisModulusProfileId::row_owner`, which maps it to
-`Q128OffsetA7F7`, and the profile adds no role cell.
+`Q128Offset6A23801F`, and the profile adds no role cell.
 
 The exception exists because of the table identity. The table digest is
 computed over the generated cell and audit files, so generated cells for this

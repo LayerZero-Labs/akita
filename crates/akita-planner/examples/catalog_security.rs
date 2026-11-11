@@ -5,7 +5,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
+use akita_planner::emit::bounded_parallel_filter_map;
 use akita_planner::generated_families::{GeneratedFamily, ALL_GENERATED_FAMILIES};
+use akita_schedules::ResolvedScheduleRow;
 use akita_sis_estimator::{
     estimate_schedule_security, ScheduleSisBound, ScheduleSisInstanceEstimate, SisSecurityPolicy,
 };
@@ -86,6 +88,16 @@ fn bound_label(instance: &ScheduleSisInstanceEstimate) -> String {
     }
 }
 
+/// One catalog row selected for a security estimate.
+struct CheckedRow<'a> {
+    family: &'a GeneratedFamily,
+    sis_policy_name: &'static str,
+    policy_minimum_bits: f64,
+    resolved: &'a ResolvedScheduleRow,
+    key: akita_params::ScheduleLookupKey,
+    row_digest: String,
+}
+
 fn main() -> Result<(), String> {
     let mut check = false;
     let mut details = false;
@@ -120,9 +132,7 @@ fn main() -> Result<(), String> {
         }
     }
 
-    println!("family\trow_digest\tfinal_group\tprecommitted_groups\tsis_policy\tmodulus_profile\tmin_attack_cost_bits\tweakest_instance\tnorm_bound\td\trank\twidth");
-    let mut matched_rows = 0usize;
-    let mut below_policy = Vec::new();
+    let mut catalogs = Vec::new();
     for family in selected_families(&names)? {
         let policy = (family.policy)();
         let artifact_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -143,6 +153,16 @@ fn main() -> Result<(), String> {
         let policy_minimum_bits = SisSecurityPolicy::from(policy.sis_security_policy)
             .adps16_quantum_constraint()
             .minimum_log2_rop;
+        catalogs.push((
+            family,
+            policy.sis_security_policy.name(),
+            policy_minimum_bits,
+            catalog,
+        ));
+    }
+
+    let mut rows = Vec::new();
+    for (family, sis_policy_name, policy_minimum_bits, catalog) in &catalogs {
         for resolved in catalog.rows() {
             let profiles = resolved.profiles();
             let key = akita_params::ScheduleLookupKey {
@@ -163,63 +183,89 @@ fn main() -> Result<(), String> {
             {
                 continue;
             }
-            matched_rows += 1;
-            let schedule = resolved.schedule();
-            let estimate = estimate_schedule_security(schedule)
-                .map_err(|error| format!("{} {:?}: {error}", family.family_name(), key))?;
-            let weakest = estimate.minimum();
-            let precommitted = if key.precommitteds.is_empty() {
-                "-".to_string()
-            } else {
-                key.precommitteds
-                    .iter()
-                    .map(|profile| group_label(profile.group))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            };
-            println!(
-                "{}\t{}\t{}\t{}\t{}\t{:?}\t{:.6}\t{}\t{}\t{}\t{}\t{}",
+            rows.push(CheckedRow {
+                family,
+                sis_policy_name,
+                policy_minimum_bits: *policy_minimum_bits,
+                resolved,
+                key,
+                row_digest,
+            });
+        }
+    }
+    let matched_rows = rows.len();
+
+    let workers = std::thread::available_parallelism().map_or(1, |count| count.get());
+    let estimates = bounded_parallel_filter_map(&rows, workers, |row| {
+        estimate_schedule_security(row.resolved.schedule())
+            .map(Some)
+            .map_err(|error| format!("{} {:?}: {error}", row.family.family_name(), row.key))
+    })?;
+
+    println!("family\trow_digest\tfinal_group\tprecommitted_groups\tsis_policy\tmodulus_profile\tmin_attack_cost_bits\tweakest_instance\tnorm_bound\td\trank\twidth");
+    let mut below_policy = Vec::new();
+    for (row, estimate) in rows.iter().zip(&estimates) {
+        let CheckedRow {
+            family,
+            sis_policy_name,
+            policy_minimum_bits,
+            resolved,
+            key,
+            row_digest,
+        } = row;
+        let schedule = resolved.schedule();
+        let weakest = estimate.minimum();
+        let precommitted = if key.precommitteds.is_empty() {
+            "-".to_string()
+        } else {
+            key.precommitteds
+                .iter()
+                .map(|profile| group_label(profile.group))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{:?}\t{:.6}\t{}\t{}\t{}\t{}\t{}",
+            family.family_name(),
+            row_digest,
+            group_label(key.final_group),
+            precommitted,
+            sis_policy_name,
+            weakest.modulus_profile,
+            estimate.minimum_security_bits(),
+            weakest.location,
+            bound_label(weakest),
+            weakest.ring_dimension,
+            weakest.output_rank,
+            weakest.input_width,
+        );
+        let minimum_bits = estimate.minimum_security_bits();
+        if check && (!minimum_bits.is_finite() || minimum_bits < *policy_minimum_bits) {
+            below_policy.push(format!(
+                "{} {}: {:.6} bits at {}",
                 family.family_name(),
                 row_digest,
-                group_label(key.final_group),
-                precommitted,
-                policy.sis_security_policy.name(),
-                weakest.modulus_profile,
-                estimate.minimum_security_bits(),
-                weakest.location,
-                bound_label(weakest),
-                weakest.ring_dimension,
-                weakest.output_rank,
-                weakest.input_width,
-            );
-            let minimum_bits = estimate.minimum_security_bits();
-            if check && (!minimum_bits.is_finite() || minimum_bits < policy_minimum_bits) {
-                below_policy.push(format!(
-                    "{} {}: {:.6} bits at {}",
-                    family.family_name(),
-                    row_digest,
-                    minimum_bits,
-                    weakest.location
-                ));
-            }
-            if details {
-                println!("schedule\t{schedule:#?}");
-                println!("{}", DETAIL_INSTANCE_HEADER.join("\t"));
-                for (index, instance) in estimate.instances().iter().enumerate() {
-                    let columns: [String; DETAIL_INSTANCE_HEADER.len()] = [
-                        "instance".to_string(),
-                        index.to_string(),
-                        instance.location.clone(),
-                        format!("{:?}", instance.role),
-                        format!("{:?}", instance.modulus_profile),
-                        bound_label(instance),
-                        instance.ring_dimension.to_string(),
-                        instance.output_rank.to_string(),
-                        instance.input_width.to_string(),
-                        format!("{:.6}", instance.security_bits()),
-                    ];
-                    println!("{}", columns.join("\t"));
-                }
+                minimum_bits,
+                weakest.location
+            ));
+        }
+        if details {
+            println!("schedule\t{schedule:#?}");
+            println!("{}", DETAIL_INSTANCE_HEADER.join("\t"));
+            for (index, instance) in estimate.instances().iter().enumerate() {
+                let columns: [String; DETAIL_INSTANCE_HEADER.len()] = [
+                    "instance".to_string(),
+                    index.to_string(),
+                    instance.location.clone(),
+                    format!("{:?}", instance.role),
+                    format!("{:?}", instance.modulus_profile),
+                    bound_label(instance),
+                    instance.ring_dimension.to_string(),
+                    instance.output_rank.to_string(),
+                    instance.input_width.to_string(),
+                    format!("{:.6}", instance.security_bits()),
+                ];
+                println!("{}", columns.join("\t"));
             }
         }
     }

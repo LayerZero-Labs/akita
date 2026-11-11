@@ -1,5 +1,5 @@
 use super::*;
-use jolt_algebra::Prime128OffsetA7F7 as F;
+use jolt_algebra::Prime128Offset6A23801F as F;
 use jolt_algebra::Zero;
 use jolt_crypto::challenge::SparseChallenge;
 

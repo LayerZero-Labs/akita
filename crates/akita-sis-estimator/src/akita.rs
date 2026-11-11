@@ -27,8 +27,8 @@ pub enum AkitaModulusProfileId {
     /// Binary-source commitment prime `2^24 - 2523807`.
     #[cfg(feature = "labinius-sis")]
     Q24Minus2523807,
-    /// `2^128 - (2^32 - 22537)`.
-    Q128OffsetA7F7,
+    /// `2^128 - 1780711455`.
+    Q128Offset6A23801F,
     /// `2^128 - 275`. Owns no generated rows; see
     /// [`akita_params::sis::SisModulusProfileId::Q128Offset275`].
     Q128Offset275,
@@ -51,7 +51,7 @@ impl AkitaModulusProfileId {
             "q25-labinius" | "Q25Plus14561" => Ok(Self::Q25Plus14561),
             #[cfg(feature = "labinius-sis")]
             "q24" | "Q24Minus2523807" => Ok(Self::Q24Minus2523807),
-            "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
+            "q128" | "Q128Offset6A23801F" => Ok(Self::Q128Offset6A23801F),
             "q128_offset275" | "Q128Offset275" => Ok(Self::Q128Offset275),
             _ => Err(EstimatorError::InvalidParameter {
                 field: "modulus_profile",
@@ -75,7 +75,7 @@ impl AkitaModulusProfileId {
             Self::Q24Minus2523807 => BigUint::from(
                 akita_params::sis::labinius::LabiniusCommitmentModulus::Q24Minus2523807.modulus(),
             ),
-            Self::Q128OffsetA7F7 => akita_q128(),
+            Self::Q128Offset6A23801F => akita_q128(),
             Self::Q128Offset275 => {
                 BigUint::from(akita_params::sis::SisModulusProfileId::Q128Offset275.modulus())
             }
@@ -95,7 +95,7 @@ impl AkitaModulusProfileId {
             Self::Q25Plus14561 => "q25-labinius",
             #[cfg(feature = "labinius-sis")]
             Self::Q24Minus2523807 => "q24",
-            Self::Q128OffsetA7F7 => "q128",
+            Self::Q128Offset6A23801F => "q128",
             Self::Q128Offset275 => "q128_offset275",
         }
     }
@@ -106,7 +106,7 @@ impl From<akita_params::sis::SisModulusProfileId> for AkitaModulusProfileId {
         match profile {
             akita_params::sis::SisModulusProfileId::Q32Offset99 => Self::Q32Offset99,
             akita_params::sis::SisModulusProfileId::Q64Offset59 => Self::Q64Offset59,
-            akita_params::sis::SisModulusProfileId::Q128OffsetA7F7 => Self::Q128OffsetA7F7,
+            akita_params::sis::SisModulusProfileId::Q128Offset6A23801F => Self::Q128Offset6A23801F,
             akita_params::sis::SisModulusProfileId::Q128Offset275 => Self::Q128Offset275,
         }
     }

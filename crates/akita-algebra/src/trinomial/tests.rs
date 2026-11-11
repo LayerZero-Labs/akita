@@ -1,4 +1,4 @@
-use jolt_algebra::{Field, Prime128OffsetA7F7, Ring, Zero};
+use jolt_algebra::{Field, One, Ring, Zero};
 
 use super::*;
 use jolt_algebra::fft::field_pow;
@@ -146,21 +146,21 @@ fn p64_initial_tower_matches_schoolbook() {
 
 #[test]
 fn p128_initial_tower_matches_schoolbook() {
-    assert_roundtrip_and_product::<Prime128OffsetA7F7, 162, PlusTrinomial>();
-    assert_roundtrip_and_product::<Prime128OffsetA7F7, 324, MinusTrinomial>();
-    assert_roundtrip_and_product::<Prime128OffsetA7F7, 648, MinusTrinomial>();
+    assert_roundtrip_and_product::<TrinomialAuxiliary, 162, PlusTrinomial>();
+    assert_roundtrip_and_product::<TrinomialAuxiliary, 324, MinusTrinomial>();
+    assert_roundtrip_and_product::<TrinomialAuxiliary, 648, MinusTrinomial>();
 }
 
 #[test]
 fn p128_degree_486_scalar_profile_is_generic() {
-    assert_roundtrip_and_product::<Prime128OffsetA7F7, 486, PlusTrinomial>();
+    assert_roundtrip_and_product::<TrinomialAuxiliary, 486, PlusTrinomial>();
 }
 
 #[test]
 fn prepared_i8_transforms_match_field_conversion_at_small_and_full_ranges() {
     assert_i8_lut_matches_field_transform::<Prime64Offset23703, 162, PlusTrinomial>(4);
     assert_i8_lut_matches_field_transform::<Prime64Offset23703, 648, MinusTrinomial>(8);
-    assert_i8_lut_matches_field_transform::<Prime128OffsetA7F7, 324, MinusTrinomial>(7);
+    assert_i8_lut_matches_field_transform::<TrinomialAuxiliary, 324, MinusTrinomial>(7);
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn prepared_i8_transform_rejects_invalid_basis_and_digits_before_output_mutation
 #[test]
 fn packed_pointwise_accumulation_matches_fused_scalar_kernel() {
     assert_packed_accumulation_matches_scalar::<Prime64Offset23703, 162, PlusTrinomial>();
-    assert_packed_accumulation_matches_scalar::<Prime128OffsetA7F7, 162, PlusTrinomial>();
+    assert_packed_accumulation_matches_scalar::<TrinomialAuxiliary, 162, PlusTrinomial>();
 }
 
 #[test]
@@ -390,4 +390,30 @@ fn coefficient_arithmetic_and_scalar_accumulation_agree() {
         lhs.schoolbook_mul(&TrinomialRing::one().unwrap()).unwrap(),
         lhs
     );
+}
+
+/// Main #387's configured root must generate every advertised divisor, while
+/// the larger 3-power domains of preview's auxiliary remain unavailable.
+#[test]
+fn protocol_field_smooth_roots_preserve_the_field_switch_configuration() {
+    type F = jolt_algebra::Prime128Offset6A23801F;
+    assert_eq!(F::SMOOTH_SUBGROUP_ORDER, (1 << 5) * 27 * 390_625);
+    for a in 0..=5 {
+        for b in 0..=3 {
+            for c in 0..=8 {
+                let n = (1usize << a) * 3usize.pow(b) * 5usize.pow(c);
+                let root = F::primitive_root(n).unwrap();
+                assert_eq!(field_pow(root, n as u64), F::one());
+                for prime in [2, 3, 5] {
+                    if n.is_multiple_of(prime) {
+                        assert_ne!(field_pow(root, (n / prime) as u64), F::one());
+                    }
+                }
+            }
+        }
+    }
+    assert_roundtrip_and_product::<F, 18, PlusTrinomial>();
+    assert_roundtrip_and_product::<F, 18, MinusTrinomial>();
+    assert!(TrinomialNttDomain::<F, 162, PlusTrinomial>::new().is_err());
+    assert!(TrinomialNttDomain::<F, 648, MinusTrinomial>::new().is_err());
 }

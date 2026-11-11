@@ -274,7 +274,13 @@ where
         setup: AkitaVerifierSetup<Self::Field>,
         selection: OpeningScheduleSelection,
     ) -> Result<AkitaVerifier<Self>, AkitaError> {
-        AkitaVerifier::for_selection(setup, scheme.schedules().clone(), selection, None)
+        AkitaVerifier::for_selection(
+            setup,
+            scheme.schedules().clone(),
+            selection,
+            None,
+            akita_verifier::SetupMode::Check,
+        )
     }
 
     fn commit_dense(

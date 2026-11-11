@@ -9,7 +9,11 @@ pub(super) fn bench(criterion: &mut criterion::Criterion) {
             "p64_23703",
             [IFMA52_PRIMES[0], IFMA52_PRIMES[1]],
         );
-        bench_profile::<super::Prime128OffsetA7F7, 3>(criterion, "p128_a7f7", IFMA52_PRIMES);
+        bench_profile::<super::Prime128Offset6A23801F, 3>(
+            criterion,
+            "p128_6a23801f",
+            IFMA52_PRIMES,
+        );
     }
     #[cfg(not(target_arch = "x86_64"))]
     let _ = criterion;

@@ -159,7 +159,13 @@ impl TerminalNttCache {
                 |error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")),
             )?,
             schedule_row_digest,
-            setup_field_elements: setup.expanded().descriptor.num_field_elements,
+            setup_field_elements: jolt_algebra::checked::product([
+                requirement.prefix_len,
+                requirement.ring_dimension,
+            ])
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal cache field count overflow".into())
+            })?,
         };
         let entry = dispatch_for_field!(
             akita_params::ProtocolDispatchSlot::Role(akita_params::RingRole::Inner),
@@ -219,6 +225,10 @@ impl TerminalNttCache {
 
 /// Build the scalar Q128 prepared terminal cache consumed by a RISC V verifier.
 ///
+/// The cache binds exactly its terminal coefficient footprint, independently
+/// of the raw coefficients retained by the destination verifier key. A deferred
+/// key can therefore omit the terminal coefficients after preparing this cache.
+///
 /// The returned bytes are derived performance state. They are not canonical
 /// setup bytes and must be bound to the verifier program or another trusted
 /// setup installation boundary before use.
@@ -233,7 +243,11 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
     let binding = PreparedVerifierNttCacheBinding {
         setup_seed_digest,
         schedule_row_digest,
-        setup_field_elements: setup.expanded().descriptor.num_field_elements,
+        setup_field_elements: jolt_algebra::checked::product([
+            requirement.prefix_len,
+            requirement.ring_dimension,
+        ])
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal cache field count overflow".into()))?,
     };
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),

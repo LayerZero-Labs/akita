@@ -134,3 +134,6 @@ mod tests {
         .is_err());
     }
 }
+
+#[cfg(test)]
+mod field_switch_tests;

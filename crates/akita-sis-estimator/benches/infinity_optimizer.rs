@@ -49,7 +49,7 @@ const REPRESENTATIVE_CASES: &[RepresentativeCase] = &[
         coeff_linf_bound: 15,
     },
     RepresentativeCase {
-        family: AkitaModulusProfileId::Q128OffsetA7F7,
+        family: AkitaModulusProfileId::Q128Offset6A23801F,
         d: 32,
         rank: 1,
         width: 8,
@@ -397,7 +397,7 @@ fn family_label(family: AkitaModulusProfileId) -> &'static str {
         AkitaModulusProfileId::Q25Plus14561 => "q25-labinius",
         #[cfg(feature = "labinius-sis")]
         AkitaModulusProfileId::Q24Minus2523807 => "q24",
-        AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
+        AkitaModulusProfileId::Q128Offset6A23801F => "q128",
         AkitaModulusProfileId::Q128Offset275 => "q128_offset275",
     }
 }

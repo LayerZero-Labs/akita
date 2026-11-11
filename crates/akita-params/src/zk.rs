@@ -33,7 +33,7 @@ use crate::{
 };
 use akita_error::AkitaError;
 use core::ops::Range;
-use jolt_algebra::{Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_algebra::{Prime128Offset275, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 use jolt_crypto::lattice::required_randomness_columns;
 
 /// The only supported cut: levels 0, 1 and 2 are masked (`k = 3`).
@@ -631,13 +631,15 @@ pub fn hiding_randomness_columns(
             alphabet.log_basis,
             HIDING_SLACK_BITS,
         ),
-        SisModulusProfileId::Q128OffsetA7F7 => required_randomness_columns::<Prime128OffsetA7F7>(
-            image_coeffs,
-            0,
-            image.ring_dim,
-            alphabet.log_basis,
-            HIDING_SLACK_BITS,
-        ),
+        SisModulusProfileId::Q128Offset6A23801F => {
+            required_randomness_columns::<Prime128Offset6A23801F>(
+                image_coeffs,
+                0,
+                image.ring_dim,
+                alphabet.log_basis,
+                HIDING_SLACK_BITS,
+            )
+        }
         SisModulusProfileId::Q128Offset275 => required_randomness_columns::<Prime128Offset275>(
             image_coeffs,
             0,
@@ -840,7 +842,7 @@ mod tests {
         let image = ImageShape {
             rows: 1,
             ring_dim: 64,
-            modulus: SisModulusProfileId::Q128OffsetA7F7,
+            modulus: SisModulusProfileId::Q128Offset6A23801F,
         };
         assert_eq!(
             hiding_randomness_columns(image, DigitAlphabet { log_basis: 3 }).unwrap(),
@@ -855,7 +857,7 @@ mod tests {
         let image = ImageShape {
             rows: 3,
             ring_dim: 256,
-            modulus: SisModulusProfileId::Q128OffsetA7F7,
+            modulus: SisModulusProfileId::Q128Offset6A23801F,
         };
         assert_eq!(
             hiding_randomness_columns(image, DigitAlphabet { log_basis: 4 }).unwrap(),

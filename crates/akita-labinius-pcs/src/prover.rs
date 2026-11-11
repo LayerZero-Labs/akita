@@ -88,7 +88,11 @@ impl<P: FieldFamily> Prover<P> {
         for selected in std::iter::once(None).chain(elements.as_ref().map(Some)) {
             let row = response_row::<P>(&layout, &catalog, selected)?;
             ensure_setup_prefix_coverage(row, |id| setup.prefix_slots.get(id).is_some())?;
-            if !TrustedScheduleCatalog::<P::Digits>::verifier_admits(&setup.expanded, row)? {
+            if !TrustedScheduleCatalog::<P::Digits>::verifier_admits(
+                &setup.expanded,
+                row,
+                akita_params::SetupMode::Check,
+            )? {
                 return Err(AkitaError::InvalidSetup(
                     "the grouped row does not fit the prover setup".into(),
                 ));

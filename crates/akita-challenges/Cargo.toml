@@ -2,7 +2,7 @@
 name = "akita-challenges"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version.workspace = true
 license = "Apache-2.0 OR MIT"
 description = "Challenge sampling for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -27,6 +27,8 @@ jolt-crypto = { version = "=0.1.0", git = "https://github.com/a16z/jolt", branch
 criterion = "0.8"
 shake = "0.1.0"
 [features]
+# Host-only public fold-message capture; also requires AKITA_CAPTURE_CHALLENGES.
+experiment-capture = []
 default = ["transcript-keccak"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]

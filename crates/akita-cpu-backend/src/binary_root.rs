@@ -14,7 +14,7 @@ use akita_algebra::trinomial::{
     module_map::pack_signed_components,
     signed::signed_trinomial_product,
 };
-use akita_algebra::{MinusTrinomial, TrinomialRing};
+use akita_algebra::{MinusTrinomial, TrinomialAuxiliary, TrinomialRing};
 use akita_error::AkitaError;
 use akita_params::FoldChallengeDistribution;
 use akita_params::{RelationPolynomial, RelationRowGeometry};
@@ -22,13 +22,13 @@ use akita_types::binary_source::{BinarySourceDescriptor, BINARY_RESPONSE_INTERVA
 use akita_types::native_root_relation::{binary_commitment_group, NativeRootGroup};
 use akita_types::root_repacking::{RootCoefficientRepacking, RootRepackingSegment};
 use jolt_algebra::checked;
-use jolt_algebra::{CanonicalEncoding, Field, One, Prime128Offset275, Prime128OffsetA7F7, Ring};
+use jolt_algebra::{CanonicalEncoding, Field, One, Prime128Offset275, Ring};
 use jolt_crypto::challenge::Challenges;
 
 use crate::kernels::trinomial_relation::TrinomialRelationQuotientBuilder;
 
 const D: usize = 648;
-type AuxiliaryRing = TrinomialRing<Prime128OffsetA7F7, D, MinusTrinomial>;
+type AuxiliaryRing = TrinomialRing<TrinomialAuxiliary, D, MinusTrinomial>;
 
 pub(crate) mod evaluation;
 mod setup_prefix;
@@ -185,7 +185,7 @@ impl BinaryRootRelation {
             })
             .and_then(|x| x.checked_mul(3))
             .ok_or_else(|| invalid("binary relation integer bound overflow"))?;
-        let auxiliary_modulus = (-Prime128OffsetA7F7::one())
+        let auxiliary_modulus = (-TrinomialAuxiliary::one())
             .to_u128_checked()
             .and_then(|x| x.checked_add(1))
             .ok_or(AkitaError::InvalidProof)?;
@@ -442,12 +442,12 @@ fn embed_challenges(
 }
 
 fn auxiliary_ring(coefficients: &[i128; D]) -> Result<AuxiliaryRing, AkitaError> {
-    AuxiliaryRing::from_coefficients(coefficients.map(Prime128OffsetA7F7::from_i128))
+    AuxiliaryRing::from_coefficients(coefficients.map(TrinomialAuxiliary::from_i128))
         .map_err(|error| invalid(&error.to_string()))
 }
 
 fn lift_auxiliary(
-    value: Prime128OffsetA7F7,
+    value: TrinomialAuxiliary,
     modulus: u128,
     bound: u128,
 ) -> Result<i128, AkitaError> {

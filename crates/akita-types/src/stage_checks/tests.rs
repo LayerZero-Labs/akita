@@ -5,12 +5,12 @@
 
 use super::{check_range_leaf, check_stage2_oracle, RangeLeaf, Stage2OracleWeights};
 use akita_params::DigitRangePlan;
-use jolt_algebra::{One, Prime128OffsetA7F7, Ring};
+use jolt_algebra::{One, Prime128Offset6A23801F, Ring};
 use jolt_zk::masking::{
     AffineRow, OperandShapeDomain, PadIndex, PadLayout, ResidualRelation, RowsDomain, ValuesDomain,
 };
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 fn pads(count: usize) -> Vec<F> {
     (0..count)

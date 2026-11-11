@@ -266,10 +266,10 @@ mod tests {
         gadget_row_scalars, CommittedGroupParams, OpenCommitMatrixParams, OpeningClaimsLayout,
         PolynomialGroupLayout, SisModulusProfileId,
     };
-    use jolt_algebra::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{Prime128Offset6A23801F, Ring, Zero};
     use jolt_crypto::challenge::SparseChallenge;
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     #[test]
     fn grouped_fold_preserves_claim_block_order_and_positive_high_half() {
@@ -325,7 +325,7 @@ mod tests {
         RelationWitnessGeometry,
     ) {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             128,
             2,
             1,
@@ -454,7 +454,7 @@ mod tests {
     fn d_input_preserves_claim_block_subcolumn_digit_order() {
         const D_D: usize = 64;
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             256,
             2,
             1,

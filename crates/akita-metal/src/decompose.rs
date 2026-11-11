@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use jolt_algebra::checked;
 use jolt_algebra::ring::cyclotomic::decompose_centering_threshold;
 use jolt_algebra::CanonicalEncoding;
-use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::{Prime128Offset6A23801F, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid, MslType};
 use jolt_metal::MetalField;
 
@@ -31,8 +31,8 @@ fn decompose_instance<F: MslType, T: DigitPlane>() -> Instance {
 
 pub(crate) fn instances() -> Vec<Instance> {
     vec![
-        decompose_instance::<Prime128OffsetA7F7, i8>(),
-        decompose_instance::<Prime128OffsetA7F7, i16>(),
+        decompose_instance::<Prime128Offset6A23801F, i8>(),
+        decompose_instance::<Prime128Offset6A23801F, i16>(),
         decompose_instance::<Prime64Offset59, i8>(),
         decompose_instance::<Prime64Offset59, i16>(),
     ]

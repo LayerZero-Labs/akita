@@ -4,9 +4,9 @@ use std::time::Duration;
 use akita_algebra::poly::multilinear_eval;
 use akita_types::{RelationPolynomial, TrinomialASetupView, TrinomialResponseLayout};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_algebra::{Prime128OffsetA7F7, Ring};
+use jolt_algebra::{Prime128Offset6A23801F, Ring};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 #[derive(Clone, Copy)]
 struct Case {

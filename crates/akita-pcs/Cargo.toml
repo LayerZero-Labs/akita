@@ -2,7 +2,7 @@
 name = "akita-pcs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version.workspace = true
 license = "Apache-2.0 OR MIT"
 description = "A high performance and modular implementation of the Akita polynomial commitment scheme."
 repository = "https://github.com/LayerZero-Labs/akita"
@@ -18,6 +18,7 @@ keywords = [
   "post-quantum",
 ]
 categories = ["cryptography", "algorithms"]
+autotests = false
 include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
@@ -229,6 +230,7 @@ akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-feat
   "zk",
 ] }
 rand = "0.8"
+rand_chacha = "0.3"
 rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 num-bigint = "0.5.1"
@@ -247,6 +249,10 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 libc = "0.2"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [[example]]
 name = "profile"
@@ -293,3 +299,27 @@ harness = false
 
 [lints]
 workspace = true
+
+[[test]]
+name = "binary_source_end_to_end"
+path = "tests/binary_source_end_to_end.rs"
+
+[[test]]
+name = "borrowed_session"
+path = "tests/borrowed_session.rs"
+
+[[test]]
+name = "golden_proof_digests"
+path = "tests/golden_proof_digests.rs"
+
+[[test]]
+name = "ordinary_grouped_root_bytes"
+path = "tests/ordinary_grouped_root_bytes.rs"
+
+[[test]]
+name = "q128_offset275_e2e"
+path = "tests/q128_offset275_e2e.rs"
+
+[[test]]
+name = "zero_knowledge"
+path = "tests/zero_knowledge.rs"

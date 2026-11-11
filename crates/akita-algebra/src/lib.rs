@@ -31,7 +31,7 @@ pub use split_eq::GruenSplitEq;
 pub use trinomial::{
     embed_scalar, pack_scalar_components, shifted_remainder_evaluations, unpack_scalar_components,
     MinusTrinomial, PlusTrinomial, Prime64Offset23703, Prime64Offset23703Ext2,
-    Prime64Offset23703Nr5, TrinomialError, TrinomialField, TrinomialI8Lut,
+    Prime64Offset23703Nr5, TrinomialAuxiliary, TrinomialError, TrinomialField, TrinomialI8Lut,
     TrinomialLimbAccumulator, TrinomialLimbDomain, TrinomialLimbSlots, TrinomialModulus,
     TrinomialNtt, TrinomialNttDomain, TrinomialNttWorkspace, TrinomialRing,
     PRIME64_OFFSET_23703_MODULUS,

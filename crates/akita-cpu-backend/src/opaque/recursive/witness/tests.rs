@@ -3,7 +3,7 @@ use crate::opaque::eor::ExtensionOpeningSession;
 use crate::opaque::{CpuBackend, RootOpeningSource, RootPolyShape};
 use crate::sources::packed_digits::PackedSignedDigits;
 use jolt_algebra::CyclotomicRing;
-use jolt_algebra::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+use jolt_algebra::{One, Prime128Offset6A23801F as F, Ring, Zero};
 use jolt_crypto::challenge::SparseChallenge;
 
 #[test]
@@ -308,7 +308,7 @@ fn logical_rows_are_contiguous_for_partial_final_fold() {
     let digits: Vec<i8> = (0..20).collect();
     let w = RecursiveWitnessFlat::from_i8_digits(digits);
     let view = w
-        .view::<jolt_algebra::Prime128OffsetA7F7, 2>()
+        .view::<jolt_algebra::Prime128Offset6A23801F, 2>()
         .expect("view");
     let num_live_blocks = 4;
     let num_positions_per_block = (w.live_coeff_len() / 2).div_ceil(num_live_blocks);

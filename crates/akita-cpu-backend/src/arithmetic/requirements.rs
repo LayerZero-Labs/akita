@@ -630,7 +630,7 @@ mod tests {
     #[test]
     fn recursive_signed_commit_domains_match_runtime_kernels() {
         let i8_domain = signed_commit_domain(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             512,
             19_456,
             7,
@@ -640,7 +640,7 @@ mod tests {
         assert_eq!(i8_domain, NttTransformDomain::Negacyclic);
 
         let i16_domain = signed_commit_domain(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             512,
             19_456,
             9,
@@ -718,7 +718,7 @@ mod tests {
                 1,
                 1,
                 1,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
             )
             .unwrap();
 
@@ -755,7 +755,7 @@ mod tests {
                 4,
                 11,
                 1,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
             )
             .unwrap();
         assert!(!single
@@ -776,7 +776,7 @@ mod tests {
                 4,
                 11,
                 8,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
             )
             .unwrap();
         assert!(distributed.entries().iter().any(|entry| {
@@ -808,7 +808,7 @@ mod tests {
                 4,
                 4,
                 usize::MAX,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
             ),
             Err(AkitaError::InvalidSetup(_))
         ));

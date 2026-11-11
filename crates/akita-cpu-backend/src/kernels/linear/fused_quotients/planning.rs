@@ -148,9 +148,15 @@ pub(in crate::kernels::linear) fn fused_test_plan_route<
         }};
     }
     match select_crt_ntt_params::<F, D>().expect("supported profile") {
-        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => route!(params),
-        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => route!(params),
-        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => route!(params),
-        _ => unreachable!("the selector returns a base FieldCrtBases admits"),
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
+            route!(params)
+        }
+        ProtocolCrtNttParams::Q64(params) if const { FieldCrtBases::<F>::Q64 } => {
+            route!(params)
+        }
+        ProtocolCrtNttParams::Q128(params) if const { FieldCrtBases::<F>::Q128 } => {
+            route!(params)
+        }
+        _ => unreachable!("select_crt_ntt_params returns a selectable profile"),
     }
 }

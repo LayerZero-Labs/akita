@@ -17,17 +17,17 @@ macro_rules! dispatch_slot {
             }};
         }
         'dispatch: {
-            if FieldCrtBases::<$field>::Q32 {
+            if const { FieldCrtBases::<$field>::Q32 } {
                 if let Some(base) = $slot.q32_base() {
                     break 'dispatch run_base!(base);
                 }
             }
-            if FieldCrtBases::<$field>::Q64 {
+            if const { FieldCrtBases::<$field>::Q64 } {
                 if let Some(base) = $slot.q64_base() {
                     break 'dispatch run_base!(base);
                 }
             }
-            if FieldCrtBases::<$field>::Q128 {
+            if const { FieldCrtBases::<$field>::Q128 } {
                 if let Some(base) = $slot.q128_base() {
                     break 'dispatch run_base!(base);
                 }

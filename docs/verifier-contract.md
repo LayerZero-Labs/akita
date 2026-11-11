@@ -64,6 +64,12 @@ squeezing. Message length, pool size, binomial tables and decoding use checked
 arithmetic and fallible allocation. A message whose operator-norm pool runs
 out returns `AkitaError::InvalidProof` and poisons the verifier state.
 
+Preview's shared Jolt sampler accepts no checked sparse-challenge advice.
+If an advice ingress is added, it must enforce a trusted byte budget before
+copying or allocating and authenticate every supplied rank against the
+transcript. See [checked challenge advice](../book/src/how/verification.md#checked-challenge-advice)
+for the branch distinction and resource contract.
+
 ## Rules
 
 1. Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.

@@ -130,7 +130,7 @@ pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize
     rhs_abs_bound: u64,
 ) -> Result<Option<ExactCachePlan<D>>, AkitaError> {
     match selected {
-        ProtocolCrtNttParams::Q32(params) if FieldCrtBases::<F>::Q32 => {
+        ProtocolCrtNttParams::Q32(params) if const { FieldCrtBases::<F>::Q32 } => {
             if let Some(needs_tail) = ifma52_tail_requirement::<F, 1, D>(
                 [IFMA52_PRIMES[0]],
                 I16_TAIL_PRIME.p as u128,
@@ -159,7 +159,7 @@ pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize
                 }))
             }
         }
-        ProtocolCrtNttParams::Q64(params) if FieldCrtBases::<F>::Q64 => {
+        ProtocolCrtNttParams::Q64(params) if const { FieldCrtBases::<F>::Q64 } => {
             if matches!(
                 ifma52_tail_requirement::<F, 2, D>(
                     [IFMA52_PRIMES[0], IFMA52_PRIMES[1]],
@@ -185,7 +185,7 @@ pub(super) fn base_exact_cache_plan<F: Field + CanonicalEncoding, const D: usize
                 needs_tail,
             }))
         }
-        ProtocolCrtNttParams::Q128(params) if FieldCrtBases::<F>::Q128 => {
+        ProtocolCrtNttParams::Q128(params) if const { FieldCrtBases::<F>::Q128 } => {
             let requirement = |tail_modulus: u128| {
                 ifma52_tail_requirement::<F, 3, D>(
                     IFMA52_PRIMES,
@@ -293,18 +293,18 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
     }
 
     let prepared = match plan {
-        ExactCachePlan::Q32 { params, needs_tail } if FieldCrtBases::<F>::Q32 => {
+        ExactCachePlan::Q32 { params, needs_tail } if const { FieldCrtBases::<F>::Q32 } => {
             homogeneous!(params, Q32, needs_tail)
         }
-        ExactCachePlan::Q32Ifma52 { params, needs_tail } if FieldCrtBases::<F>::Q32 => {
+        ExactCachePlan::Q32Ifma52 { params, needs_tail } if const { FieldCrtBases::<F>::Q32 } => {
             let (neg, tail) =
                 prepare_ifma52_exact(matrix, tail_prefix_len, *params, I16_TAIL_PRIME, needs_tail)?;
             PreparedNttCacheRepr::Q32Ifma52 { neg, tail }
         }
-        ExactCachePlan::Q64 { params, needs_tail } if FieldCrtBases::<F>::Q64 => {
+        ExactCachePlan::Q64 { params, needs_tail } if const { FieldCrtBases::<F>::Q64 } => {
             homogeneous!(params, Q64, needs_tail)
         }
-        ExactCachePlan::Q64Ifma52 { params } if FieldCrtBases::<F>::Q64 => {
+        ExactCachePlan::Q64Ifma52 { params } if const { FieldCrtBases::<F>::Q64 } => {
             if tail_prefix_len.is_some_and(|length| length > 0) {
                 return Err(AkitaError::InvalidSetup(
                     "IFMA52 exact cache does not require an i16 tail".into(),
@@ -314,10 +314,10 @@ pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usi
                 neg: Ifma52NttMatrix::prepare(matrix.as_slice(), &params),
             }
         }
-        ExactCachePlan::Q128 { params, needs_tail } if FieldCrtBases::<F>::Q128 => {
+        ExactCachePlan::Q128 { params, needs_tail } if const { FieldCrtBases::<F>::Q128 } => {
             homogeneous!(params, Q128, needs_tail)
         }
-        ExactCachePlan::Q128Ifma52 { params, needs_tail } if FieldCrtBases::<F>::Q128 => {
+        ExactCachePlan::Q128Ifma52 { params, needs_tail } if const { FieldCrtBases::<F>::Q128 } => {
             // A tail retained without a planned one is exactness-only: the
             // base primes suffice, so it takes the cheaper 14-bit prime.
             let tail_prime = q128_primes()[0];
@@ -432,8 +432,10 @@ mod tests {
     #[test]
     fn q128_ifma_rebuild_retains_a_joined_tail_prefix_at_the_planned_width() {
         const D: usize = 64;
-        let flat =
-            FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime128OffsetA7F7, D>::zero(); 10]);
+        let flat = FlatMatrix::from_ring_slice(&vec![
+                CyclotomicRing::<Prime128Offset6A23801F, D>::zero();
+                10
+            ]);
         let base = || Ifma52Params::new(IFMA52_PRIMES).expect("IFMA52 parameters");
         let i32_tail = base().with_tail(q128_primes()[0]).expect("i32 tail");
         for (params, needs_tail, tail_bytes) in [
@@ -458,7 +460,7 @@ mod tests {
     #[test]
     fn q128_ifma_plan_prefers_the_i16_tail_within_its_capacity() {
         const D: usize = 1024;
-        type F = Prime128OffsetA7F7;
+        type F = Prime128Offset6A23801F;
         if !ifma52_cache_enabled::<D>() {
             return;
         }

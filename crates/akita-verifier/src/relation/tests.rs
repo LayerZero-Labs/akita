@@ -9,13 +9,13 @@ use akita_types::{
     RingRelationGroupOpening, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
 };
 use jolt_algebra::ring::scalar_powers;
-use jolt_algebra::{Fp32, One, Prime128OffsetA7F7, Zero};
+use jolt_algebra::{Fp32, One, Prime128Offset6A23801F, Zero};
 use jolt_crypto::challenge::Challenges;
 use jolt_crypto::challenge::SparseChallenge;
 
 type F = Fp32<251>;
 const D: usize = 128;
-type MixedF = Prime128OffsetA7F7;
+type MixedF = Prime128Offset6A23801F;
 const D_INNER: usize = 128;
 const D_PROJECTED: usize = 64;
 
@@ -61,7 +61,7 @@ impl MixedReplayFixture {
 
 fn mixed_replay_fixture(mode: akita_params::RingRelationMode) -> MixedReplayFixture {
     let mut lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         D_INNER,
         2,
         1,

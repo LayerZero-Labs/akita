@@ -543,9 +543,9 @@ fn validate_work(actual: usize) -> Result<(), AkitaError> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
-    use jolt_algebra::{One, Prime128OffsetA7F7, Ring, Zero};
+    use jolt_algebra::{One, Prime128Offset6A23801F, Ring, Zero};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     fn point(len: usize, start: u64) -> Vec<F> {
         (0..len)

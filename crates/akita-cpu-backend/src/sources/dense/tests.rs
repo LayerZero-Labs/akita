@@ -4,7 +4,7 @@ use crate::opaque::RootPolyMeta;
 use akita_error::AkitaError;
 use akita_params::SUPPORTED_COMMITMENT_RING_DIMS;
 use jolt_algebra::CyclotomicRing;
-use jolt_algebra::Prime128OffsetA7F7 as F;
+use jolt_algebra::Prime128Offset6A23801F as F;
 use jolt_algebra::{CanonicalEncoding, Ring, Zero};
 
 #[test]

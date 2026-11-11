@@ -1,5 +1,5 @@
 //! `SisModulusProfileId::Q128Offset275` owns no generated SIS rows:
-//! `akita-params` prices it from the rows generated at the `Q128OffsetA7F7`
+//! `akita-params` prices it from the rows generated at the `Q128Offset6A23801F`
 //! modulus. That is sound exactly while the estimator cannot tell the two
 //! moduli apart, and these tests pin the reason rather than a sample of
 //! outputs.
@@ -28,7 +28,7 @@ use akita_sis_estimator::{
 };
 use num_bigint::BigUint;
 
-const OWNER: AkitaModulusProfileId = AkitaModulusProfileId::Q128OffsetA7F7;
+const OWNER: AkitaModulusProfileId = AkitaModulusProfileId::Q128Offset6A23801F;
 const ADDED: AkitaModulusProfileId = AkitaModulusProfileId::Q128Offset275;
 
 fn two_pow(exponent: u32) -> BigUint {

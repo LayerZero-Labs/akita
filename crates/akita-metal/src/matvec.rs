@@ -15,7 +15,7 @@ use bytemuck::{Pod, Zeroable};
 use jolt_algebra::checked;
 use jolt_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
 use jolt_algebra::{CanonicalEncoding, CrtCapacity, CrtNttParamSet, CyclotomicRing, NttPrime};
-use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::{Prime128Offset6A23801F, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid};
 use jolt_metal::MetalField;
 
@@ -39,11 +39,11 @@ const TARGET_GROUPS: usize = 256;
 
 mod sealed {
     use jolt_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
-    use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
+    use jolt_algebra::{Prime128Offset6A23801F, Prime64Offset59};
 
     pub trait PreparedMatrixField<const K: usize> {}
     impl PreparedMatrixField<Q64_NUM_PRIMES> for Prime64Offset59 {}
-    impl PreparedMatrixField<Q128_NUM_PRIMES> for Prime128OffsetA7F7 {}
+    impl PreparedMatrixField<Q128_NUM_PRIMES> for Prime128Offset6A23801F {}
 }
 
 /// A field whose full prepared-cache profile contains exactly `K` primes.
@@ -75,7 +75,7 @@ pub trait PreparedMatrixField<const K: usize>:
 }
 
 impl PreparedMatrixField<Q64_NUM_PRIMES> for Prime64Offset59 {}
-impl PreparedMatrixField<Q128_NUM_PRIMES> for Prime128OffsetA7F7 {}
+impl PreparedMatrixField<Q128_NUM_PRIMES> for Prime128Offset6A23801F {}
 
 fn partials_kernel<T: DigitPlane>(ring_degree: usize, limbs: usize) -> String {
     format!(
@@ -661,7 +661,7 @@ fn split_limbs<F: MetalField + CanonicalEncoding, const K: usize, const D: usize
 #[cfg(test)]
 mod tests {
     use super::{balanced_limbs, centered_value, field_modulus, limb_bits};
-    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::Prime128Offset6A23801F;
 
     fn recombine_wide(digits: &[i128], base: u128) -> Option<(bool, u128)> {
         digits
@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn fp128_centering_boundary_limbs_recombine_exactly() {
-        let modulus = field_modulus::<Prime128OffsetA7F7>().expect("fp128 modulus");
+        let modulus = field_modulus::<Prime128Offset6A23801F>().expect("fp128 modulus");
         for limbs in [2, 3, 4] {
             let width = limb_bits(modulus, limbs).expect("limb width");
             let base = 1u128.checked_shl(width).expect("limb base");

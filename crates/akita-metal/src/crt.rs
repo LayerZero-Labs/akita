@@ -8,7 +8,7 @@ use jolt_metal::MetalField;
 
 use crate::error::AkitaMetalError;
 use jolt_algebra::tables::{Q128_NUM_PRIMES, Q64_NUM_PRIMES};
-use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::{Prime128Offset6A23801F, Prime64Offset59};
 use jolt_metal::runtime::MslType;
 
 use crate::library::{AkitaMetal, Instance};
@@ -31,7 +31,7 @@ fn crt_instance<F: MslType>(primes: usize) -> Instance {
 /// limb-split matrices (`DeviceNttMatrix::from_rings`) use fewer primes.
 pub(crate) fn instances() -> Vec<Instance> {
     (1..=Q128_NUM_PRIMES)
-        .map(crt_instance::<Prime128OffsetA7F7>)
+        .map(crt_instance::<Prime128Offset6A23801F>)
         .chain((1..=Q64_NUM_PRIMES).map(crt_instance::<Prime64Offset59>))
         .collect()
 }

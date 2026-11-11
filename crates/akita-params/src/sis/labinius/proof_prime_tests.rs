@@ -4,10 +4,11 @@ use num_bigint::BigUint;
 use super::*;
 
 const P64_OFFSET_59: u128 = (1 << 64) - 59;
+const P128_OFFSET_6A23801F: u128 = u128::MAX - 0x6a23_801e;
 const P128_OFFSET_275: u128 = u128::MAX - 274;
 /// `2^64 - 23703` and `2^128 - 2^32 + 22537`: both are one modulo 243.
 const P64_OFFSET_23703: u128 = (1 << 64) - 23_703;
-const P128_OFFSET_A7F7: u128 = u128::MAX - (1 << 32) + 22_538;
+const P128_SPLIT_AUXILIARY: u128 = u128::MAX - (1 << 32) + 22_538;
 
 fn profile(ring: BinaryScalarRing, weight: usize) -> BinaryChallengeProfile {
     BinaryChallengeProfile::bounded_weight(ring, weight).unwrap()
@@ -17,14 +18,18 @@ fn profile(ring: BinaryScalarRing, weight: usize) -> BinaryChallengeProfile {
 fn named_proof_primes_are_admitted_only_with_a_large_residue_degree() {
     let ring = BinaryScalarRing::Cyclotomic243;
     let challenge = profile(ring, 46);
-    for (prime, residue_degree) in [(P64_OFFSET_59, 162), (P128_OFFSET_275, 6)] {
+    for (prime, residue_degree) in [
+        (P64_OFFSET_59, 162),
+        (P128_OFFSET_275, 6),
+        (P128_OFFSET_6A23801F, 9),
+    ] {
         assert_eq!(
             labinius_proof_prime_residue_degree(prime, ring),
             Some(residue_degree)
         );
         assert!(check_labinius_proof_prime_units(prime, &challenge).is_ok());
     }
-    for prime in [P64_OFFSET_23703, P128_OFFSET_A7F7] {
+    for prime in [P64_OFFSET_23703, P128_SPLIT_AUXILIARY] {
         assert_eq!(labinius_proof_prime_residue_degree(prime, ring), Some(1));
         assert!(check_labinius_proof_prime_units(prime, &challenge).is_err());
     }
@@ -52,7 +57,8 @@ fn bit_length_check_brackets_the_exact_norm_inequality() {
         P64_OFFSET_23703,
         (1 << 127) - 1,
         P128_OFFSET_275,
-        P128_OFFSET_A7F7,
+        P128_OFFSET_6A23801F,
+        P128_SPLIT_AUXILIARY,
     ];
     let one = BigUint::from(1u8);
     let (mut accepted, mut rejected) = (0, 0);

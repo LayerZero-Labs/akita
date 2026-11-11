@@ -118,7 +118,7 @@ fn exact_inner_reach_is_profile_and_dimension_specific() {
     .is_none());
     assert!(sis_role_cell(
         SisMatrixRole::Inner,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         1_821_066_133_292,
     )
@@ -130,7 +130,7 @@ fn tier_max_dimension_coverage_is_inner_only() {
     for (profile, dimension, bound) in [
         (SisModulusProfileId::Q32Offset99, 2048, 392),
         (SisModulusProfileId::Q64Offset59, 2048, 392),
-        (SisModulusProfileId::Q128OffsetA7F7, 1024, 448),
+        (SisModulusProfileId::Q128Offset6A23801F, 1024, 448),
     ] {
         assert!(sis_role_cell(SisMatrixRole::Inner, profile, dimension, bound).is_some());
         for role in [SisMatrixRole::Outer, SisMatrixRole::Open] {
@@ -143,7 +143,7 @@ fn tier_max_dimension_coverage_is_inner_only() {
 fn d512_uses_current_digest_and_rejects_unknown_digest() {
     let current = key(
         SisTableDigest::CURRENT,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         SisMatrixRole::Inner,
         512,
         532,
@@ -151,7 +151,7 @@ fn d512_uses_current_digest_and_rejects_unknown_digest() {
     assert!(min_secure_rank(current, 1).is_some());
     let unknown = key(
         SisTableDigest([0xFF; 32]),
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         SisMatrixRole::Inner,
         64,
         1_428,
@@ -164,7 +164,7 @@ fn min_secure_rank_matches_linear_first_match_for_every_generated_row() {
     let profiles = [
         SisModulusProfileId::Q32Offset99,
         SisModulusProfileId::Q64Offset59,
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
     ];
     let roles = [
         SisMatrixRole::Outer,

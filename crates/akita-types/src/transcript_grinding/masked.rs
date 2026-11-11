@@ -232,7 +232,7 @@ impl<'proof, C> VerifierGrindingChannel<'proof> for MaskedVerifierChannel<'_, 'p
 mod tests {
     use super::*;
     use akita_transcript::{new_verifier_channel, FieldAtom};
-    use jolt_algebra::{One, Prime128OffsetA7F7 as F, Zero};
+    use jolt_algebra::{One, Prime128Offset6A23801F as F, Zero};
 
     /// A clear `exchange` on a masked channel would send a private value
     /// unmasked; both roles refuse it before any byte moves.

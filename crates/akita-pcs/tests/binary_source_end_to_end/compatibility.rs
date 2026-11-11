@@ -31,14 +31,14 @@ fn typed_prefix_identity_bytes_are_pinned() {
         identity.len(),
         akita_params::descriptor_bytes::digest_descriptor_bytes(&identity),
     );
-    // The same in both protocol modes. The digest is SHA3-256 since v8; the
-    // identity bytes are unchanged.
+    // The same in both protocol modes. The field switch changes the shared
+    // SIS-table identity inside these bytes; their format and length stay fixed.
     assert_eq!(identity.len(), 2518);
     assert_eq!(
         akita_params::descriptor_bytes::digest_descriptor_bytes(&identity),
         [
-            89, 193, 157, 175, 187, 151, 67, 188, 36, 37, 232, 116, 218, 128, 237, 88, 228, 112,
-            233, 150, 7, 19, 153, 112, 231, 8, 249, 24, 194, 204, 11, 155,
+            180, 246, 92, 207, 101, 142, 163, 157, 52, 215, 109, 17, 242, 113, 73, 50, 31, 151, 89,
+            153, 183, 205, 95, 203, 166, 17, 235, 248, 103, 92, 135, 62
         ]
     );
 }
@@ -46,27 +46,28 @@ fn typed_prefix_identity_bytes_are_pinned() {
 pub(super) fn assert_base_bytes(proof: &[u8], mixed: bool, word_width: usize) {
     // Pinned with the caller prefix. The dev protocol currently equals the
     // current protocol, so both modes share these bytes. Unselected prime
-    // planes preserve every word-only proof byte.
+    // planes preserve every word-only proof byte. Regenerated after the field
+    // switch: its SIS identity changes challenges and the Rice-coded payload.
     let (length, digest) = match (mixed, word_width) {
         (false, 128) => (
-            80963,
+            81020,
             [
-                135, 36, 30, 103, 130, 185, 182, 163, 117, 245, 90, 70, 191, 237, 71, 125, 12, 252,
-                105, 126, 189, 19, 133, 109, 85, 26, 178, 1, 204, 99, 183, 36,
+                35, 87, 84, 91, 170, 39, 59, 107, 193, 133, 129, 129, 249, 239, 1, 123, 40, 221,
+                92, 253, 18, 115, 212, 60, 105, 30, 18, 115, 194, 241, 240, 246,
             ],
         ),
         (false, 8) => (
-            80945,
+            80987,
             [
-                158, 199, 237, 25, 126, 94, 5, 252, 21, 127, 197, 215, 50, 162, 118, 114, 190, 157,
-                113, 82, 54, 208, 221, 98, 210, 66, 92, 72, 187, 247, 54, 130,
+                207, 130, 170, 181, 159, 201, 14, 48, 114, 25, 33, 36, 175, 173, 26, 223, 143, 0,
+                98, 225, 106, 72, 158, 205, 208, 125, 51, 21, 150, 38, 143, 196,
             ],
         ),
         (true, 128) => (
-            81132,
+            81114,
             [
-                34, 16, 171, 182, 69, 126, 23, 14, 244, 217, 59, 12, 167, 27, 147, 124, 186, 35,
-                207, 201, 175, 204, 193, 215, 65, 201, 198, 58, 18, 74, 84, 66,
+                167, 250, 165, 208, 200, 76, 57, 55, 0, 29, 38, 67, 16, 64, 26, 81, 154, 149, 110,
+                155, 240, 87, 55, 199, 207, 237, 128, 152, 159, 56, 132, 72,
             ],
         ),
         _ => panic!("fixture has no baseline"),

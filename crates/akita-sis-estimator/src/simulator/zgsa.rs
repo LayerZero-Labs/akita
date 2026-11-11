@@ -168,7 +168,7 @@ mod tests {
             (
                 4_096_u32,
                 3_072_i64,
-                (BigUint::from(1_u8) << 128) - BigUint::from(4_294_944_759_u64),
+                (BigUint::from(1_u8) << 128) - BigUint::from(1_780_711_455_u64),
                 651_u32,
             ),
         ];

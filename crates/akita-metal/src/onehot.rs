@@ -19,7 +19,7 @@ use std::time::Duration;
 use akita_cpu_backend::{OneHotIndex, OneHotSource};
 use bytemuck::{Pod, Zeroable};
 use jolt_algebra::checked;
-use jolt_algebra::{Prime128OffsetA7F7, Prime64Offset59};
+use jolt_algebra::{Prime128Offset6A23801F, Prime64Offset59};
 use jolt_metal::runtime::{Batch, Binding, DeviceBuffer, Grid, MslType};
 use jolt_metal::MetalField;
 
@@ -30,9 +30,9 @@ use crate::library::{ring_degree_kernel, AkitaMetal, Instance, RING_DEGREES};
 /// kernels: the base fields of Akita's fp128 and fp64 presets.
 const FIELDS: [(&str, &str, usize); 2] = [
     (
-        Prime128OffsetA7F7::MSL_NAME,
-        Prime128OffsetA7F7::HOST_SUFFIX,
-        size_of::<Prime128OffsetA7F7>(),
+        Prime128Offset6A23801F::MSL_NAME,
+        Prime128Offset6A23801F::HOST_SUFFIX,
+        size_of::<Prime128Offset6A23801F>(),
     ),
     (
         Prime64Offset59::MSL_NAME,
