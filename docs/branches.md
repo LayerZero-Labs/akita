@@ -146,8 +146,8 @@ protocol. Rules 2 and 3 do not apply to this feature. These rules do:
   the dev protocol's proof size MUST regenerate the dev set with
   `scripts/generate-schedule-artifacts.sh --dev`.
 - The CI job `test-dev-protocol-drift` regenerates the dev schedule set. The
-  CI job `test-dev-protocol` runs the workspace test suite with the feature
-  on.
+  full test pass (`.github/workflows/full-tests.yml`) also runs the workspace
+  test suite with the feature on, as job `test-dev-protocol`.
 - Every change MUST be listed in the table below.
 
 A build with the feature on produces and accepts only dev-protocol proofs. Do

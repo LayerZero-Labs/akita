@@ -50,7 +50,6 @@ class ProfileBenchWorkflowTests(unittest.TestCase):
         ci = (self.repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("gen_schedule_artifacts", ci)
         self.assertIn("diff -ru artifacts/schedules", ci)
-        self.assertIn('--partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"', ci)
 
 
 if __name__ == "__main__":

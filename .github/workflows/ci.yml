@@ -101,6 +101,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
           components: clippy
       - name: Test trinomial arithmetic
         run: cargo test -p akita-algebra --lib --no-default-features --features binary
@@ -123,7 +124,6 @@ jobs:
       - name: Test binary source end-to-end opening
         run: cargo test --release -p akita-pcs --test binary_end_to_end --no-default-features --features parallel,binary,transcript-keccak
 
-
   binary-field:
     name: Binary field arithmetic
     runs-on: ubuntu-latest
@@ -131,6 +131,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
           components: clippy
       - name: Test algebra without the extension
         run: cargo test -p akita-algebra --lib --no-default-features
@@ -266,6 +267,7 @@ jobs:
           shared-key: ci-test-dev-protocol-drift
           add-job-id-key: false
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Trusted dev artifact guard
         run: |
           cargo test --release -p akita-config --features dev-protocol --test trusted_schedule_artifact
@@ -286,38 +288,6 @@ jobs:
           cargo run --release -p akita-planner \
             --features catalog-security,dev-protocol \
             --example catalog_security -- --check
-
-  # The workspace test suite under the dev protocol, sharded like `test`. It
-  # uploads no timing artifacts; `test-timing` reports the default build.
-  test-dev-protocol:
-    name: Test dev protocol (${{ matrix.shard }}/${{ strategy.job-total }})
-    runs-on: GitHubRunner-Large-Public
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        with:
-          cache: false
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: ci-test-dev-protocol
-          add-job-id-key: false
-          cache-on-failure: true
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # carg-nextest
-        with:
-          tool: cargo-nextest
-      - name: Run tests
-        env:
-          SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: ${{ strategy.job-total }}
-        run: |
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-keccak,dev-protocol \
-            --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
@@ -434,6 +404,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
           components: clippy
       - name: Test binary setup and the q24 certificate
         run: |
@@ -453,6 +424,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
           components: clippy
       - name: Test opt-in binary families
         run: cargo test -p akita-challenges --lib --no-default-features --features binary,${{ matrix.backend }}
@@ -488,13 +460,19 @@ jobs:
       - taplo
       - rust-file-lines
       - clippy
+      - binary-trinomial
+      - binary-field
       - machete
       - shared-field
+      - jolt-pins
       - doc
       - test-schedule-artifact-drift
+      - test-dev-protocol-drift
       - test-transcript-backends
       - test-inline-backends
       - test-proof-stream-roundtrips
+      - test-binary-setup
+      - test-binary-challenges
       - script-tests
       - typos
     runs-on: ubuntu-latest

@@ -76,9 +76,9 @@ jobs:
     needs: policy
     if: needs.policy.outputs.run == 'true'
     runs-on: GitHubRunner-Large-Public
-    # The pass takes about 11 minutes. A hung test must not bill the runner up
-    # to the 6-hour default, every night.
-    timeout-minutes: 30
+    # On dev the pass takes about half an hour. A hung test must not bill the
+    # runner up to the 6-hour default, every night.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -114,6 +114,25 @@ jobs:
           path: ${{ runner.temp }}/ci-test-pass-shard-1
           if-no-files-found: warn
           retention-days: 7
+
+  # The same pass with the dev protocol on. It uploads no timing artifacts.
+  test-dev-protocol:
+    name: Test dev protocol
+    needs: policy
+    if: needs.policy.outputs.run == 'true'
+    runs-on: GitHubRunner-Large-Public
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # cargo-nextest
+        with:
+          tool: cargo-nextest
+      - name: Run tests
+        run: cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-keccak,dev-protocol
 
   test-timing:
     name: Test timing
@@ -204,7 +223,7 @@ jobs:
       ${{ (github.event.action == 'labeled' && github.event.label.name != 'run-full-tests')
       && 'Full tests (label ignored)' || 'Full tests gate' }}
     if: always()
-    needs: [policy, test, test-timing]
+    needs: [policy, test, test-timing, test-dev-protocol]
     runs-on: ubuntu-latest
     steps:
       - name: Require the test pass where this event runs it
