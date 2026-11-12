@@ -63,7 +63,8 @@ labelled `run-full-tests`, and the profile benchmarks only when labelled
 `run-benchmarks`. Each night, the full test pass also runs on the heads of
 `main` and `dev` that have no passing run yet. A failure opens a tracking
 issue for that branch, assigned to the logins in the repository variable
-`NIGHTLY_FAILURE_ASSIGNEES`. The issue closes once the branch's head passes.
+`NIGHTLY_FAILURE_ASSIGNEES` for `main` and `NIGHTLY_FAILURE_ASSIGNEES_DEV` for
+`dev`. The issue closes once the branch's head passes.
 Other workflows triggered by pushes or schedules, including the weekly fuzz and
 security runs, run only on `main`.
 
