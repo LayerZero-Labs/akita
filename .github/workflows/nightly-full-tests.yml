@@ -1,0 +1,55 @@
+# Each night, run the full test pass on the heads of main and dev that have no
+# passing run yet. The merge queue already tests every main head it merges, so
+# main normally needs nothing; dev has no queue and runs whenever it changed.
+#
+# The pass is dispatched rather than run here, so each branch runs its own
+# full-tests.yml. That run reports the result in a tracking issue per branch.
+# A head that passed elsewhere, such as in the merge queue, closes its branch's
+# issue here instead.
+name: Nightly full tests
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch the full test pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    steps:
+      - name: Dispatch each branch head without a passing run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for branch in main dev; do
+            if ! gh api "repos/$REPO/contents/.github/workflows/full-tests.yml?ref=$branch" --silent 2>/dev/null; then
+              echo "::notice::$branch has no full-tests.yml yet; skipping it"
+              continue
+            fi
+            sha="$(gh api "repos/$REPO/branches/$branch" --jq .commit.sha)"
+            passed="$(gh api "repos/$REPO/actions/workflows/full-tests.yml/runs?head_sha=$sha&status=success&per_page=100" \
+              --jq '[.workflow_runs[] | select(.event == "merge_group" or .event == "workflow_dispatch")] | first | .html_url // empty')"
+            if [ -n "$passed" ]; then
+              echo "$branch at $sha already passed the full test pass: $passed"
+              # The title that full-tests.yml gives the branch's tracking issue.
+              title="Nightly full tests failing on $branch"
+              issue="$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number,title |
+                jq -r --arg title "$title" 'map(select(.title == $title)) | first | .number // empty')"
+              if [ -n "$issue" ]; then
+                gh issue close "$issue" --repo "$REPO" --comment "Passing at $sha: $passed"
+              fi
+              continue
+            fi
+            gh workflow run full-tests.yml --repo "$REPO" --ref "$branch" -f nightly=true
+            echo "Dispatched the full test pass on $branch at $sha"
+          done

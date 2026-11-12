@@ -36,9 +36,13 @@ through the next sync.
 
 `main` is protected by repository rulesets. A pull request into `main` needs an
 approving review from a member of the maintainer team, given after the most
-recent push, and passing Socket Security checks. `main` keeps a linear history,
-so pull requests merge by squash or rebase. Any contributor with write access
-can merge once these conditions hold.
+recent push, passing Socket Security checks, and passing required CI checks
+(`CI gate`, `Portability gate`, `Doc guardrails`, and `Full tests gate`).
+Pull requests into `main` merge through the merge queue, which squash-merges
+them, so `main` keeps a linear history. The queue reruns the required checks,
+including the full test pass, on the pull request combined with the current
+`main` and every pull request ahead of it, and merges only if they pass. Any
+contributor with write access can add an approved pull request to the queue.
 
 `dev` accepts changes only through pull requests with passing CI, and it
 rejects force pushes and deletion. A pull request must be up to date with `dev`
@@ -51,9 +55,17 @@ maintainer-team approval. Any contributor with write access can merge into
 `main` or verifier-reachable code.
 
 Every workflow that runs on pull requests into `main` also runs on pull
-requests into `dev`, subject to the same path filters. Workflows triggered by
-pushes or schedules, including the weekly fuzz and security runs, run only on
-`main`.
+requests into `dev`, subject to the same path filters. The full test pass
+(`.github/workflows/full-tests.yml`) and the profile benchmarks run on a billed
+large runner. The merge queue runs the full test pass before every merge into
+`main`. A pull request into either branch runs the full test pass only when
+labelled `run-full-tests`, and the profile benchmarks only when labelled
+`run-benchmarks`. Each night, the full test pass also runs on the heads of
+`main` and `dev` that have no passing run yet. A failure opens a tracking
+issue for that branch, assigned to the logins in the repository variable
+`NIGHTLY_FAILURE_ASSIGNEES`. The issue closes once the branch's head passes.
+Other workflows triggered by pushes or schedules, including the weekly fuzz and
+security runs, run only on `main`.
 
 ## Extension contract
 
@@ -134,8 +146,8 @@ protocol. Rules 2 and 3 do not apply to this feature. These rules do:
   the dev protocol's proof size MUST regenerate the dev set with
   `scripts/generate-schedule-artifacts.sh --dev`.
 - The CI job `test-dev-protocol-drift` regenerates the dev schedule set. The
-  CI job `test-dev-protocol` runs the workspace test suite with the feature
-  on.
+  full test pass (`.github/workflows/full-tests.yml`) also runs the workspace
+  test suite with the feature on, as job `test-dev-protocol`.
 - Every change MUST be listed in the table below.
 
 A build with the feature on produces and accepts only dev-protocol proofs. Do

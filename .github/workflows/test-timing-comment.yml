@@ -2,7 +2,7 @@ name: Akita CI Test Timing Comment
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Full tests"]
     types: [completed]
 
 permissions:
@@ -30,6 +30,20 @@ jobs:
             const prs = context.payload.workflow_run.pull_requests || [];
             if (prs.length === 0) {
               core.info('No pull request associated with this workflow run.');
+              core.setOutput('issue-number', '');
+              return;
+            }
+            // Most pull request pushes skip the test pass; only runs that
+            // timed it get a comment.
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+              per_page: 100,
+            });
+            const timing = jobs.find(job => job.name === 'Test timing');
+            if (!timing || timing.conclusion === 'skipped') {
+              core.info('This run skipped the test pass.');
               core.setOutput('issue-number', '');
               return;
             }
@@ -122,19 +136,23 @@ jobs:
                 setBaselineOutput('previous', previousPrRun, 'the previous PR update with a timing artifact');
               }
 
+              // The pass runs on the tree that lands on main in the merge
+              // queue, not on the push to main that follows.
+              const queuePrefix = `gh-readonly-queue/${baseRef}/`;
               const mainRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
                 owner,
                 repo,
-                event: 'push',
-                branch: baseRef,
+                event: 'merge_group',
                 status: 'completed',
                 per_page: 100,
               });
               const mainCandidates = mainRunsResponse.data.workflow_runs.filter(run =>
-                run.name === workflowName && run.conclusion === 'success'
+                run.name === workflowName &&
+                run.conclusion === 'success' &&
+                String(run.head_branch || '').startsWith(queuePrefix)
               );
               const mainRun = await firstRunWithArtifact(mainCandidates, ['success']);
-              setBaselineOutput('main', mainRun, `the latest successful \`${baseRef}\` run`);
+              setBaselineOutput('main', mainRun, `the latest successful \`${baseRef}\` merge queue run`);
             } catch (error) {
               core.warning(`Could not determine timing baselines: ${error.message}`);
             }
