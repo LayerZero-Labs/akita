@@ -128,6 +128,19 @@ impl<F: Field> SetupPrefixSlot<F> {
         self.hint.validate_outer_compression(&plan)
     }
 
+    /// The hint part of this slot, serialized uncompressed without the slot
+    /// id and public commitment, as a release's `hints/` files store it.
+    pub fn hint_bytes(&self) -> Result<Vec<u8>, AkitaError>
+    where
+        F: AkitaSerialize,
+    {
+        let mut out = Vec::with_capacity(self.hint.serialized_size(Compress::No));
+        self.hint
+            .serialize_with_mode(&mut out, Compress::No)
+            .map_err(|error| AkitaError::InvalidSetup(format!("setup-prefix hint: {error}")))?;
+        Ok(out)
+    }
+
     /// Strip prover-only hint material for verifier metadata.
     #[must_use]
     pub fn verifier_slot(&self) -> SetupPrefixVerifierSlot<F> {
@@ -215,6 +228,11 @@ impl<F: Field> SetupPrefixProverRegistry<F> {
 
     pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlot<F>)> {
         self.slots.iter()
+    }
+
+    /// Consume the registry, yielding its slots in slot-id order.
+    pub fn into_slots(self) -> impl Iterator<Item = SetupPrefixSlot<F>> {
+        self.slots.into_values()
     }
 
     #[must_use]

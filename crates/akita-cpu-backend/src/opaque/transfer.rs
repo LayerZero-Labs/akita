@@ -397,7 +397,7 @@ where
         }
         let (schedule, _) = scope.proof_plan()?;
         if schedule.as_ref() != plan.schedule()
-            || &self.prepared()?.expanded.descriptor != plan.setup()
+            || self.prepared()?.expanded.descriptor() != plan.setup()
         {
             return Err(AkitaError::InvalidInput(
                 "export belongs to another admitted proof".into(),
@@ -490,7 +490,7 @@ where
         scope.require_prepared(plan.successor_level())?;
         let (schedule, _) = scope.proof_plan()?;
         if schedule.as_ref() != plan.schedule()
-            || &self.prepared()?.expanded.descriptor != plan.setup()
+            || self.prepared()?.expanded.descriptor() != plan.setup()
         {
             return Err(AkitaError::InvalidInput(
                 "import belongs to another admitted proof".into(),

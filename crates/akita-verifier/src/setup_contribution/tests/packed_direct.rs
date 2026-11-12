@@ -25,18 +25,10 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
         CommitmentRingDims::uniform(TEST_D),
     );
     let setup_len = 10;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * TEST_D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_len * TEST_D)
+            .map(|idx| test_scalar(211 + idx as u128))
+            .collect(),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
     let expected = scan
@@ -89,18 +81,10 @@ fn multi_group_packed_direct_matches_row_fallback() {
         CommitmentRingDims::uniform(TEST_D),
     );
     let setup_len = 10;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * TEST_D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_len * TEST_D)
+            .map(|idx| test_scalar(211 + idx as u128))
+            .collect(),
     );
     let alpha_pows = scalar_powers(test_scalar(3), TEST_D);
     let expected = scan
@@ -141,18 +125,10 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
         },
     );
     let setup_len = 10;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * D,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * D)
-                .map(|idx| test_scalar(211 + idx as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_len * D)
+            .map(|idx| test_scalar(211 + idx as u128))
+            .collect(),
     );
     let alpha = test_scalar(3);
     let alpha_pows_a = scalar_powers(alpha, D);
@@ -200,18 +176,10 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
         },
     );
     let setup_ring_elements = 20usize;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_ring_elements * D_A,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_ring_elements * D_A)
-                .map(|idx| test_scalar(311 + idx as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_ring_elements * D_A)
+            .map(|idx| test_scalar(311 + idx as u128))
+            .collect(),
     );
     let alpha = test_scalar(3);
     let alpha_pows_a = scalar_powers(alpha, D_A);

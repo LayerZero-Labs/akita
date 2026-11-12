@@ -58,6 +58,7 @@ macro_rules! impl_catalog_family {
     };
 }
 
+pub mod preprocessing;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 #[cfg(test)]
@@ -295,7 +296,7 @@ impl<Cfg: CommitmentConfig> TrustedScheduleCatalog<Cfg> {
         Ok(rows)
     }
 
-    fn from_validated(catalog: ValidatedScheduleCatalog) -> Self {
+    pub(crate) fn from_validated(catalog: ValidatedScheduleCatalog) -> Self {
         Self {
             catalog: Arc::new(catalog),
             _cfg: PhantomData,

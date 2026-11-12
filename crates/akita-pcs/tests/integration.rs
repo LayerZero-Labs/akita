@@ -14,6 +14,7 @@ mod distributed_setup_offload_e2e;
 mod dynamic_backends;
 mod embedded_transcript;
 mod fold_linf;
+mod pinned_releases;
 mod primality;
 mod proof_stream_smoke;
 mod protocol_soundness;

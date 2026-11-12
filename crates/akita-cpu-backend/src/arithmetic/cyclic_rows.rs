@@ -21,7 +21,7 @@ where
         validate_digit_row_request(
             row_len,
             digits.len(),
-            prepared.expanded.shared_matrix.num_field_elements() / D,
+            prepared.expanded.shared_matrix().num_field_elements() / D,
         )?;
         prepared.with_shared_ntt::<D, _>(
             NttCacheKey::from_matrix_shape(D, row_len, digits.len(), NttTransformDomain::Cyclic)?,

@@ -5,15 +5,17 @@ use jolt_field::{CanonicalBytes, One, Ring};
 mod extension;
 type F = jolt_field::Prime128Offset6A23801F;
 fn fixture() -> (SetupPolynomialId, Vec<u8>) {
-    let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 6,
-            max_num_batched_polys: 1,
-            num_field_elements: 64,
-            setup_seed: [19; 32].into(),
-        },
-        crate::derive_public_matrix_prefix(64, &[19; 32].into()),
-    );
+    let setup = unsafe {
+        AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 6,
+                max_num_batched_polys: 1,
+                num_field_elements: 64,
+                setup_seed: [19; 32].into(),
+            },
+            crate::derive_public_matrix_prefix(64, &[19; 32].into()),
+        )
+    };
     let poly = SetupPolynomialId::new::<F, F>(&setup, 64).unwrap();
     let q = SetupQuery::evaluation(vec![F::from_u64(3); 6]).unwrap();
     let mut qb = Vec::new();

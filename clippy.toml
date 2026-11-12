@@ -1,0 +1,6 @@
+# A trust anchor is a compile-time constant: an anchor built from run-time
+# bytes voids every guarantee the release loaders give. Declare anchors as
+# `const` items in an anchor crate and allow the lint on that item only.
+disallowed-methods = [
+  { path = "akita_types::preprocessing::TrustAnchor::new", reason = "declare a trust anchor as a `const` item in an anchor crate, with `#[allow(clippy::disallowed_methods)]` on that item" },
+]

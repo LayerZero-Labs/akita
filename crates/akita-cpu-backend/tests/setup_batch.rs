@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>> {
     let seed = [23; 32].into();
-    Arc::new(
+    Arc::new(unsafe {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupDescriptor {
                 max_num_vars: 16,
@@ -30,8 +30,8 @@ fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>>
                 setup_seed: seed,
             },
             derive_public_matrix_prefix(len, &[23; 32].into()),
-        ),
-    )
+        )
+    })
 }
 
 fn batch<B, E>(memory: SetupBatchMemory) -> Vec<u8>
@@ -148,15 +148,20 @@ fn prefix_embedding_and_accumulator_transport_are_bound_to_domain() {
 #[test]
 fn false_setup_answers_are_rejected_by_final_discharge() {
     let source = setup::<F>(512);
-    let mut malicious = (*source).clone();
-    malicious.shared_matrix = akita_params::FlatMatrix::from_flat_data(
-        source
-            .shared_matrix()
-            .as_field_slice()
-            .iter()
-            .map(|&v| v + F::one())
-            .collect(),
-    );
+    // SAFETY: deliberately not seed-derived; the discharge must reject it.
+    let malicious = unsafe {
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            source.descriptor().clone(),
+            akita_params::FlatMatrix::from_flat_data(
+                source
+                    .shared_matrix()
+                    .as_field_slice()
+                    .iter()
+                    .map(|&v| v + F::one())
+                    .collect(),
+            ),
+        )
+    };
     let backend = CpuBackend::<F, F>::new(Arc::new(malicious)).unwrap();
     let domain = SetupPolynomialId::new::<F, F>(&source, 512).unwrap();
     let query = SetupQuery::evaluation(vec![F::from_u64(7); 9]).unwrap();

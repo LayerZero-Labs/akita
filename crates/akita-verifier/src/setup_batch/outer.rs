@@ -37,7 +37,14 @@ where
         .prefix_slots()
         .get(&id)
         .ok_or(AkitaError::InvalidProof)?;
-    transcript::bind_outer_prefix(inherited, slot, successor, grinding, level)?;
+    transcript::bind_outer_prefix(
+        inherited,
+        slot,
+        setup.prefix_commitment_digest(&id)?,
+        successor,
+        grinding,
+        level,
+    )?;
     let claim = akita_types::stage3_claim::<F, E, _>(grinding, level, E::zero())?;
     let mut claims = inherited.claims().to_vec();
     let relation_weight = rs
@@ -198,15 +205,17 @@ mod tests {
 
     #[test]
     fn direct_batch_rejects_false_answers_that_cancel_without_weights() {
-        let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 6,
-                max_num_batched_polys: 1,
-                num_field_elements: 64,
-                setup_seed: [19; 32].into(),
-            },
-            akita_types::derive_public_matrix_prefix(64, &[19; 32].into()),
-        );
+        let setup = unsafe {
+            AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 6,
+                    max_num_batched_polys: 1,
+                    num_field_elements: 64,
+                    setup_seed: [19; 32].into(),
+                },
+                akita_types::derive_public_matrix_prefix(64, &[19; 32].into()),
+            )
+        };
         let domain = SetupPolynomialId::new::<F, F>(&setup, 64).unwrap();
         let claims = [7, 11]
             .into_iter()
@@ -243,15 +252,17 @@ mod tests {
     #[test]
     fn direct_batch_rejects_aggregate_compilation_before_allocating_tables() {
         const LEN: usize = 4096;
-        let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 12,
-                max_num_batched_polys: 1,
-                num_field_elements: LEN,
-                setup_seed: [19; 32].into(),
-            },
-            akita_types::derive_public_matrix_prefix(LEN, &[19; 32].into()),
-        );
+        let setup = unsafe {
+            AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 12,
+                    max_num_batched_polys: 1,
+                    num_field_elements: LEN,
+                    setup_seed: [19; 32].into(),
+                },
+                akita_types::derive_public_matrix_prefix(LEN, &[19; 32].into()),
+            )
+        };
         let polynomial = SetupPolynomialId::new::<F, F>(&setup, LEN).unwrap();
         let query = SetupQuery::evaluation(vec![F::one(); 12]).unwrap();
         let per_claim = query.compilation_bytes(&polynomial, 2).unwrap();

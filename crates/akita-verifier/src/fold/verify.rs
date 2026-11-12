@@ -192,7 +192,7 @@ where
             }
             let (grinding_plan, descriptor_bytes) =
                 transcript_instance_descriptor::<Cfg::Field, Cfg>(
-                    &setup.expanded().descriptor,
+                    setup.expanded().descriptor(),
                     &opening_batch,
                     selection,
                     schedule,

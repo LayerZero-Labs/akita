@@ -32,7 +32,9 @@ pub use opaque::{
     RootPolynomialEvaluator, SuccessorEncoding, SuccessorSection, SuccessorSectionDescriptor,
 };
 pub use opaque::{CommitOutput, CommitmentHandle, CpuSource, SourceHandle};
-pub use setup::AkitaProverSetup;
+pub use setup::{
+    load_prover_setup, AkitaProverSetup, CpuPrefixDeriver, PinnedProverSetup, MAX_HINT_FILE_BYTES,
+};
 pub use sources::{DensePoly, OneHotIndex, OneHotPoly, OneHotSource};
 
 /// Extension contracts for application-owned CPU polynomial sources.

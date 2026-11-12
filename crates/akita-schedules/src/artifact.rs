@@ -191,6 +191,50 @@ impl ValidatedScheduleCatalog {
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
             resolved.push(row);
         }
+        Self::assemble(family_name, *policy, resolved)
+    }
+
+    /// Extend this complete catalog with `rows`, auditing only the new rows.
+    ///
+    /// The result is the catalog [`Self::try_new`] builds over every row of
+    /// `self` and every row of `rows` under the same family and policy: the
+    /// same row order, lookup keys, duplicate checks, and catalog digest.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a selected-row view, a combined row count outside
+    /// `1..=MAX_TRUSTED_CATALOG_ROWS`, an invalid new row, or a duplicate
+    /// lookup key or row identity.
+    pub fn extend(
+        &self,
+        rows: impl IntoIterator<Item = (CommittedGroupBatchProfile, FoldSchedule)>,
+        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    ) -> Result<Self, AkitaError> {
+        self.validate_complete()?;
+        let room = MAX_TRUSTED_CATALOG_ROWS.saturating_sub(self.rows_by_digest.len());
+        let rows = rows.into_iter().take(room + 1).collect::<Vec<_>>();
+        if rows.len() > room {
+            return Err(AkitaError::InvalidSetup(format!(
+                "trusted schedule catalog row count exceeds {MAX_TRUSTED_CATALOG_ROWS}"
+            )));
+        }
+        let mut resolved = self.rows_by_digest.clone();
+        resolved.reserve(rows.len());
+        for (profiles, schedule) in rows {
+            let row = ResolvedScheduleRow::try_new(profiles, schedule, &self.policy)?;
+            validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
+            resolved.push(row);
+        }
+        Self::assemble(self.family_name.clone(), self.policy, resolved)
+    }
+
+    /// Order audited rows by digest, index their lookup keys, reject
+    /// duplicates, and compute the catalog digest.
+    fn assemble(
+        family_name: String,
+        policy: PlannerPolicy,
+        mut resolved: Vec<ResolvedScheduleRow>,
+    ) -> Result<Self, AkitaError> {
         resolved.sort_by_key(|row| row.selection().row_digest);
         let mut rows_by_key = resolved
             .iter()
@@ -229,14 +273,14 @@ impl ValidatedScheduleCatalog {
             ));
         }
 
-        let policy_digest = policy_digest(policy);
+        let policy_digest = policy_digest(&policy);
         let catalog_digest = catalog_digest(
             &family_name,
             policy_digest,
             resolved.iter().map(|row| row.selection().row_digest),
         );
         Ok(Self {
-            policy: *policy,
+            policy,
             family_name,
             policy_digest,
             catalog_digest,

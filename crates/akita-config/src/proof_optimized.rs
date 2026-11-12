@@ -87,7 +87,7 @@ where
     // and the fold tail, so it dominates any per-level recomputation here.
     schedule.root.params.validate_opening_batch(layout)?;
     let required_field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
-    let available_field_elements = setup.shared_matrix.as_field_slice().len();
+    let available_field_elements = setup.shared_matrix().as_field_slice().len();
     if required_field_elements <= available_field_elements {
         return Ok(());
     }
@@ -112,7 +112,7 @@ pub fn verifier_schedule_fits_setup(
     mode: akita_params::SetupMode,
 ) -> Result<bool, AkitaError> {
     let required = verifier_setup_matrix_capacity_for_schedule(schedule, layout, mode)?;
-    Ok(required.num_field_elements <= setup.shared_matrix.as_field_slice().len())
+    Ok(required.num_field_elements <= setup.shared_matrix().as_field_slice().len())
 }
 
 // ---------------------------------------------------------------------------

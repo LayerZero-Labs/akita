@@ -124,10 +124,10 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
             ));
         }
         let required_num_field_elements = key.num_field_elements()?;
-        if required_num_field_elements > self.expanded.shared_matrix.num_field_elements() {
+        if required_num_field_elements > self.expanded.shared_matrix().num_field_elements() {
             return Err(AkitaError::InvalidSetup(format!(
                 "NTT prefix requires {required_num_field_elements} field elements but setup has {}",
-                self.expanded.shared_matrix.num_field_elements()
+                self.expanded.shared_matrix().num_field_elements()
             )));
         }
         let slot = prepare_ntt_slot_on_prepared(self, key)?;

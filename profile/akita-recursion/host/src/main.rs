@@ -159,13 +159,15 @@ macro_rules! strict_decode_and_verify {
         let decoded =
             AkitaJoltInputs::<$field, $d, CaseExt>::read_from_bytes::<$cfg>(inner_blob, &schedules)
                 .map_err(|err| format!("strict input decode failed: {err}"))?;
-        AkitaVerifier::for_selection(
-            decoded.verifier_setup.clone(),
-            schedules.clone(),
-            decoded.schedule_selection,
-            None,
-            akita_verifier::SetupMode::Check,
-        )
+        unsafe {
+            AkitaVerifier::for_selection(
+                decoded.verifier_setup.clone(),
+                schedules.clone(),
+                decoded.schedule_selection,
+                None,
+                akita_verifier::SetupMode::Check,
+            )
+        }
         .map_err(|err| format!("strict host verifier setup failed: {err}"))?
         .batched_verify(
             &decoded.proof,
@@ -193,13 +195,15 @@ macro_rules! strict_fp128_preflight {
             decoded.schedule_selection.row_digest,
         )
         .map_err(|err| format!("prepared verifier cache build failed: {err}"))?;
-        AkitaVerifier::for_selection(
-            decoded.verifier_setup.clone(),
-            schedules.clone(),
-            decoded.schedule_selection,
-            Some(TrustedTerminalCache::Decode(&cache)),
-            akita_verifier::SetupMode::Check,
-        )
+        unsafe {
+            AkitaVerifier::for_selection(
+                decoded.verifier_setup.clone(),
+                schedules.clone(),
+                decoded.schedule_selection,
+                Some(TrustedTerminalCache::Decode(&cache)),
+                akita_verifier::SetupMode::Check,
+            )
+        }
         .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?
         .batched_verify(
             &decoded.proof,

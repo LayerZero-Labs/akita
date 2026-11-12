@@ -26,8 +26,8 @@ the next 8-byte word.
 In both modes, Akita's first absorbs are its binding of the instance, made by
 `bind_instance` as one public message:
 
-1. Akita's protocol tag, `akita-pcs/transcript/v8/sha3` zero-padded to 32
-   bytes (`akita-pcs/transcript/v8/keccak` when the application selects
+1. Akita's protocol tag, `akita-pcs/transcript/v9/sha3` zero-padded to 32
+   bytes (`akita-pcs/transcript/v9/keccak` when the application selects
    Keccak-256 digests). The tag names the protocol, its version and the digest
    hash. The version fixes the field challenge codec, the proof-of-work
    layout, the absorb layout and the sparse message codec, so changing any of

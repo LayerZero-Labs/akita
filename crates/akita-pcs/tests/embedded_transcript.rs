@@ -5,11 +5,11 @@ use crate::common;
 
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend};
 use akita_error::AkitaError;
-use akita_pcs::AkitaCommitmentScheme;
+use akita_pcs::{AkitaCommitmentScheme, AkitaVerifier};
 use akita_transcript::{
     new_prover_channel, new_verifier_channel, ProverChannel, ProverTranscript, VerifierChannel,
 };
-use akita_types::{AkitaVerifierSetup, PendingEof};
+use akita_types::PendingEof;
 use akita_verifier::SetupPolicy;
 use common::*;
 use jolt_field::One;
@@ -29,7 +29,7 @@ struct Fixture {
     scheme: AkitaCommitmentScheme<Cfg>,
     setup: AkitaProverSetup<F>,
     stack: CpuBackend<F, F>,
-    verifier_setup: AkitaVerifierSetup<F>,
+    verifier: AkitaVerifier<Cfg>,
     commitment: CommittedGroup<F>,
     hint: CommitmentHandle<F, F>,
     point: Vec<F>,
@@ -55,8 +55,8 @@ impl Fixture {
         let point = random_point(NUM_VARS, 0x8181);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier = self_derived_verifier(&scheme, &setup);
         let CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -71,7 +71,7 @@ impl Fixture {
             scheme,
             setup,
             stack,
-            verifier_setup,
+            verifier,
             commitment,
             hint,
             point,
@@ -132,15 +132,13 @@ impl Fixture {
         opening: F,
         commitment: &CommittedGroup<F>,
     ) -> Result<(), AkitaError> {
-        self.scheme
-            .verifier(self.verifier_setup.clone())?
-            .batched_verify(
-                proof,
-                session,
-                verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
-                BasisMode::Lagrange,
-                SetupPolicy::Check(None),
-            )
+        self.verifier.batched_verify(
+            proof,
+            session,
+            verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
+            BasisMode::Lagrange,
+            SetupPolicy::Check(None),
+        )
     }
 
     /// Run the caller's verifier up to Akita's end; the caller then finishes.
@@ -154,14 +152,12 @@ impl Fixture {
         state.public_message(&BytesMsg(CALLER_STATEMENT));
         let before = receive_caller_message(state)?;
         assert_eq!(before, CALLER_BEFORE);
-        self.scheme
-            .verifier(self.verifier_setup.clone())?
-            .batched_verify_embedded(
-                state,
-                verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
-                BasisMode::Lagrange,
-                SetupPolicy::Check(None),
-            )
+        self.verifier.batched_verify_embedded(
+            state,
+            verify_input::<Cfg>(point, &[opening], commitment, self.scheme.schedules()),
+            BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
+        )
     }
 
     /// A different valid commitment with the same profile.
@@ -216,21 +212,18 @@ fn standalone_is_embedded_on_a_fresh_session() {
 
         let mut verifier = new_verifier_channel(SESSION, &standalone);
         let pending = fixture
-            .scheme
-            .verifier(fixture.verifier_setup.clone())
-            .and_then(|verifier_scheme| {
-                verifier_scheme.batched_verify_embedded(
-                    &mut verifier,
-                    verify_input::<Cfg>(
-                        &fixture.point,
-                        &[fixture.opening],
-                        &fixture.commitment,
-                        fixture.scheme.schedules(),
-                    ),
-                    BasisMode::Lagrange,
-                    SetupPolicy::Check(None),
-                )
-            })
+            .verifier
+            .batched_verify_embedded(
+                &mut verifier,
+                verify_input::<Cfg>(
+                    &fixture.point,
+                    &[fixture.opening],
+                    &fixture.commitment,
+                    fixture.scheme.schedules(),
+                ),
+                BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
+            )
             .expect("embedded verify");
         pending.check_eof(verifier).expect("eof");
     });

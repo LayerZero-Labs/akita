@@ -166,13 +166,15 @@ fn run(signed: bool) {
     let proof = prove(owners);
     assert_eq!(converted.load(Ordering::Relaxed), 1);
     assert_eq!(proof, prove(vec![a; levels]));
-    let verifier = akita_verifier::AkitaVerifier::<Cfg>::for_selection(
-        setup.to_verifier_setup(capacity).unwrap(),
-        catalog,
-        selection,
-        None,
-        akita_verifier::SetupMode::Check,
-    )
+    let verifier = unsafe {
+        akita_verifier::AkitaVerifier::<Cfg>::for_selection(
+            setup.to_verifier_setup(capacity).unwrap(),
+            catalog,
+            selection,
+            None,
+            akita_verifier::SetupMode::Check,
+        )
+    }
     .unwrap();
     let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         vec![F::from_u64(2); nv],

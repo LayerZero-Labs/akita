@@ -163,21 +163,35 @@ reported separately.
 
 ## Trusted benchmark setup
 
-The host always performs strict setup decoding and Akita verification before
-the guest runs. For cycle measurement, the RISC-V benchmark guest then uses the
-already checked expanded setup matrix directly. This keeps the benchmark
-focused on transport and verifier execution.
+This profiling harness passes the verifier setup through guest input, so it is
+outside the guarantees of pinned releases: it measures transport and verifier
+execution, not a production trust boundary. The host performs strict setup
+decoding and Akita verification before the guest runs, and the benchmark guest
+then uses the already checked expanded setup matrix directly.
 
-A deployment can preserve the same trust boundary by authenticating the setup
-package outside the guest. Strict setup decoding inside the guest re-derives
-the public matrix from the seed, so it removes the need to trust the matrix
-bytes. It does not recompute the setup-prefix commitments, and it does not
-establish where the schedule catalog came from. Those remain inputs that the
-deployment must authenticate, for example through the guest program or its
-public input. Authenticating them fixes the bytes. It still relies on whoever
-derived them. The normal guest
-feature keeps strict decoding enabled; the host opts into the benchmark path
-only for the ELF it builds through the pinned Jolt SDK.
+A production guest reads no preprocessing from its input. It embeds the trust
+anchor, the release manifest with its set record, the set's registry entries,
+the catalog view of the row it verifies, the matrix prefix that row reads, and
+the row's terminal caches. It loads them with `load_guest_verifier_setup`, a
+single-row load that checks the anchor, the set record, and the embedded
+release files like a host loader, but takes the embedded matrix prefix instead
+of deriving the matrix from the seed.
+
+Hashing the matrix prefix and terminal caches would cost the guest too many
+cycles, so it issues them through the guest-only `unsafe fn`s
+`PinnedMatrixPrefix::embedded_unchecked` and
+`PinnedTerminalCache::embedded_unchecked`. Their soundness contract is that
+the embedded bytes are the matrix prefix derived from the release's seed and
+the terminal caches the release determines. A guest crate denies every other
+unchecked constructor with `clippy::disallowed_methods`, for example:
+
+```toml
+disallowed-methods = [
+  { path = "akita_types::AkitaVerifierSetup::from_parts", reason = "build verifiers with the release loader" },
+  { path = "akita_verifier::AkitaVerifier::new", reason = "use AkitaVerifier::from_pinned" },
+  { path = "akita_verifier::AkitaVerifier::for_selection", reason = "use AkitaVerifier::from_pinned" },
+]
+```
 
 ## Keep the integration current
 

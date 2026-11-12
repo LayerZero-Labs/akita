@@ -60,3 +60,40 @@ fn runtime_policy_rejects_invalid_geometry() {
         .is_err());
     }
 }
+
+/// A loader merges program rows into a base catalog by auditing only the new
+/// rows; the result must be the catalog built from every row at once.
+#[test]
+fn extending_a_catalog_matches_building_it_from_every_row() {
+    let chunking = ChunkedWitnessCfg::default_non_chunked();
+    let full = crate::test_support::workspace_schedule_catalog::<OneHot>(chunking).unwrap();
+    let rows = full
+        .rows()
+        .map(|row| (row.profiles().clone(), row.schedule().clone()))
+        .collect::<Vec<_>>();
+    let (base_rows, extra_rows) = rows.split_at(rows.len() / 2);
+    let policy = policy_of::<OneHot>(chunking);
+    let base = ValidatedScheduleCatalog::try_new(
+        OneHot::schedule_family_name(),
+        base_rows.iter().cloned(),
+        &policy,
+        OneHot::ring_challenge_config,
+    )
+    .unwrap();
+    let extended = base
+        .extend(extra_rows.iter().cloned(), OneHot::ring_challenge_config)
+        .unwrap();
+    assert_eq!(extended.catalog_digest(), full.catalog_digest());
+    assert_eq!(
+        extended.to_artifact_bytes().unwrap(),
+        full.to_artifact_bytes().unwrap()
+    );
+    assert!(
+        base.extend(
+            base_rows[..1].iter().cloned(),
+            OneHot::ring_challenge_config
+        )
+        .is_err(),
+        "a row already in the catalog"
+    );
+}

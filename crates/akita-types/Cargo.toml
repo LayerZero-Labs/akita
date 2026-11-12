@@ -22,6 +22,7 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 rand_core = "0.6"
+sha3 = "0.12.0"
 shake = "0.1.0"
 tracing = "0.1"
 
