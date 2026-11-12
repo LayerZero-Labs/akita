@@ -60,8 +60,10 @@ requests into `dev`, subject to the same path filters. The full test pass
 large runner. The merge queue runs the full test pass before every merge into
 `main`. A pull request into either branch runs the full test pass only when
 labelled `run-full-tests`, and the profile benchmarks only when labelled
-`run-benchmarks`. Workflows triggered by pushes
-or schedules, including the weekly fuzz and security runs, run only on `main`.
+`run-benchmarks`. Each night, the full test pass also runs on the heads of
+`main` and `dev` that have no passing run yet, and a failure opens a tracking
+issue for that branch. Other workflows triggered by pushes or schedules,
+including the weekly fuzz and security runs, run only on `main`.
 
 ## Extension contract
 

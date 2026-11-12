@@ -3,7 +3,8 @@
 # a merge into main or someone asks for it:
 #   - in the merge queue for main, on the exact tree that lands;
 #   - on a pull request labelled run-full-tests, from the labelling onward;
-#   - on manual dispatch.
+#   - on manual dispatch, and nightly on the heads of main and dev that lack a
+#     passing run (nightly-full-tests.yml).
 # Other pull request pushes skip it, including pushes to pull requests into
 # dev. The CI workflow runs every other check on standard runners for every
 # push.
@@ -15,6 +16,11 @@ on:
     types: [opened, synchronize, reopened, labeled]
   merge_group:
   workflow_dispatch:
+    inputs:
+      nightly:
+        description: Report the result in the branch's nightly tracking issue
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -204,4 +210,38 @@ jobs:
             echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' > /dev/null
           else
             echo "$RESULTS" | jq -e '.policy.result == "success"' > /dev/null
+          fi
+
+  # A dispatched run notifies nobody, so a nightly run keeps one open issue per
+  # failing branch: it opens the issue, comments while the failure persists,
+  # and closes it once the branch passes. A cancelled pass reports nothing.
+  nightly-report:
+    name: Report the nightly result
+    needs: [test, gate]
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.nightly && needs.test.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update, or close the branch's tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          RESULT: ${{ needs.gate.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly full tests failing on $BRANCH"
+          issue="$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number,title |
+            jq -r --arg title "$title" 'map(select(.title == $title)) | first | .number // empty')"
+          if [ "$RESULT" = success ]; then
+            if [ -n "$issue" ]; then
+              gh issue close "$issue" --repo "$REPO" --comment "Passing again at $GITHUB_SHA: $RUN_URL"
+            fi
+          elif [ -n "$issue" ]; then
+            gh issue comment "$issue" --repo "$REPO" --body "Still failing at $GITHUB_SHA: $RUN_URL"
+          else
+            gh issue create --repo "$REPO" --title "$title" \
+              --body "The nightly full test pass failed on \`$BRANCH\` at $GITHUB_SHA: $RUN_URL"
           fi
