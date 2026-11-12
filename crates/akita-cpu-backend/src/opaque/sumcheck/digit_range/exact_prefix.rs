@@ -1,12 +1,17 @@
 use akita_error::AkitaError;
 use jolt_field::{solinas::parallel::*, Field};
 
-const EXACT_PREFIX_SEQUENTIAL_LEN: usize = 1 << 12;
+// Keep small folds local: distributing a few thousand field operations costs
+// more than executing them, and makes each round wait for another worker.
+const EXACT_PREFIX_SEQUENTIAL_LEN: usize = 1 << 15;
+#[cfg(feature = "parallel")]
+const EXACT_PREFIX_MIN_TASK_LEN: usize = 1 << 12;
 
 /// Explicit prefix of a power-of-two table followed by one implicit default value.
 pub(crate) struct ExactPrefixTable<T: Copy> {
     domain_len: usize,
     explicit: Vec<T>,
+    scratch: Vec<T>,
     default: T,
 }
 
@@ -44,6 +49,7 @@ impl ExactPrefixLayout {
         ExactPrefixTable {
             domain_len: self.domain_len,
             explicit: cfg_into_iter!(0..self.explicit_len).map(value_at).collect(),
+            scratch: Vec::new(),
             default,
         }
     }
@@ -55,6 +61,7 @@ impl<T: Copy> ExactPrefixTable<T> {
         Ok(Self {
             domain_len: layout.domain_len,
             explicit,
+            scratch: Vec::new(),
             default,
         })
     }
@@ -89,41 +96,38 @@ impl<T: Copy> ExactPrefixTable<T> {
             ));
         }
         let next_explicit_len = self.explicit.len().div_ceil(2);
-        let explicit_len = self.explicit.len();
         let default = self.default;
-        let sequential_len = next_explicit_len.min(EXACT_PREFIX_SEQUENTIAL_LEN);
-        for pair_index in 0..sequential_len {
-            let left = self.explicit[2 * pair_index];
-            let right = self
-                .explicit
-                .get(2 * pair_index + 1)
-                .copied()
-                .unwrap_or(default);
-            self.explicit[pair_index] = fold_pair(left, right);
-        }
-
-        let mut wave_start = sequential_len;
-        while wave_start < next_explicit_len {
-            // Pair i writes i and reads 2i..=2i+1. Once [0, a) is folded,
-            // [a, 2a) has disjoint inputs and may run in parallel.
-            let wave_end = (2 * wave_start).min(next_explicit_len);
-            let source_start = 2 * wave_start;
-            let (output_prefix, source_suffix) = self.explicit.split_at_mut(source_start);
-            let output = &mut output_prefix[wave_start..wave_end];
-            let source_len = (2 * output.len()).min(explicit_len - source_start);
-            let source = &source_suffix[..source_len];
-            cfg_iter_mut!(output)
-                .enumerate()
-                .for_each(|(pair_index, folded)| {
-                    let left = source[2 * pair_index];
-                    let right = source.get(2 * pair_index + 1).copied().unwrap_or(default);
-                    *folded = fold_pair(left, right);
-                });
-            wave_start = wave_end;
+        if !cfg!(feature = "parallel") || next_explicit_len < EXACT_PREFIX_SEQUENTIAL_LEN {
+            for pair_index in 0..next_explicit_len {
+                let left = self.explicit[2 * pair_index];
+                let right = self
+                    .explicit
+                    .get(2 * pair_index + 1)
+                    .copied()
+                    .unwrap_or(default);
+                self.explicit[pair_index] = fold_pair(left, right);
+            }
+            self.explicit.truncate(next_explicit_len);
+        } else {
+            // In-place parallel output overlaps later inputs. Doubling waves
+            // avoid the overlap but impose a join at every wave. A reusable
+            // destination lets all pairs fold in one independent pass instead.
+            #[cfg(feature = "parallel")]
+            {
+                let source = &self.explicit;
+                cfg_into_iter!(0..next_explicit_len)
+                    .with_min_len(EXACT_PREFIX_MIN_TASK_LEN)
+                    .map(|pair_index| {
+                        let left = source[2 * pair_index];
+                        let right = source.get(2 * pair_index + 1).copied().unwrap_or(default);
+                        fold_pair(left, right)
+                    })
+                    .collect_into_vec(&mut self.scratch);
+            }
+            std::mem::swap(&mut self.explicit, &mut self.scratch);
         }
 
         self.default = fold_pair(self.default, self.default);
-        self.explicit.truncate(next_explicit_len);
         self.domain_len /= 2;
         Ok(())
     }
@@ -255,15 +259,15 @@ mod tests {
     }
 
     #[test]
-    fn exact_prefix_fold_matches_dense_table_across_parallel_waves() {
-        let domain_len = 1 << 16;
+    fn exact_prefix_fold_matches_dense_table_across_execution_boundaries() {
+        let domain_len = 1 << 18;
         let challenge = F::from_u64(17);
         let default = F::from_u64(91);
         let output_boundaries = [
+            EXACT_PREFIX_SEQUENTIAL_LEN / 2,
             EXACT_PREFIX_SEQUENTIAL_LEN,
             2 * EXACT_PREFIX_SEQUENTIAL_LEN,
             4 * EXACT_PREFIX_SEQUENTIAL_LEN,
-            8 * EXACT_PREFIX_SEQUENTIAL_LEN,
         ];
         let explicit_lengths = output_boundaries.into_iter().flat_map(|boundary| {
             [
@@ -299,6 +303,27 @@ mod tests {
             assert_eq!(compact.default, default);
             assert_eq!(compact.domain_len, domain_len / 2);
         }
+    }
+
+    #[test]
+    fn exact_prefix_reuses_output_across_rounds_with_an_odd_prefix() {
+        let domain_len = 1 << 18;
+        let explicit_len = 4 * EXACT_PREFIX_SEQUENTIAL_LEN + 1;
+        let mut expected = (0..explicit_len).map(|i| i as u64 + 3).collect::<Vec<_>>();
+        let mut compact = ExactPrefixTable::new(domain_len, expected.clone(), 91).unwrap();
+        expected.resize(domain_len, 91);
+        let fold = |left: u64, right: u64| left.wrapping_add(right.wrapping_mul(17));
+        while expected.len() > 1 {
+            compact.fold_in_place(fold).unwrap();
+            for i in 0..expected.len() / 2 {
+                expected[i] = fold(expected[2 * i], expected[2 * i + 1]);
+            }
+            expected.truncate(expected.len() / 2);
+            for (index, value) in expected.iter().enumerate() {
+                assert_eq!(compact.value_or_default(index), *value);
+            }
+        }
+        assert_eq!(compact.final_value(), Some(expected[0]));
     }
 
     #[test]
