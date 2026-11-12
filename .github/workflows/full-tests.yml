@@ -41,24 +41,47 @@ jobs:
     name: Select the test pass for this event
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
     outputs:
       run: ${{ steps.policy.outputs.run }}
     steps:
       - id: policy
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
           ADDED_LABEL: ${{ github.event.label.name }}
           LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'run-full-tests') }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           run=false
           case "$EVENT" in
             merge_group|workflow_dispatch) run=true ;;
             pull_request)
-              if [ "$ACTION" = labeled ]; then
-                if [ "$ADDED_LABEL" = run-full-tests ]; then run=true; fi
-              elif [ "$LABELLED" = true ]; then
+              if [ "$ACTION" != labeled ]; then
+                run="$LABELLED"
+              elif [ "$ADDED_LABEL" = run-full-tests ]; then
                 run=true
+              elif [ "$LABELLED" = true ]; then
+                # Another label on a pull request that runs the pass. This run's
+                # gate becomes the commit's latest Full tests gate, so it must
+                # keep the result of the latest pass on the commit. A pass still
+                # running publishes its gate after this one.
+                runs="$(gh api "repos/$REPO/actions/workflows/full-tests.yml/runs?event=pull_request&head_sha=$HEAD_SHA&status=completed&per_page=100" \
+                  --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id")"
+                for id in $runs; do
+                  result="$(gh api "repos/$REPO/actions/runs/$id/jobs" --jq '.jobs[] | select(.name == "Test") | .conclusion')"
+                  case "$result" in
+                    ''|skipped) continue ;;
+                    success) break ;;
+                    *)
+                      echo "::error::The full test pass on $HEAD_SHA ended in $result: $GITHUB_SERVER_URL/$REPO/actions/runs/$id. Rerun it or push a fix."
+                      exit 1
+                      ;;
+                  esac
+                done
               fi
               ;;
           esac

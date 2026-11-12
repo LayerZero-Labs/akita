@@ -4,6 +4,8 @@
 #
 # The pass is dispatched rather than run here, so each branch runs its own
 # full-tests.yml. That run reports the result in a tracking issue per branch.
+# A head that passed elsewhere, such as in the merge queue, closes its branch's
+# issue here instead.
 name: Nightly full tests
 
 on:
@@ -22,6 +24,7 @@ jobs:
     permissions:
       actions: write
       contents: read
+      issues: write
     steps:
       - name: Dispatch each branch head without a passing run
         env:
@@ -35,9 +38,16 @@ jobs:
             fi
             sha="$(gh api "repos/$REPO/branches/$branch" --jq .commit.sha)"
             passed="$(gh api "repos/$REPO/actions/workflows/full-tests.yml/runs?head_sha=$sha&status=success&per_page=100" \
-              --jq '[.workflow_runs[] | select(.event == "merge_group" or .event == "workflow_dispatch")] | length')"
-            if [ "$passed" -gt 0 ]; then
-              echo "$branch at $sha already passed the full test pass"
+              --jq '[.workflow_runs[] | select(.event == "merge_group" or .event == "workflow_dispatch")] | first | .html_url // empty')"
+            if [ -n "$passed" ]; then
+              echo "$branch at $sha already passed the full test pass: $passed"
+              # The title that full-tests.yml gives the branch's tracking issue.
+              title="Nightly full tests failing on $branch"
+              issue="$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number,title |
+                jq -r --arg title "$title" 'map(select(.title == $title)) | first | .number // empty')"
+              if [ -n "$issue" ]; then
+                gh issue close "$issue" --repo "$REPO" --comment "Passing at $sha: $passed"
+              fi
               continue
             fi
             gh workflow run full-tests.yml --repo "$REPO" --ref "$branch" -f nightly=true

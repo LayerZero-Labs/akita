@@ -82,8 +82,10 @@ the driver checks the declaration against its actual selected config. Audited
 pre-contract revisions use frozen workload snapshots; unknown older drivers
 are explicitly unsupported. For supported cases, the workflow builds the head
 and takes the merge-base binary from the push to `main` that benchmarked it,
-when that binary was built with the same features, compiler flags, and
-compiler. Otherwise it builds the merge base too. It runs both revisions
+when that binary was built with the same features, compiler flags, compiler,
+and checkout path. That binary reads schedule artifacts from the pull request
+checkout, so the workflow takes it only when those artifacts match the merge
+base. Otherwise it builds the merge base too. It runs both revisions
 interleaved on the same machine so changes in runner load affect them as evenly
 as possible. An unsupported mode or catalog key runs at the head
 only, with an explicit reason and no merge-base percentage comparison. New

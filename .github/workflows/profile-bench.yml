@@ -230,11 +230,16 @@ jobs:
           done
           # The push to main that benchmarked the merge base uploaded its binary.
           # Reuse it only when it was built exactly as the build below would build
-          # it: same features, flags and compiler.
-          if (cd "$RUNNER_TEMP/bench-base" &&
+          # it: same features, flags and compiler. The binary also reads schedule
+          # artifacts at runtime from the checkout it was built in, which here is
+          # this pull request's checkout at the same path. So reuse it only when
+          # that checkout holds the merge base's schedule artifacts.
+          if ! git diff --quiet "$AKITA_BENCH_MERGE_BASE_SHA" -- artifacts/schedules; then
+            echo "This checkout's schedule artifacts differ from the merge base; building it"
+          elif (cd "$RUNNER_TEMP/bench-base" &&
               python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROFILE_FEATURE"); then
-            expected="$(printf 'features=%s\nrustflags=%s\nrustc=%s' \
-              "$features" "$RUSTFLAGS" "$(cd "$RUNNER_TEMP/bench-base" && rustc -V)")"
+            expected="$(printf 'features=%s\nrustflags=%s\nrustc=%s\ncheckout=%s' \
+              "$features" "$RUSTFLAGS" "$(cd "$RUNNER_TEMP/bench-base" && rustc -V)" "$GITHUB_WORKSPACE")"
             main_run="$(gh api \
               "repos/$GITHUB_REPOSITORY/actions/workflows/profile-bench.yml/runs?event=push&branch=main&head_sha=$AKITA_BENCH_MERGE_BASE_SHA" \
               --jq '.workflow_runs[0].id // empty' || true)"
@@ -279,7 +284,8 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             mkdir -p "$RUNNER_TEMP/profile-binary"
             cp target/release/examples/profile "$RUNNER_TEMP/profile-binary/profile"
-            printf 'features=%s\nrustflags=%s\nrustc=%s\n' "$features" "$RUSTFLAGS" "$(rustc -V)" \
+            printf 'features=%s\nrustflags=%s\nrustc=%s\ncheckout=%s\n' \
+              "$features" "$RUSTFLAGS" "$(rustc -V)" "$GITHUB_WORKSPACE" \
               > "$RUNNER_TEMP/profile-binary/build.txt"
           fi
 
