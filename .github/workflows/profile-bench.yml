@@ -1,3 +1,7 @@
+# Benchmarks run on the large runner, which is billed per minute. Every push to
+# main benchmarks and uploads its profile binaries, which later pull requests
+# reuse as their merge-base baseline. A pull request benchmarks only with the
+# run-benchmarks label: once when labelled, then on every push while labelled.
 name: Akita Profile Benchmarks
 
 on:
@@ -5,6 +9,7 @@ on:
     branches: [main]
   pull_request:
     branches: ["**", main]
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
@@ -39,7 +44,10 @@ env:
   # worst-case bytes, and expanded query counts by fold and query.
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Adding any other label must not cancel a running benchmark.
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{
+    (github.event.action == 'labeled' && github.event.label.name != 'run-benchmarks') && github.run_id || 'bench' }}
   cancel-in-progress: true
 
 jobs:
@@ -49,6 +57,10 @@ jobs:
   # smoke fallback, metadata, build, and supported baseline runtime errors fail CI.
   bench:
     name: Bench (${{ matrix.group.name }})
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'run-benchmarks') ||
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-benchmarks'))
     runs-on: GitHubRunner-Large-Public
     strategy:
       fail-fast: false
@@ -198,6 +210,8 @@ jobs:
         if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_AVAILABLE == '1'
         env:
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
+          AKITA_BENCH_GROUP: ${{ matrix.group.name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
           mkdir -p "$RUNNER_TEMP/bench-bins"
@@ -214,6 +228,31 @@ jobs:
               break
             fi
           done
+          # The push to main that benchmarked the merge base uploaded its binary.
+          # Reuse it only when it was built exactly as the build below would build
+          # it: same features, flags and compiler. The binary also reads schedule
+          # artifacts at runtime from the checkout it was built in, which here is
+          # this pull request's checkout at the same path. So reuse it only when
+          # that checkout holds the merge base's schedule artifacts.
+          if ! git diff --quiet "$AKITA_BENCH_MERGE_BASE_SHA" -- artifacts/schedules; then
+            echo "This checkout's schedule artifacts differ from the merge base; building it"
+          elif (cd "$RUNNER_TEMP/bench-base" &&
+              python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROFILE_FEATURE"); then
+            expected="$(printf 'features=%s\nrustflags=%s\nrustc=%s\ncheckout=%s' \
+              "$features" "$RUSTFLAGS" "$(cd "$RUNNER_TEMP/bench-base" && rustc -V)" "$GITHUB_WORKSPACE")"
+            main_run="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/profile-bench.yml/runs?event=push&branch=main&head_sha=$AKITA_BENCH_MERGE_BASE_SHA" \
+              --jq '.workflow_runs[0].id // empty' || true)"
+            if [ -n "$main_run" ] &&
+                gh run download "$main_run" --repo "$GITHUB_REPOSITORY" \
+                  --name "profile-binary-$AKITA_BENCH_GROUP" --dir "$RUNNER_TEMP/main-profile-binary" &&
+                [ "$(cat "$RUNNER_TEMP/main-profile-binary/build.txt")" = "$expected" ]; then
+              install -m 755 "$RUNNER_TEMP/main-profile-binary/profile" "$RUNNER_TEMP/bench-bins/profile-base"
+              echo "Reusing the merge-base binary from main run $main_run"
+              exit 0
+            fi
+            echo "No matching merge-base binary from main; building it"
+          fi
           (
             cd "$RUNNER_TEMP/bench-base" &&
             if python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROFILE_FEATURE"; then
@@ -240,6 +279,15 @@ jobs:
           features="parallel,$AKITA_BENCH_PROFILE_FEATURE,transcript-keccak"
           cargo build --release --quiet --example profile \
             --no-default-features --features "$features"
+          # Pull requests whose merge base is this commit reuse the binary. The
+          # record lets them check that they would have built the same one.
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            mkdir -p "$RUNNER_TEMP/profile-binary"
+            cp target/release/examples/profile "$RUNNER_TEMP/profile-binary/profile"
+            printf 'features=%s\nrustflags=%s\nrustc=%s\ncheckout=%s\n' \
+              "$features" "$RUSTFLAGS" "$(rustc -V)" "$GITHUB_WORKSPACE" \
+              > "$RUNNER_TEMP/profile-binary/build.txt"
+          fi
 
       - name: Verify profile linkage isolation
         id: verify_linkage
@@ -259,6 +307,15 @@ jobs:
           done <<< "$AKITA_BENCH_GROUP_CASES"
           python3 scripts/profile_bench_merge_base_policy.py \
             --binary ./target/release/examples/profile "${case_args[@]}"
+
+      - name: Upload profile binary for pull request baselines
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: profile-binary-${{ matrix.group.name }}
+          path: ${{ runner.temp }}/profile-binary
+          if-no-files-found: error
+          retention-days: 30
 
       # On PRs the head and merge-base binaries run interleaved (PR, base,
       # PR, base, ...) so machine-state drift on shared runners lands on both
@@ -329,10 +386,11 @@ jobs:
   # `always()` is present; `!cancelled()` keeps a manual cancel from running report.
   # A failed bench leg still uploads (see upload step), so report can post a partial
   # comment, upload `profile-bench-data`, then fail the check in the final step.
+  # An unlabelled pull request skips `bench`, and with it the report.
   report:
     name: Report
     needs: bench
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && needs.bench.result != 'skipped' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

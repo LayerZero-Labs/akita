@@ -50,15 +50,6 @@ jobs:
           toolchain: 1.99.1
           targets: riscv32imac-unknown-none-elf,riscv64imac-unknown-none-elf
           cache: false
-      - name: Cache profile/akita-recursion build
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: profile/akita-recursion
-          # The recursion workspace depends on Akita crates outside its own
-          # workspace root. Never restore their target artifacts across source
-          # revisions, or Cargo can combine stale types with current schedules.
-          shared-key: ci-jolt-verifier-profile-smoke-${{ github.sha }}
-          cache-on-failure: true
       - name: Test AkitaJoltInputs blob encode/decode (akita-recursion-glue)
         run: cargo test --release -p akita-recursion-glue
       - name: Test trusted setup decoders (akita-recursion-glue)
@@ -82,14 +73,6 @@ jobs:
           # `jolt build` compiles the std guest with `-Zbuild-std`.
           components: rust-src
           cache: false
-      - name: Cache profile/akita-recursion build
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: profile/akita-recursion
-          # Same rule as the `check` job: Akita crates live outside this
-          # workspace root, so never restore their artifacts across revisions.
-          shared-key: ci-jolt-inline-parity-${{ github.sha }}
-          cache-on-failure: true
       - name: Read the pinned Jolt revision
         id: jolt
         run: |
