@@ -296,7 +296,8 @@ tests because they exercise a different framing layer.
 
 All changed documentation runs `scripts/check-doc-guardrails.sh`. Final
 implementation validation uses the current commands in `.github/workflows/ci.yml`
-after that workflow is updated to remove schedule-table features and drift jobs.
+and the test pass in `.github/workflows/full-tests.yml`, after `ci.yml` is
+updated to remove schedule-table features and drift jobs.
 
 ### Performance
 
