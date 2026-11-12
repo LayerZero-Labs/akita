@@ -13,6 +13,16 @@ impl FoldDraw for Draw<'_> {
     }
 }
 
+/// Zero candidate `index`'s rank word. The Lemire map rejects it, because
+/// `lo = 0` is below the nonzero threshold `2^m mod R`.
+fn reject_rank_word(stream: &SparseChallengeStream, message: &mut [u8], index: usize) {
+    assert_ne!(stream.shell.reject_below, 0);
+    let start = index * stream.shell.candidate_bits + stream.shell.config.weight();
+    for bit in start..start + stream.shell.rank_bits as usize {
+        message[bit / 8] &= !(1 << (bit % 8));
+    }
+}
+
 /// Independent producer: decode without advice, then serialize positions in
 /// the order a serial verifier examines candidates, before predicate rejection.
 fn position_tape(
@@ -62,9 +72,9 @@ fn position_tape(
         }
     }
     assert_eq!(accepted, expected.len());
+    assert!(outside > 0, "must skip rank-word-rejected candidates");
     if stream.shell.rejection.is_some() {
         assert!(rejected > 0, "must include predicate-rejected candidates");
-        assert!(outside > 0, "must skip out-of-range candidates");
     }
     tape
 }
@@ -107,7 +117,8 @@ fn versioned_frame_round_trips_mixed_fold_routes() {
         .unwrap();
         let stream = family.stream(count).unwrap();
         assert!(!stream.uses_checked_quartets());
-        let message = rng.message(stream.message_len());
+        let mut message = rng.message(stream.message_len());
+        reject_rank_word(&stream, &mut message, 1);
         let expected = stream.decode(&message).unwrap().unwrap();
         frame.extend(position_tape(&stream, &message, &expected));
         draws.push((family, stream, message, expected));
@@ -150,7 +161,8 @@ fn malformed_position_records_reject_through_fold_drawing() {
         FoldChallengeFamily::new(FoldChallengeDrawDomain::EvaluationTrace, 128, config, None)
             .unwrap();
     let stream = family.stream(3).unwrap();
-    let message = SplitMix(92).message(stream.message_len());
+    let mut message = SplitMix(92).message(stream.message_len());
+    reject_rank_word(&stream, &mut message, 0);
     let expected = stream.decode(&message).unwrap().unwrap();
     let mut frame = b"AKITAH02".to_vec();
     frame.extend_from_slice(&0u64.to_le_bytes());

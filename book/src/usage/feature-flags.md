@@ -163,9 +163,9 @@ verifier's tape-consumption order.
 
 For a verification-only capture, a message line precedes its candidate rank
 lines. Ranks are emitted serially in the order position advice will be consumed:
-one per in-range candidate examined, including candidates later rejected by the
-operator-norm predicate.
-Out-of-range candidates emit no rank line, and decoding stops after the
+one per candidate examined whose rank word is accepted, including candidates
+later rejected by the operator-norm predicate.
+Candidates whose rank word is rejected emit no rank line, and decoding stops after the
 requested number of accepted challenges. Unfiltered D64/31/10 draws requesting
 at least 1024 challenges emit no rank lines because fold verification routes
 them to quartet advice. A capture consumer must preserve draw and candidate

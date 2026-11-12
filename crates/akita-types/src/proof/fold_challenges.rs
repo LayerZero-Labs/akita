@@ -36,7 +36,7 @@ impl OpeningFamily<Challenges, CoefficientPackingChallenges> {
 /// Draw one authenticated group's fold challenges under its scheduled opening
 /// method and certified A-security route.
 ///
-/// Returns `None` when the group's operator-norm pool runs out; see
+/// Returns `None` when the group's candidate pool runs out; see
 /// [`FoldDraw::draw_fold_challenges`].
 pub fn draw_group_fold_challenges<F, E, D>(
     draw: &mut D,
