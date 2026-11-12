@@ -97,13 +97,13 @@ Stage 3 then proves a product over two coordinates:
 
 At the final Stage 3 point, the verifier checks
 
-```math
+$$
 setup(\rho_y,\rho_{setup})
 \cdot
 weight(\rho_{setup})
 \cdot
 pow_\alpha(\rho_y).
-```
+$$
 
 The first factor comes from the public setup or from an authenticated setup
 prefix opening. The second factor is `SetupIndexWeightMle`, the compact MLE of

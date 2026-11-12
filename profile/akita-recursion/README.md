@@ -25,7 +25,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
-crate pins, `4a0d4a33265c...`). The first prove run downloads a ~30 GB
+crate pins, `a95612871547...`). The first prove run downloads a ~30 GB
 Dory PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on
 first run, instant on subsequent).
 
@@ -56,8 +56,9 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     --input target/onehot_fp128_nv36_recursive.bin
 ```
 
-The reusable scalar OneHot cases are the exact cases from the CI profile
-catalog:
+The reusable scalar OneHot cases use the case syntax of the CI profile
+catalog (`MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE]`). Their arities differ from the
+current CI matrix in `.github/workflows/profile-bench.yml`:
 
 | Case | Guest field | Setup mode | Root envelope |
 | --- | --- | --- | --- |

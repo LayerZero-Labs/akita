@@ -5,8 +5,8 @@ preceding fold's witness-opening claim and a binding to that witness's inner
 A images. The prover sends a small folded response and the verifier checks the
 remaining relations directly.
 
-The terminal reveals that response, the ring opening partials, and the inner
-images. It does not send the complete original application table. These are
+The terminal reveals that response and the ring opening partials. The
+predecessor already revealed the inner images. The proof does not send the complete original application table. These are
 still witness-derived values, so this path provides no zero-knowledge
 guarantee.
 
@@ -26,9 +26,11 @@ $$
 
 The predecessor binds the canonical coefficients of every $\mathbf t_b$
 but the last, and a digest of the last, before its ring-switch and sumcheck
-challenges. The terminal response must contain exactly those bytes. Thus the
-prover cannot choose a new collection of inner images after seeing the
-opening point handed to the terminal.
+challenges. The terminal step sends no second copy. The verifier carries the
+bound coefficients and the digest forward and uses them as the $\mathbf t_b$
+segment of the terminal response. Thus the prover cannot choose a new
+collection of inner images after seeing the opening point handed to the
+terminal.
 
 Let $Q_p$ be the position weights derived from that opening point, and
 $G_a^{\mathrm{in}}$ the inner digit recomposition weights. The honest
@@ -186,9 +188,10 @@ The verifier performs the terminal handoff in this order:
 
 1. Check that the scheduled terminal geometry matches the remaining witness
    and that there is no deferred setup-prefix opening.
-2. Absorb the incoming inner-image binding and check that the response's
-   $\mathbf t_b$ coefficients match it exactly. The last block's digest was
-   already absorbed by the predecessor.
+2. Take the inner images $\mathbf t_b$ from the carried state and check that
+   their length and encoding match the terminal layout. The predecessor
+   already absorbed these coefficients and the last block's digest, so the
+   terminal absorbs neither again.
 3. Prepare the incoming point and claim. Replay extension-opening reduction
    when required.
 4. Absorb every $E_b$ but the last and the digest of the last, consume the
@@ -222,8 +225,11 @@ proof replay. It uses the base prime profile when the signed accumulation
 bound fits and adds the signed 16 bit tail only when required. A schedule
 whose bound exceeds every supported exact profile is invalid.
 
-Prepared matrix views are derived from the coefficient setup and are never
-serialized. These execution choices compute the same relation (5).
+By default the verifier derives the prepared matrix view from the coefficient
+setup when it is constructed. A caller may instead install a view that trusted
+provisioning built earlier, as
+[Verification](../verification.md) describes.
+These execution choices compute the same relation (5).
 
 ## Recompute the last block
 
@@ -262,7 +268,7 @@ challenges and $E_{m-1}$ before the $c_b$. The digests enforce this order:
 
 The verifier computes the last block from (10), hashes its canonical
 coefficients, and compares the result with the digest it received earlier.
-The scalar opening check (7) or (8) then runs over all $E_b$, including the
+The scalar opening check (6) or (7) then runs over all $E_b$, including the
 recovered one.
 
 ### Why omitting the block is sound
@@ -359,8 +365,9 @@ sparse support, NTT capability, and matrix ranges before the hot kernels index
 prepared state. Malformed terminal bytes return `AkitaError` or
 `SerializationError`.
 
-- `crates/akita-verifier/src/fold/terminal.rs` checks the predecessor
-  binding and replays the terminal transcript.
+- `crates/akita-verifier/src/fold/terminal.rs` takes the inner images that
+  the predecessor bound, checks their shape, and replays the terminal
+  transcript.
 - `crates/akita-verifier/src/terminal/direct.rs` checks the
   decoded response norm, ring relations, and opening trace.
 - `crates/akita-verifier/src/terminal/ntt.rs` evaluates the

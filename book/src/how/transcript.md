@@ -382,8 +382,9 @@ linear combinations. The
 [reduction chapter](./proving/extension-opening-reduction.md) gives the full
 sequence.
 
-At the terminal, the verifier checks that the response's inner images match
-the predecessor's binding. After any required extension-opening reduction,
+At the terminal, the verifier takes the inner images from the state that the
+predecessor bound. It checks their length and encoding and does not absorb
+them again. After any required extension-opening reduction,
 it absorbs the ring opening partials, consumes the fold-response nonce, and
 draws the sparse challenges. It then absorbs the remaining response and
 performs the direct checks. There is no outgoing commitment or replay of

@@ -257,6 +257,15 @@ $$
 Commitment slicing is a separate axis. It uses the same proportional partition,
 as described in [B slices and chunks](./opening-points-layout.md#b-slices-and-chunks).
 
+The `EvaluationTrace` assumption only simplifies the notation. Admitted
+schedules do not combine it with chunking: every multi-chunk fold must use
+subring coefficient packing, and schedule validation rejects a multi-chunk
+fold that selects evaluation trace. The chunk partition, the per-chunk
+responses, and the aggregate $\mathbf A$ relation (5) below do not depend on
+the opening method. In a real multi-chunk fold, the fold-evaluation
+consistency relation (4) takes its packed form from
+[Semantic relations in an Akita fold](./akita-fold.md#subring-coefficient-packing-consistency).
+
 Let $N$ be the number of live blocks. Let $C$ be a supported power-of-two chunk
 count and, for this derivation, assume $C\mid N$. For $j=0,\ldots,C-1$, chunk
 $j$ owns the equal-sized range
@@ -634,10 +643,10 @@ rows.
 Raw and compressed modes realize these same semantic relations as described on
 the [realizations page](./akita-fold-realizations.md). Chunking does not
 replicate the ordinary quotient family or the shared $\mathbf F/\mathbf H$
-compression chains. The field-valued evaluation trace likewise remains one
-virtual relation over the chunk-local opening-digit ranges, not an additional
-physical ring row; its construction is described in [Field-to-ring evaluation
-reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-claim).
+compression chains. A multi-chunk fold uses subring coefficient packing, so it
+has no field-valued evaluation-trace relation. Its opening consistency is the
+[packed relation](./akita-fold.md#subring-coefficient-packing-consistency)
+over the chunk-local opening-digit ranges.
 
 When $C=1$, the sole range contains every live block, the single local response
 is $\mathbf z$, and every equation and witness layout above reduces to the

@@ -55,16 +55,20 @@ or prover implementation.
 
 | Crate | Review role |
 | --- | --- |
+| `akita-error` | Shared error type and checked integer formulas for sizes, offsets, and ranges |
 | external `jolt-field` and `akita-algebra` | Field, ring, transform, and polynomial arithmetic |
 | `akita-serialization` | Canonical encoding and checked decoding |
 | `akita-transcript` and `akita-challenges` | Instance binding and challenge derivation |
 | `akita-sumcheck` | Shared sumcheck proof types and drivers |
+| `akita-params` | Parameter geometry, sizing, SIS tables, schedules, and witness layout |
+| `akita-sis-estimator` | Offline lattice estimator that generates the SIS tables |
 | `akita-types` | Public proof, setup, schedule, commitment, and claim shapes |
 | `akita-planner` | Offline schedule search and cost evaluation |
 | `akita-schedules` | External schedule artifact decoding, admission, and lookup |
 | `akita-config` | Concrete policy and schedule admission |
 | `akita-setup` | Public setup construction and setup artifacts |
-| `akita-prover` | Commitment and proof generation |
+| `akita-prover` | Protocol sequencing and proof assembly |
+| `akita-cpu-backend` | Commitment and witness arithmetic, source polynomials, and prepared setup |
 | `akita-verifier` | Proof replay and rejection of invalid statements |
 | `akita-pcs` | End to end orchestration and broad public exports |
 

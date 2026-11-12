@@ -179,12 +179,17 @@ Capture is disabled on `riscv64` and in builds without the feature. It changes
 host execution and diagnostic output; challenge values and transcript bytes
 remain the same.
 
-The `transcript_schedule` example uses `logging-transcript`:
+The transcript hardening tests use `logging-transcript`. They record the
+prover's transcript events and compare them with the verifier's. This command
+runs one of the three test targets of the CI transcript job, with the Keccak
+transcript backend selected:
 
 ```bash
-cargo run -p akita-pcs \
-  --features logging-transcript \
-  --example transcript_schedule
+cargo test --release -p akita-pcs \
+  --test transcript_hardening \
+  --no-default-features \
+  --features parallel,logging-transcript,transcript-keccak \
+  -- --test-threads=1
 ```
 
 ## Profile CI features

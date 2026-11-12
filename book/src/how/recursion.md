@@ -1,4 +1,4 @@
-# Recursion and proof streams
+# Recursion and proof shape
 
 A fold turns an opening of a committed source into an opening of a new digit
 witness. The schedule selects a chain of these reductions ending in a response
@@ -209,9 +209,14 @@ evaluation-trace openings and direct setup evaluation, and has no incoming
 setup prefix. It cannot return to quotient lifting. Both choices preserve the
 handoff in (4).
 
-The root and first recursive fold use subring coefficient packing for their
-opening relations. Later recursive folds use evaluation trace. In a proper
-extension field, evaluation-trace openings also run
+A nonterminal fold at absolute level zero or one uses subring coefficient
+packing for its opening relation. A nonterminal fold whose own witness has
+more than one chunk also uses it, at any level. Every other nonterminal fold
+uses the method that its schedule row selects, either coefficient packing or
+evaluation trace. The terminal always uses evaluation trace, at whatever level
+it occurs.
+[Configuration and planning](./configuration.md) states the complete rule. In a
+proper extension field, evaluation-trace openings also run
 [extension-opening reduction](./proving/extension-opening-reduction.md).
 These opening methods change how the current scalar claim enters the fold,
 not which witness evaluation Stage 2 passes onward.
@@ -221,8 +226,8 @@ not which witness evaluation Stage 2 passes onward.
 When the successor is terminal, its inner images
 $\{\mathbf t_b^{(i+1)}\}_b$ are the outgoing binding. The predecessor
 absorbs their canonical bytes before its ring-switch and sumcheck challenges.
-The terminal response carries those same images, the ring opening partials,
-and the folded response $\mathbf z$.
+The terminal sends no second copy of those images. It adds the ring opening
+partials and the folded response $\mathbf z$.
 The last block of the images and of the partials travels as a digest
 instead, and the terminal recomputes it; see
 [terminal verification](./verifying/terminal.md#recompute-the-last-block).
