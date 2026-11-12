@@ -66,7 +66,7 @@ fn parent_pairs<E: Field>(
 /// Witness values are read from `RelationRangeImageProver`'s existing compact
 /// or folded table, avoiding a full-domain field copy and keeping the addend's
 /// work proportional to its live support.
-pub(crate) struct AdditionalRelationTerms<E: Field> {
+pub struct AdditionalRelationTerms<E: Field> {
     weights: Vec<SparseWeight<E>>,
     binary_batching: E,
     domain_len: usize,

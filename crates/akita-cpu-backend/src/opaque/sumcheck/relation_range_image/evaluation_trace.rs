@@ -219,7 +219,7 @@ pub(crate) struct StructuredLinearWeights<E: Field> {
 /// Scalar factors are compiled once. Source-coordinate vectors stay factored while
 /// coefficient coordinates are folded; lane challenges then merge the prepared support
 /// directly. No full coefficient-domain weight table is materialized.
-pub(crate) struct PreparedProverLinearTerms<E: Field> {
+pub struct PreparedProverLinearTerms<E: Field> {
     pub(super) lane_weights: PreparedLaneWeights<E>,
     pub(super) sources: Vec<PreparedTraceSource<E>>,
     pub(super) live_lane_count: usize,
@@ -227,6 +227,16 @@ pub(crate) struct PreparedProverLinearTerms<E: Field> {
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
+    /// Prepare an empty linear contribution for the declared Stage-2 geometry.
+    pub fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
+        Self {
+            lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
+            sources: Vec::new(),
+            live_lane_count,
+            coeff_count,
+        }
+    }
+
     /// Prepare a rank-one response-norm term over validated Stage-2 geometry.
     pub(crate) fn from_response_norm_factors(
         coefficient_weights: Vec<E>,
@@ -769,14 +779,18 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         }
     }
 
-    pub(crate) fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {
-        let actual = self
-            .live_lane_count
-            .checked_mul(self.coeff_count)
-            .ok_or_else(|| AkitaError::Internal("evaluation-trace length overflow".into()))?;
-        if actual != witness_len {
+    /// Check both Stage-2 dimensions, not only their product: lookups index
+    /// by `(lane, coefficient)` against the prover's own coefficient count.
+    pub(crate) fn validate_shape(
+        &self,
+        live_lane_count: usize,
+        coeff_count: usize,
+    ) -> Result<(), AkitaError> {
+        if (self.live_lane_count, self.coeff_count) != (live_lane_count, coeff_count) {
             return Err(AkitaError::Internal(format!(
-                "prepared linear relation witness length: expected {witness_len}, actual {actual}"
+                "prepared linear relation shape: expected {live_lane_count} lanes x \
+                 {coeff_count} coefficients, actual {} x {}",
+                self.live_lane_count, self.coeff_count
             )));
         }
         let lane_shape_is_valid = match &self.lane_weights {

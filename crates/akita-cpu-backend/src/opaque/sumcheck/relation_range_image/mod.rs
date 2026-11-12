@@ -345,7 +345,7 @@ pub(crate) fn accumulate_relation_eval_coeffs_signed<E: Field + Unreduced>(
 /// The range-image term is pre-weighted by `batching_coeff` through `split_eq`, so
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
-pub(crate) struct RelationRangeImageProver<E: Field> {
+pub struct RelationRangeImageProver<E: Field> {
     phase: Phase<E>,
     state: RelationRoundState<E>,
 }
@@ -387,7 +387,8 @@ mod wide_mass;
 pub(crate) use additional_terms::AdditionalRelationTerms;
 pub(crate) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
 #[allow(unused_imports)]
-pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverLinearTerms};
+pub(crate) use evaluation_trace::build_evaluation_trace_weights;
+pub use evaluation_trace::PreparedProverLinearTerms;
 #[cfg(test)]
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
@@ -395,7 +396,7 @@ pub(crate) use evaluation_trace::{
 use lane_product::LaneProduct;
 pub(crate) use prepared_linear_lane::PreparedLinearLane;
 use quotient_prefix::{CoefficientRelationMoments, CompactQuotientPrefix};
-pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
+pub use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
