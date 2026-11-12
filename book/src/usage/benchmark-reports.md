@@ -1,8 +1,10 @@
 # Reading benchmark reports
 
 Akita profile CI measures complete opening proofs at several public statement
-shapes. Pull request runs compare the branch with its merge base on the same
-runner, using the same feature set and interleaved executions.
+shapes. Every push to `main` runs the benchmarks. A pull request runs them only
+when labelled `run-benchmarks`, then on every push while the label stays.
+Pull request runs compare the branch with its merge base on the same runner,
+using the same feature set and interleaved executions.
 
 The workflow at `.github/workflows/profile-bench.yml` defines the current cases.
 The report scripts turn those runs into a compact pull request comment and a
@@ -78,9 +80,14 @@ setup modes, family, and precommitted topology to both dispatch and eligibility.
 Before timing, CI probes each compiled head case without allocating witnesses;
 the driver checks the declaration against its actual selected config. Audited
 pre-contract revisions use frozen workload snapshots; unknown older drivers
-are explicitly unsupported. For supported cases, the workflow builds both
-revisions and runs them interleaved on the same machine so changes in runner load affect them
-as evenly as possible. An unsupported mode or catalog key runs at the head
+are explicitly unsupported. For supported cases, the workflow builds the head
+and takes the merge-base binary from the push to `main` that benchmarked it,
+when that binary was built with the same features, compiler flags, compiler,
+and checkout path. That binary reads schedule artifacts from the pull request
+checkout, so the workflow takes it only when those artifacts match the merge
+base. Otherwise it builds the merge base too. It runs both revisions
+interleaved on the same machine so changes in runner load affect them as evenly
+as possible. An unsupported mode or catalog key runs at the head
 only, with an explicit reason and no merge-base percentage comparison. New
 catalog rows become eligible automatically once they reach the base branch.
 
