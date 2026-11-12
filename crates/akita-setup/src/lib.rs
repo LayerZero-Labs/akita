@@ -467,18 +467,18 @@ pub(crate) fn load_prover_setup<
         expanded: Arc::new(expanded),
         prefix_slots,
     };
-    if recursive_prefixes::validate_prefix_registry_complete(
-        &setup.prefix_slots,
+    // Cached commitments must be derived from the validated matrix before a
+    // verifier setup can inherit them.
+    let cached = std::mem::replace(
+        &mut setup.prefix_slots,
+        SetupPrefixProverRegistry::new(setup.expanded.descriptor().setup_seed.clone()),
+    );
+    recursive_prefixes::populate_required_setup_prefix_slots(
+        &mut setup,
         requirements.prefix_slot_ids(),
-    )
-    .is_err()
-    {
-        setup.prefix_slots =
-            SetupPrefixProverRegistry::new(setup.expanded.descriptor().setup_seed.clone());
-        recursive_prefixes::populate_required_setup_prefix_slots(
-            &mut setup,
-            requirements.prefix_slot_ids(),
-        )?;
+    )?;
+    if setup.prefix_slots != cached {
+        tracing::warn!("cached setup-prefix registry differs from its recomputation; rewriting it");
         save_prover_setup::<F>(&setup, requirements)?;
     }
 
