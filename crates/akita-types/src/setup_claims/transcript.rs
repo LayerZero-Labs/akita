@@ -129,7 +129,9 @@ where
     akita_transcript::public_bytes(state, context, &statement.descriptor_bytes::<F>()?)
 }
 
-/// The existing successor must open this batch's exact actual setup prefix.
+/// Check that the successor's slot covers this batch and matches its identity and prefix length,
+/// then bind the slot id. This helper sees only the slot, not the verifier setup, so verifier
+/// callers must refuse a scoped prefix context before calling it.
 pub fn bind_outer_prefix<F, E, G>(
     statement: &SetupBatchStatement<E>,
     slot: &crate::SetupPrefixVerifierSlot<F>,
