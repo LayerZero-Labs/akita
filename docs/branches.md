@@ -56,11 +56,11 @@ maintainer-team approval. Any contributor with write access can merge into
 
 Every workflow that runs on pull requests into `main` also runs on pull
 requests into `dev`, subject to the same path filters. The full test pass
-(`.github/workflows/full-tests.yml`) runs on a billed large runner. It runs on
-every push to a pull request into `dev`, which has no merge queue. A pull
-request into `main` runs it in the merge queue, or earlier when labelled
-`run-full-tests`. A pull request into either branch runs the profile
-benchmarks only when labelled `run-benchmarks`. Workflows triggered by pushes
+(`.github/workflows/full-tests.yml`) and the profile benchmarks run on a billed
+large runner. The merge queue runs the full test pass before every merge into
+`main`. A pull request into either branch runs the full test pass only when
+labelled `run-full-tests`, and the profile benchmarks only when labelled
+`run-benchmarks`. Workflows triggered by pushes
 or schedules, including the weekly fuzz and security runs, run only on `main`.
 
 ## Extension contract

@@ -51,9 +51,9 @@ or profiling when the changed files trigger them. The workflow files under
 `.github/workflows/` are the source of truth for their exact commands.
 
 The workspace test pass and the profile benchmarks run on a billed large
-runner. A pull request into `main` runs them only when labelled
-`run-full-tests` or `run-benchmarks`; the merge queue runs the test pass before
-every merge. Add a label only when you need that result before the queue.
+runner. A pull request runs them only when labelled `run-full-tests` or
+`run-benchmarks`; the merge queue runs the test pass before every merge into
+`main`. Add a label only when you need that result before the queue.
 
 ## RTK (token-optimized shell)
 

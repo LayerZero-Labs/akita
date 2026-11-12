@@ -1,12 +1,12 @@
 # The workspace nextest pass: the merge gate for protocol behavior. It runs on
 # the large runner, which is billed per minute, so it runs only where it gates
-# a merge or someone asks for it:
+# a merge into main or someone asks for it:
 #   - in the merge queue for main, on the exact tree that lands;
-#   - on every push to a pull request into dev, which has no merge queue;
 #   - on a pull request labelled run-full-tests, from the labelling onward;
 #   - on manual dispatch.
-# Other pull request pushes skip it. The CI workflow runs every other check on
-# standard runners for every push.
+# Other pull request pushes skip it, including pushes to pull requests into
+# dev. The CI workflow runs every other check on standard runners for every
+# push.
 name: Full tests
 
 on:
@@ -44,7 +44,6 @@ jobs:
           ACTION: ${{ github.event.action }}
           ADDED_LABEL: ${{ github.event.label.name }}
           LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'run-full-tests') }}
-          BASE_REF: ${{ github.base_ref }}
         run: |
           run=false
           case "$EVENT" in
@@ -52,7 +51,7 @@ jobs:
             pull_request)
               if [ "$ACTION" = labeled ]; then
                 if [ "$ADDED_LABEL" = run-full-tests ]; then run=true; fi
-              elif [ "$LABELLED" = true ] || [ "$BASE_REF" = dev ]; then
+              elif [ "$LABELLED" = true ]; then
                 run=true
               fi
               ;;

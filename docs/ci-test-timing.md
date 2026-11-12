@@ -2,7 +2,7 @@
 
 Design spec: [`specs/archive/2026-Q3/ci-test-timing.md`](../specs/archive/2026-Q3/ci-test-timing.md).
 
-Every pull request run of the workspace test pass gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`) showing run wall time vs a main baseline and per-test outliers from the nextest JUnit output. The pass runs on every push to a pull request into `dev`, and on a pull request into `main` only when it carries the `run-full-tests` label. The merge queue runs it before every merge into `main`.
+Every pull request run of the workspace test pass gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`) showing run wall time vs a main baseline and per-test outliers from the nextest JUnit output. A pull request runs the pass only when it carries the `run-full-tests` label. The merge queue runs it before every merge into `main`.
 
 ## How CI runs tests
 
