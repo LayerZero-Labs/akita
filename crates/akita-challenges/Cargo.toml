@@ -16,7 +16,11 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
   "solinas",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+keccak = "0.2.2"
 smallvec = { version = "1.15.2", features = ["const_generics"] }
+
+[dev-dependencies]
+shake = "0.1.0"
 
 [features]
 # Host-only recursion-hint capture; also requires AKITA_CAPTURE_CHALLENGES.

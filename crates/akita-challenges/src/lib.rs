@@ -11,6 +11,12 @@
 //!   over live or preview state.
 //! - [`Challenges`] — sampled folding challenges in claim-major block order.
 //!
+//! - [`sample_indexed_challenges_from_seed`] draws independent coordinates
+//!   from a 32-byte root, with optional certified operator-norm rejection.
+//! - [`sample_challenge_ct`] draws one D64 selective-L2 challenge while hiding
+//!   its positions and signs, conditional on the exposed rejection trace.
+//! - [`sample_challenge_ct_counted`] also reports the norm-filter candidate count.
+//!
 //! - [`SparseChallengeStream`] — the fixed-length message layout and decoder
 //!   for one group's challenges.
 
@@ -36,7 +42,10 @@ pub use fold_draw::PreviewFoldDraw;
 pub use fold_draw::{
     FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, ProverFoldDraw, VerifierFoldDraw,
 };
-pub use sampler::SparseChallengeStream;
+pub use sampler::{
+    sample_challenge_ct, sample_challenge_ct_counted, sample_indexed_challenges_from_seed,
+    SparseChallengeStream,
+};
 
 mod checked_hint;
 pub use checked_hint::{abort_checked_hints, finish_checked_hints, install_checked_hints};
