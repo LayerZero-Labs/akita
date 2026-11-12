@@ -158,6 +158,17 @@ where
                     "setup batch target must be a nonterminal fold".into(),
                 ));
             }
+            #[cfg(feature = "binary")]
+            if batch_level == Some(0)
+                && matches!(
+                    claims.groups().first().map(|group| group.kind()),
+                    Some(akita_types::opening_claims::GroupClaimKind::Binary { .. })
+                )
+            {
+                return Err(AkitaError::InvalidInput(
+                    "setup batch target cannot be a binary root".into(),
+                ));
+            }
             let root_params = &schedule.root_fold().params;
             let expected_final_descriptor = akita_params::GroupCommitPhaseParams::try_from_params(
                 final_descriptor.group,

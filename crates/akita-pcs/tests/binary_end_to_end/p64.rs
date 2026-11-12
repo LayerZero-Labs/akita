@@ -1,9 +1,14 @@
 //! The 64-bit binary root through the public grouped prove and verify entry points.
 use super::*;
 use akita_config::proof_optimized::fp64::Dense as Fp64Dense;
+use akita_prover::backend::SetupBatchBackend;
 use akita_serialization::Valid;
 use akita_types::binary::{PrimeClaimValue, PrimeGroupClaim, PrimePlaneClaim};
+use akita_types::setup_claims::{
+    SetupBatchMemory, SetupBatchStatement, SetupClaim, SetupPolynomialId, SetupQuery,
+};
 use akita_types::FpExtEncoding;
+use akita_verifier::SetupClaimAccumulator;
 use jolt_field::{
     AdditiveGroup, CanonicalEncoding, ExtField, Field, Fold, MulBaseUnreduced, PseudoMersenne,
     Unreduced, WithCommitAccumulator,
@@ -68,7 +73,7 @@ fn p64_catalog() -> TrustedScheduleCatalog<BinaryTestSuffix64> {
     CATALOG.clone()
 }
 
-type Verify = Box<dyn Fn(&[u8], Option<PrimeGroupClaim>) -> Result<(), AkitaError>>;
+type Verify = Box<dyn Fn(&[u8], Option<PrimeGroupClaim>, bool) -> Result<(), AkitaError>>;
 
 /// One honest proof and a verifier for its statement, with an optional
 /// replacement prime claim.
@@ -80,12 +85,12 @@ pub(super) struct RoundTrip {
 
 impl RoundTrip {
     pub(super) fn verify(&self, proof: &[u8], prime: Option<PrimeGroupClaim>) {
-        (self.verify)(proof, prime).unwrap();
+        (self.verify)(proof, prime, false).unwrap();
     }
 
     /// The verifier's error on `proof`, which it must reject without panicking.
     pub(super) fn rejects(&self, proof: &[u8], prime: Option<PrimeGroupClaim>) -> AkitaError {
-        let outcome = catch_unwind(AssertUnwindSafe(|| (self.verify)(proof, prime)));
+        let outcome = catch_unwind(AssertUnwindSafe(|| (self.verify)(proof, prime, false)));
         outcome
             .expect("verifier panicked")
             .expect_err("verifier accepted")
@@ -171,6 +176,7 @@ pub(super) fn round_trip<Cfg: RootConfig>(
     field: BinaryFieldProfile,
     catalog: TrustedScheduleCatalog<Cfg>,
     mixed: bool,
+    setup_batch_level: Option<u32>,
 ) -> RoundTrip {
     let scheme = AkitaCommitmentScheme::<Cfg>::new(catalog);
     let layout = PolynomialGroupLayout::singleton(if mixed { 23 } else { 18 });
@@ -351,6 +357,35 @@ pub(super) fn round_trip<Cfg: RootConfig>(
         handles,
         scheme.schedules(),
     );
+    let inherited = setup_batch_level.map(|level| {
+        let domain = resolved
+            .schedule()
+            .recursive_folds
+            .get(level as usize)
+            .and_then(|fold| fold.params.setup_prefix())
+            .map_or(32, |prefix| prefix.n_prefix().unwrap());
+        let polynomial =
+            SetupPolynomialId::new::<Cfg::Field, Cfg::ExtField>(&setup.expanded, domain).unwrap();
+        let query = SetupQuery::evaluation(vec![Cfg::ExtField::zero(); polynomial.num_variables()])
+            .unwrap();
+        let value = if level == 0 {
+            // The binary root has no consumer for this ordinary setup claim.
+            Cfg::ExtField::zero()
+        } else {
+            backend
+                .prepare_setup_query(&polynomial, &query, 32, SetupBatchMemory::Regenerate)
+                .unwrap()
+                .0
+        };
+        let claim = SetupClaim::new(polynomial.clone(), query, value).unwrap();
+        SetupBatchStatement::new(polynomial, 32, vec![claim]).unwrap()
+    });
+    let data = match (setup_batch_level, inherited.as_ref()) {
+        (Some(level), Some(batch)) => data
+            .with_setup_batch(level, batch, scheme.schedules())
+            .unwrap(),
+        _ => data,
+    };
     let mut prover = new_prover_channel(b"binary-root-field-e2e");
     prover.public_message(&BytesMsg(b"application-prefix"));
     let mut registry = akita_prover::BackendRegistry::<Cfg>::new().unwrap();
@@ -370,7 +405,7 @@ pub(super) fn round_trip<Cfg: RootConfig>(
     let proof = prover.narg_string().to_vec();
     eprintln!("binary root {field:?} mixed={mixed}: {} bytes", proof.len());
 
-    let verify = move |bytes: &[u8], prime: Option<PrimeGroupClaim>| {
+    let verify = move |bytes: &[u8], prime: Option<PrimeGroupClaim>, defer: bool| {
         let binary = PolynomialGroupClaims::<Cfg::ExtField, _>::new_binary_planes(
             commitment.clone(),
             word.clone(),
@@ -390,14 +425,24 @@ pub(super) fn round_trip<Cfg: RootConfig>(
         let verifier = scheme.verifier(verifier_setup.clone())?;
         let mut replay = new_verifier_channel(b"binary-root-field-e2e", bytes);
         replay.public_message(&BytesMsg(b"application-prefix"));
-        verifier
-            .batched_verify_embedded(
-                &mut replay,
-                statement,
-                BasisMode::Lagrange,
-                SetupPolicy::Check(None),
-            )?
-            .check_eof(replay)
+        let mut accumulator = setup_batch_level
+            .zip(inherited.clone())
+            .map(|(level, batch)| SetupClaimAccumulator::from_batch(level, batch));
+        let policy = if defer {
+            SetupPolicy::Defer(accumulator.as_mut().unwrap())
+        } else {
+            SetupPolicy::Check(accumulator.as_mut())
+        };
+        let result =
+            verifier.batched_verify_embedded(&mut replay, statement, BasisMode::Lagrange, policy);
+        if let Some(accumulator) = accumulator {
+            assert_eq!(
+                accumulator.into_pending().len(),
+                usize::from(result.is_err())
+            );
+        }
+        result
+            .and_then(|pending| pending.check_eof(replay))
             .map(|_| ())
     };
     RoundTrip {
@@ -408,7 +453,7 @@ pub(super) fn round_trip<Cfg: RootConfig>(
 }
 
 pub(super) fn p64_round_trip(mixed: bool) -> RoundTrip {
-    round_trip(BinaryFieldProfile::P64, p64_catalog(), mixed)
+    round_trip(BinaryFieldProfile::P64, p64_catalog(), mixed, None)
 }
 
 #[test]
@@ -434,7 +479,7 @@ fn proofs_do_not_verify_under_the_other_field() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let p64 = p64_round_trip(false);
-        let p128 = round_trip(BinaryFieldProfile::P128, test_catalog(), false);
+        let p128 = round_trip(BinaryFieldProfile::P128, test_catalog(), false, None);
         p64.verify(&p64.proof, None);
         p128.verify(&p128.proof, None);
         for error in [
@@ -443,5 +488,33 @@ fn proofs_do_not_verify_under_the_other_field() {
         ] {
             assert!(matches!(error, AkitaError::InvalidProof), "{error:?}");
         }
+    });
+}
+
+#[test]
+fn binary_root_rejects_inherited_setup_batch_at_level_zero() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let opened = round_trip(BinaryFieldProfile::P128, test_catalog(), false, Some(0));
+        for defer in [false, true] {
+            let result = (opened.verify)(&opened.proof, None, defer);
+            assert!(
+                matches!(
+                    &result,
+                    Err(AkitaError::InvalidInput(message))
+                        if message == "setup batch target cannot be a binary root"
+                ),
+                "{result:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn binary_root_accepts_inherited_setup_batch_at_level_one() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let opened = round_trip(BinaryFieldProfile::P128, test_catalog(), false, Some(1));
+        opened.verify(&opened.proof, None);
     });
 }

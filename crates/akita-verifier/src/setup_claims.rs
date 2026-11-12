@@ -34,7 +34,8 @@ impl<'a, 'b, E: Field> SetupPolicy<'a, 'b, E> {
     pub(crate) fn settle(&mut self, pending_len: usize, accepted: bool) {
         if let Some(accumulator) = self.accumulator() {
             if accepted {
-                // The validated target is one of the nonterminal folds replayed.
+                // Entry validation limits inherited batches to ordinary nonterminal folds.
+                // The target checked, reduced, or carried the batch to pending.
                 accumulator.batch = None;
             } else {
                 accumulator.pending.truncate(pending_len);

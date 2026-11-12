@@ -5,9 +5,9 @@
 //! coefficient functionals, performs the same structured/direct setup work,
 //! and returns that already-complete flat MLE without either lifted-only step.
 //!
-//! The direct path always owns a materialized [`DirectScan`]; the deferred
-//! path never builds one and exists only for quotient lifting, so the
-//! reduced-plus-deferred combination is rejected before any setup planning.
+//! The direct path owns a materialized [`DirectScan`]. Stage 3 deferred setup
+//! exists only for quotient lifting. External setup advice supports both
+//! geometries without a direct scan and leaves claims for the caller to discharge.
 
 use super::{
     prepared_point::{PreparedLiftedRelationPoint, PreparedReducedRelationPoint},
