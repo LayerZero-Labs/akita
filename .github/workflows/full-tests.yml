@@ -243,7 +243,8 @@ jobs:
   # and closes it once the branch passes. A cancelled run reports nothing; a
   # pass that times out or fails reports a failure.
   # The issue is assigned to the comma-separated logins in the repository
-  # variable NIGHTLY_FAILURE_ASSIGNEES, so a failure reaches someone's inbox.
+  # variable NIGHTLY_FAILURE_ASSIGNEES_DEV on dev and NIGHTLY_FAILURE_ASSIGNEES
+  # elsewhere, so a failure reaches someone's inbox.
   nightly-report:
     name: Report the nightly result
     needs: [test, gate]
@@ -260,7 +261,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           RESULT: ${{ needs.gate.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          ASSIGNEES: ${{ vars.NIGHTLY_FAILURE_ASSIGNEES }}
+          ASSIGNEES: ${{ github.ref_name == 'dev' && vars.NIGHTLY_FAILURE_ASSIGNEES_DEV || vars.NIGHTLY_FAILURE_ASSIGNEES }}
         run: |
           title="Nightly full tests failing on $BRANCH"
           issue="$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number,title |
