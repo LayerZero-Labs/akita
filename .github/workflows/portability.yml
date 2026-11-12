@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: ["**", main]
+  merge_group:
 
 permissions:
   contents: read
@@ -24,6 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check verifier with portable CPU target
         run: RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check --release -p akita-verifier --no-default-features --features transcript-keccak
       - name: Test exact-cache boundary
@@ -37,6 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Require native AArch64 NEON
         run: |
           test "$(uname -m)" = "aarch64"
@@ -60,6 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Detect native AVX2
         id: cpu
         run: |
@@ -86,6 +93,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Intel Software Development Emulator
         run: |
           curl --fail --location --silent --show-error --output /tmp/intel-sde.tar.xz https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
@@ -117,7 +126,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Check serialization on wasm
         run: cargo check --release -p akita-serialization --target wasm32-unknown-unknown
+
+  # The required status check for pull requests and the merge queue. A
+  # cancelled job fails the gate: GitHub counts a skipped required check as
+  # passing, so the gate itself must never be skipped.
+  gate:
+    name: Portability gate
+    if: always()
+    needs:
+      - portable-x86
+      - aarch64-neon
+      - x86-avx2
+      - avx512-ifma
+      - wasm-serialization
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every portability job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' > /dev/null

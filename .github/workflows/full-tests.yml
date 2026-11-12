@@ -1,0 +1,208 @@
+# The workspace nextest pass: the merge gate for protocol behavior. It runs on
+# the large runner, which is billed per minute, so it runs only where it gates
+# a merge or someone asks for it:
+#   - in the merge queue for main, on the exact tree that lands;
+#   - on every push to a pull request into dev, which has no merge queue;
+#   - on a pull request labelled run-full-tests, from the labelling onward;
+#   - on manual dispatch.
+# Other pull request pushes skip it. The CI workflow runs every other check on
+# standard runners for every push.
+name: Full tests
+
+on:
+  pull_request:
+    branches: ["**", main]
+    types: [opened, synchronize, reopened, labeled]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUSTFLAGS: -D warnings
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  # Adding any other label must not cancel a running pass.
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{
+    (github.event.action == 'labeled' && github.event.label.name != 'run-full-tests') && github.run_id || 'tests' }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Select the test pass for this event
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.policy.outputs.run }}
+    steps:
+      - id: policy
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          ADDED_LABEL: ${{ github.event.label.name }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'run-full-tests') }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          run=false
+          case "$EVENT" in
+            merge_group|workflow_dispatch) run=true ;;
+            pull_request)
+              if [ "$ACTION" = labeled ]; then
+                if [ "$ADDED_LABEL" = run-full-tests ]; then run=true; fi
+              elif [ "$LABELLED" = true ] || [ "$BASE_REF" = dev ]; then
+                run=true
+              fi
+              ;;
+          esac
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "Full test pass for this $EVENT event: $run"
+
+  # One job compiles and runs the whole suite. Compilation takes most of the
+  # job, so shards on this runner would each repeat it. The runner's CPU also
+  # takes the AVX-512 paths that the kernels select at runtime, which standard
+  # runners mostly lack. No Rust cache: dependencies build in under a minute
+  # here, and the workspace crates that dominate the build change on every pull
+  # request.
+  test:
+    name: Test
+    needs: policy
+    if: needs.policy.outputs.run == 'true'
+    runs-on: GitHubRunner-Large-Public
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # cargo-nextest
+        with:
+          tool: cargo-nextest
+      - name: Run tests
+        run: |
+          artifact_dir="$RUNNER_TEMP/ci-test-pass-shard-1"
+          mkdir -p "$artifact_dir"
+          start_epoch=$(date +%s)
+          set +e
+          # --lib --bins --tests matches the default test target set but skips
+          # compiling examples (clippy's --all-targets already compile-checks them).
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,catalog-gen,transcript-keccak
+          status=$?
+          end_epoch=$(date +%s)
+          if [ -f target/nextest/ci/junit.xml ]; then
+            cp target/nextest/ci/junit.xml "$artifact_dir/junit-shard-1.xml"
+          fi
+          printf '{"started_at_epoch":%s,"finished_at_epoch":%s,"exit_code":%s,"shard_index":1,"shard_total":1}\n' \
+            "$start_epoch" "$end_epoch" "$status" \
+            > "$artifact_dir/timing-shard-1.json"
+          exit "$status"
+      - name: Upload test pass artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-test-pass-shard-1
+          path: ${{ runner.temp }}/ci-test-pass-shard-1
+          if-no-files-found: warn
+          retention-days: 7
+
+  test-timing:
+    name: Test timing
+    needs: [test]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download test pass artifact
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ci-test-pass-shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci-test-pass-shards
+      - name: Merge test timing artifact
+        id: merge
+        if: always()
+        continue-on-error: true
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set +e
+          python3 scripts/ci_test_timing_report.py prepare-shards \
+            --input-dir "$RUNNER_TEMP/ci-test-pass-shards" \
+            --output-junit "$RUNNER_TEMP/merged-junit.xml" \
+            --output-timing "$RUNNER_TEMP/merged-timing.json"
+          PREPARE_STATUS=$?
+          if [ "$PREPARE_STATUS" -ne 0 ]; then
+            echo "test_status=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          SHARD_COUNT="$(python3 -c 'import json, pathlib; path = pathlib.Path("'"$RUNNER_TEMP/merged-timing.json"'"); data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}; print(int(data.get("shard_total") or 0))')"
+          mkdir -p "$RUNNER_TEMP/ci-test-timing-artifact"
+          set +e
+          python3 scripts/ci_test_timing_report.py merge \
+            --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
+            --source-sha "$GITHUB_SHA" \
+            --source-branch "$SOURCE_BRANCH" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --passes-sharded \
+            --shard-count "$SHARD_COUNT" \
+            --pass ci \
+            --profile ci \
+            --junit "$RUNNER_TEMP/merged-junit.xml" \
+            --timing "$RUNNER_TEMP/merged-timing.json"
+          MERGE_STATUS=$?
+          python3 scripts/ci_test_timing_report.py render \
+            "$RUNNER_TEMP/ci-test-timing-artifact/summary.json" \
+            --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
+            --compact
+          RENDER_STATUS=$?
+          if [ -f "$RUNNER_TEMP/ci-test-timing-artifact/report.md" ]; then
+            cat "$RUNNER_TEMP/ci-test-timing-artifact/report.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          TEST_STATUS="$(python3 -c 'import json, pathlib; path = pathlib.Path("'"$RUNNER_TEMP/merged-timing.json"'"); data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}; print(int(data.get("exit_code", 1)))')"
+          echo "test_status=$TEST_STATUS" >> "$GITHUB_OUTPUT"
+          if [ "$MERGE_STATUS" -ne 0 ] || [ "$RENDER_STATUS" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload test timing artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-test-timing-data
+          path: ${{ runner.temp }}/ci-test-timing-artifact
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Fail if the test pass failed
+        if: always()
+        run: |
+          if [ "${{ steps.merge.outcome }}" = "failure" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.test.result }}" = "failure" ]; then
+            exit 1
+          fi
+
+  # The required status check. It passes a pull request push that skips the
+  # pass, and requires the pass wherever the policy selected it, including the
+  # merge queue. A cancelled job fails it; the gate itself is never skipped,
+  # because GitHub counts a skipped required check as passing.
+  gate:
+    name: Full tests gate
+    if: always()
+    needs: [policy, test, test-timing]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the test pass where this event runs it
+        env:
+          RUN: ${{ needs.policy.outputs.run }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if [ "$RUN" = true ]; then
+            echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' > /dev/null
+          else
+            echo "$RESULTS" | jq -e '.policy.result == "success"' > /dev/null
+          fi

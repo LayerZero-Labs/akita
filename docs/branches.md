@@ -36,9 +36,13 @@ through the next sync.
 
 `main` is protected by repository rulesets. A pull request into `main` needs an
 approving review from a member of the maintainer team, given after the most
-recent push, and passing Socket Security checks. `main` keeps a linear history,
-so pull requests merge by squash or rebase. Any contributor with write access
-can merge once these conditions hold.
+recent push, passing Socket Security checks, and passing required CI checks
+(`CI gate`, `Portability gate`, `Doc guardrails`, and `Full tests gate`).
+Pull requests into `main` merge through the merge queue, which squash-merges
+them, so `main` keeps a linear history. The queue reruns the required checks,
+including the full test pass, on the pull request combined with the current
+`main` and every pull request ahead of it, and merges only if they pass. Any
+contributor with write access can add an approved pull request to the queue.
 
 `dev` accepts changes only through pull requests with passing CI, and it
 rejects force pushes and deletion. A pull request must be up to date with `dev`
@@ -51,9 +55,13 @@ maintainer-team approval. Any contributor with write access can merge into
 `main` or verifier-reachable code.
 
 Every workflow that runs on pull requests into `main` also runs on pull
-requests into `dev`, subject to the same path filters. Workflows triggered by
-pushes or schedules, including the weekly fuzz and security runs, run only on
-`main`.
+requests into `dev`, subject to the same path filters. The full test pass
+(`.github/workflows/full-tests.yml`) runs on a billed large runner. It runs on
+every push to a pull request into `dev`, which has no merge queue. A pull
+request into `main` runs it in the merge queue, or earlier when labelled
+`run-full-tests`. A pull request into either branch runs the profile
+benchmarks only when labelled `run-benchmarks`. Workflows triggered by pushes
+or schedules, including the weekly fuzz and security runs, run only on `main`.
 
 ## Extension contract
 
