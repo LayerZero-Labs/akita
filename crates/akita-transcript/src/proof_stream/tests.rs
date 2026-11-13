@@ -539,7 +539,7 @@ fn empty_groups_make_no_absorb_call() {
         if squeeze_first {
             let _ = verifier.verifier_message::<[u8; 32]>();
         }
-        assert!(receive_atoms::<FieldAtom<F>>(&mut verifier, 0)
+        assert!(receive_atoms::<FieldAtom<F>>(&mut verifier, 0, None)
             .unwrap()
             .is_empty());
         assert!(receive_byte_group(&mut verifier, site(2, 2), 0)
