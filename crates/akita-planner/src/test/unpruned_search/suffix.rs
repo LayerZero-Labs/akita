@@ -212,7 +212,7 @@ pub(super) fn visit_suffixes(
     let mut frontier = OracleFrontier::default();
     let (min_log_basis, max_log_basis) =
         crate::policy::log_basis_search_range_at_level(ctx.policy, state.level);
-    for log_basis in min_log_basis.max(state.current_log_basis)..=max_log_basis {
+    for log_basis in min_log_basis..=max_log_basis {
         for dimensions in dimension_candidates(ctx.policy, state.level, state.dimension_ceiling)? {
             let trace_work = evaluation_trace_work(ctx, state, dimensions)?;
             retain_terminal_candidates(
