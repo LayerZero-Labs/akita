@@ -1,6 +1,6 @@
 use akita_error::AkitaError;
 use akita_params::{DigitRangePlan, FlatBooleanDomain};
-use jolt_field::{Field, Ring};
+use jolt_field::{solinas::parallel::*, Field, Ring};
 use std::sync::Arc;
 
 use crate::sources::packed_digits::PackedSignedDigits;
@@ -90,23 +90,31 @@ impl CompactDigitSource {
     }
 
     fn ordered_range_class_pairs(digits: &PackedSignedDigits, class_count: u8) -> Arc<[u16]> {
-        let mut digits = digits.iter();
-        std::iter::from_fn(|| {
-            digits.next().map(|digit| {
-                let left = RangeImageClass::from_balanced_digit(digit, usize::from(class_count)).0;
-                let right = digits
-                    .next()
-                    .map(|digit| {
-                        RangeImageClass::from_balanced_digit(digit, usize::from(class_count))
-                    })
-                    .unwrap_or(RangeImageClass::PADDING)
-                    .0;
-                // An i8 digit's class is at most 127; even with a u8 class
-                // count, 127 * 255 + 127 fits u16.
-                u16::from(left) * u16::from(class_count) + u16::from(right)
-            })
-        })
-        .collect()
+        /// Pairs per task: a whole number of packed blocks, long enough that
+        /// a task outweighs its scheduling.
+        const TASK_PAIRS: usize = 1 << 14;
+        let view = digits.view();
+        let class_of =
+            |digit| RangeImageClass::from_balanced_digit(digit, usize::from(class_count)).0;
+        let mut pairs = vec![0u16; view.len().div_ceil(2)];
+        cfg_chunks_mut!(pairs, TASK_PAIRS)
+            .enumerate()
+            .for_each(|(task, pairs)| {
+                let first = 2 * task * TASK_PAIRS;
+                let end = view.len().min(first + 2 * pairs.len());
+                let mut digits = view
+                    .slice(first..end)
+                    .expect("a task's digits lie inside the witness")
+                    .iter();
+                for pair in pairs {
+                    let left = digits.next().map_or(RangeImageClass::PADDING.0, class_of);
+                    let right = digits.next().map_or(RangeImageClass::PADDING.0, class_of);
+                    // An i8 digit's class is at most 127; even with a u8 class
+                    // count, 127 * 255 + 127 fits u16.
+                    *pair = u16::from(left) * u16::from(class_count) + u16::from(right);
+                }
+            });
+        Arc::from(pairs)
     }
 
     pub(super) fn digits(&self) -> PackedSignedDigits {
