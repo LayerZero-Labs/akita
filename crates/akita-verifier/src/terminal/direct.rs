@@ -17,12 +17,12 @@ use std::iter::repeat_n;
 use crate::prepared_cache::TerminalNttCache;
 
 /// `Σ_b challenges[b] · values[b]` in `Z_q[X]/(X^D + 1)`, one signed sum of
-/// ring coefficients per output coefficient.
+/// ring coefficients per output coefficient and bounded batch.
 ///
 /// `X^position · v` contributes `v[k − position]` at coefficient `k ≥ position`
 /// and `−v[k + D − position]` below it. A challenge coefficient `c` enters as
-/// `|c|` unit terms with the sign of `c`. The terms are generated lazily from
-/// the validated challenges, so no per-term storage is allocated.
+/// `|c|` unit terms. Windows into `[-v, v, -v]` incorporate both the wrap
+/// sign and the sign of `c` before visiting output coefficients.
 fn sparse_challenge_dot<'a, F, const D: usize>(
     challenges: &[SparseChallenge],
     values: impl Iterator<Item = &'a CyclotomicRing<F, D>> + Clone,
@@ -36,31 +36,44 @@ where
     for challenge in challenges {
         challenge.validate::<D>()?;
     }
-    Ok(CyclotomicRing::from_coefficients(std::array::from_fn(
-        |k| {
-            F::signed_sum(
-                challenges
-                    .iter()
-                    .zip(values.clone())
-                    .flat_map(|(challenge, value)| {
-                        let value = value.coefficients();
-                        challenge.positions.iter().zip(&challenge.coeffs).flat_map(
-                            move |(&position, &coefficient)| {
-                                // `validate` pinned `position < D`.
-                                let position = position as usize;
-                                let negative = coefficient < 0;
-                                let term = if k >= position {
-                                    (&value[k - position], negative)
-                                } else {
-                                    (&value[k + D - position], !negative)
-                                };
-                                repeat_n(term, usize::from(coefficient.unsigned_abs()))
-                            },
-                        )
-                    }),
-            )
-        },
-    )))
+    let mut sums = [F::zero(); D];
+    for (challenge, value) in challenges.iter().zip(values) {
+        let negative = value.coefficients().map(|coefficient| -coefficient);
+        let extended = [negative, *value.coefficients(), negative];
+        let extended = extended.as_flattened();
+        let mut terms = challenge.positions.iter().zip(&challenge.coeffs).flat_map(
+            |(&position, &coefficient)| {
+                let signed = if coefficient < 0 {
+                    &extended[D..]
+                } else {
+                    extended
+                };
+                // Validation pins `position < D`; each suffix contains a full ring.
+                let window = signed
+                    .get(D - position as usize..)
+                    .and_then(|suffix| suffix.first_chunk::<D>());
+                repeat_n(window, usize::from(coefficient.unsigned_abs()))
+            },
+        );
+        let mut batch = [value.coefficients(); ROW_BATCH];
+        loop {
+            let mut len = 0;
+            for (slot, term) in batch.iter_mut().zip(terms.by_ref()) {
+                *slot = term.ok_or(AkitaError::InvalidProof)?;
+                len += 1;
+            }
+            if len == 0 {
+                break;
+            }
+            for (k, sum) in sums.iter_mut().enumerate() {
+                *sum = F::signed_sum(
+                    std::iter::once((&*sum, false))
+                        .chain(batch[..len].iter().map(|window| (&window[k], false))),
+                );
+            }
+        }
+    }
+    Ok(CyclotomicRing::from_coefficients(sums))
 }
 
 /// Digests of the last live `e` and `t` block, which the prover sends in
@@ -74,7 +87,7 @@ pub(crate) struct LastBlockDigests {
 /// the fold relation that the block completes.
 struct LastBlockRecovery<'a, F: Field, const D: usize> {
     challenge: &'a SparseChallenge,
-    inverse: CyclotomicRing<F, D>,
+    inverse_windows: Vec<F>,
 }
 
 impl<'a, F, const D: usize> LastBlockRecovery<'a, F, D>
@@ -84,12 +97,25 @@ where
     /// Invert the last block's fold challenge, rejecting a challenge that is
     /// not a unit.
     fn new(challenge: &'a SparseChallenge) -> Result<Self, AkitaError> {
-        let dense = sparse_challenge_dot(
-            std::slice::from_ref(challenge),
-            [&CyclotomicRing::one()].into_iter(),
-        )?;
+        challenge.validate::<D>()?;
+        let mut dense = CyclotomicRing::<F, D>::zero();
+        for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+            dense.coefficients_mut()[position as usize] = F::from_i64(i64::from(coefficient));
+        }
         let inverse = dense.inverse().ok_or(AkitaError::InvalidProof)?;
-        Ok(Self { challenge, inverse })
+        // Window D - 1 - k contains the inverse's negacyclic convolution
+        // weights for coefficient k, shared by every recovered block.
+        let inverse_windows = inverse
+            .coefficients()
+            .iter()
+            .rev()
+            .copied()
+            .chain(inverse.coefficients().iter().skip(1).rev().map(|&c| -c))
+            .collect();
+        Ok(Self {
+            challenge,
+            inverse_windows,
+        })
     }
 
     /// Solve `partial + challenge * block == target` for `block`.
@@ -102,7 +128,13 @@ where
         partial: CyclotomicRing<F, D>,
         target: &CyclotomicRing<F, D>,
     ) -> Result<CyclotomicRing<F, D>, AkitaError> {
-        let block = self.inverse * (*target - partial);
+        let residual = *target - partial;
+        let block = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+            F::dot_product(
+                &self.inverse_windows[D - 1 - k..][..D],
+                residual.coefficients(),
+            )
+        }));
         let folded = partial
             + sparse_challenge_dot(std::slice::from_ref(self.challenge), [&block].into_iter())?;
         if folded != *target {
@@ -678,6 +710,143 @@ mod tests {
         assert_sparse_challenge_product::<128>();
     }
 
+    #[test]
+    fn sparse_challenge_batches_preserve_boundaries_and_signed_extremes() {
+        fn check<const D: usize>() {
+            let value = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|k| {
+                if k.is_multiple_of(2) {
+                    -F::one()
+                } else {
+                    F::from_u64(k as u64)
+                }
+            }));
+            // Unit-term counts below, at, and across one and two batches.
+            let batch = i8::try_from(ROW_BATCH).expect("batch size fits a challenge coefficient");
+            let boundaries = [batch - 1, batch, batch + 1];
+            let doubled = boundaries.map(|count| count + batch);
+            for coefficient in [1, i8::MAX, i8::MIN]
+                .into_iter()
+                .chain(boundaries)
+                .chain(doubled)
+            {
+                for position in [0, D - 1] {
+                    let challenge = SparseChallenge {
+                        positions: vec![position as u32].into(),
+                        coeffs: vec![coefficient].into(),
+                    };
+                    let mut dense = CyclotomicRing::<F, D>::zero();
+                    dense.coefficients_mut()[position] = F::from_i64(i64::from(coefficient));
+                    let actual = sparse_challenge_dot(
+                        &[challenge.clone(), challenge],
+                        [&value, &value].into_iter(),
+                    )
+                    .unwrap();
+                    assert_eq!(actual, (dense * value).scale(&F::from_u64(2)));
+                }
+            }
+            let empty = SparseChallenge {
+                positions: Default::default(),
+                coeffs: Default::default(),
+            };
+            assert_eq!(
+                sparse_challenge_dot::<F, D>(&[], std::iter::empty()).unwrap(),
+                CyclotomicRing::zero()
+            );
+            assert_eq!(
+                sparse_challenge_dot(&[empty], [&value].into_iter()).unwrap(),
+                CyclotomicRing::zero()
+            );
+        }
+        check::<64>();
+        check::<128>();
+    }
+
+    #[test]
+    fn sparse_challenge_batches_reject_malformed_support() {
+        let value = CyclotomicRing::<F, 64>::zero();
+        for (positions, coeffs) in [
+            (vec![0], vec![]),
+            (vec![], vec![1]),
+            (vec![0], vec![0]),
+            (vec![3, 3], vec![1, -1]),
+            (vec![64], vec![1]),
+            (vec![u32::MAX], vec![i8::MIN]),
+        ] {
+            let challenge = SparseChallenge {
+                positions: positions.into(),
+                coeffs: coeffs.into(),
+            };
+            let expected = challenge.validate::<64>().unwrap_err();
+            assert_eq!(
+                sparse_challenge_dot(&[challenge], [&value].into_iter()),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn sparse_windows_preserve_wraps_and_distinct_values() {
+        const D: usize = 64;
+        for position in 0..D {
+            let challenges: Vec<_> = [i8::MIN, 33, -31, i8::MAX]
+                .into_iter()
+                .map(|coefficient| SparseChallenge {
+                    positions: vec![position as u32, ((position + 1) % D) as u32].into(),
+                    coeffs: vec![coefficient, -1].into(),
+                })
+                .collect();
+            let values: Vec<_> = (0..challenges.len())
+                .map(|index| {
+                    CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|k| {
+                        F::from_i64((index as i64 + 1) * (k as i64 - 17))
+                    }))
+                })
+                .collect();
+            let expected = challenges.iter().zip(&values).fold(
+                CyclotomicRing::zero(),
+                |sum, (challenge, value)| {
+                    let mut dense = CyclotomicRing::<F, D>::zero();
+                    for (&term, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+                        dense.coefficients_mut()[term as usize] =
+                            F::from_i64(i64::from(coefficient));
+                    }
+                    sum + dense * *value
+                },
+            );
+            assert_eq!(
+                sparse_challenge_dot(&challenges, values.iter()),
+                Ok(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn sparse_windows_preserve_degenerate_dimensions() {
+        let empty = SparseChallenge {
+            positions: Default::default(),
+            coeffs: Default::default(),
+        };
+        let zero = CyclotomicRing::<F, 0>::zero();
+        assert_eq!(
+            sparse_challenge_dot(&[empty], [&zero].into_iter()),
+            Ok(zero)
+        );
+        let challenge = SparseChallenge {
+            positions: vec![0].into(),
+            coeffs: vec![i8::MIN].into(),
+        };
+        let expected = challenge.validate::<0>().unwrap_err();
+        assert_eq!(
+            sparse_challenge_dot(std::slice::from_ref(&challenge), [&zero].into_iter()),
+            Err(expected)
+        );
+        let one = CyclotomicRing::<F, 1>::from_coefficients([-F::one()]);
+        assert_eq!(
+            sparse_challenge_dot(&[challenge], [&one].into_iter()),
+            Ok(CyclotomicRing::from_coefficients([F::from_u64(128)]))
+        );
+    }
+
     fn assert_last_block_recovery<const D: usize>() {
         let challenge = SparseChallenge {
             positions: vec![1, 5, (D - 2) as u32].into(),
@@ -697,10 +866,11 @@ mod tests {
         assert_eq!(recovery.solve(partial, &target), Ok(block));
 
         // The relation, not the inversion, decides acceptance.
-        let wrong_inverse = LastBlockRecovery {
+        let mut wrong_inverse = LastBlockRecovery {
             challenge: &challenge,
-            inverse: recovery.inverse + CyclotomicRing::one(),
+            inverse_windows: recovery.inverse_windows.clone(),
         };
+        wrong_inverse.inverse_windows[D - 1] += F::one();
         assert_eq!(
             wrong_inverse.solve(partial, &target),
             Err(AkitaError::InvalidProof)
