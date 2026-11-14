@@ -2,10 +2,11 @@
 
 use super::{
     invalid_proof, prover_context, receive_atoms, reject, send_atoms, verifier_context,
-    word_padded, ProtocolContextRecord,
+    word_padded, ExtensionAtom, ProtocolContextRecord,
 };
 use crate::{ProverChannel, VerifierChannel};
 use akita_error::AkitaError;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use jolt_transcript::{ChallengeCodec, FieldTranscript};
 use spongefish::{Encoding, FromNarg, Transcript};
 
@@ -36,6 +37,25 @@ pub trait ProofChannel {
         &mut self,
         messages: &mut [T],
     ) -> Result<(), AkitaError>;
+
+    /// Exchange fixed-width canonical extension atoms as one proof message.
+    ///
+    /// The default preserves the channel's generic exchange behavior. A
+    /// verifier may absorb the consumed canonical bytes when word-aligned.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::exchange`].
+    fn exchange_extension_atoms<F, E>(
+        &mut self,
+        messages: &mut [ExtensionAtom<F, E>],
+    ) -> Result<(), AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        self.exchange(messages)
+    }
 
     /// Draw one challenge message of `len` field elements.
     ///
@@ -128,7 +148,27 @@ impl ProofChannel for VerifierChannel<'_> {
         &mut self,
         messages: &mut [T],
     ) -> Result<(), AkitaError> {
-        let received = receive_atoms::<T>(self, messages.len())?;
+        let received = receive_atoms::<T>(self, messages.len(), None)?;
+        for (slot, value) in messages.iter_mut().zip(received) {
+            *slot = value;
+        }
+        Ok(())
+    }
+
+    fn exchange_extension_atoms<F, E>(
+        &mut self,
+        messages: &mut [ExtensionAtom<F, E>],
+    ) -> Result<(), AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+    {
+        let canonical_byte_len = messages
+            .len()
+            .checked_mul(E::DEGREE)
+            .and_then(|count| count.checked_mul(F::NUM_BYTES));
+        let received =
+            receive_atoms::<ExtensionAtom<F, E>>(self, messages.len(), canonical_byte_len)?;
         for (slot, value) in messages.iter_mut().zip(received) {
             *slot = value;
         }

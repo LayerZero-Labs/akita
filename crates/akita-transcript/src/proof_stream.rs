@@ -340,9 +340,8 @@ impl<F: CanonicalEncoding> Encoding for FieldAtom<F> {
 
 /// Encoded bytes of one proof atom, inline when they fit in 64 bytes.
 ///
-/// Every received and public atom is encoded before it is absorbed;
-/// writing the encoding into an inline, word-aligned buffer avoids
-/// allocating it on the heap.
+/// Public atoms and received groups requiring padding are encoded before
+/// absorption. Writing a short encoding inline avoids a heap allocation.
 enum AtomBytes {
     Inline { bytes: InlineAtomBytes, len: usize },
     Heap(Vec<u8>),
@@ -482,9 +481,18 @@ fn send_atoms<T: Encoding>(state: &mut ProverChannel, atoms: impl IntoIterator<I
 /// Receive `count` canonical atoms sent by [`send_atoms`], rejecting a
 /// noncanonical one. The count must come from bound data. An empty group
 /// makes no absorb call.
+///
+/// `canonical_byte_len` may be supplied only for fixed-width atoms whose
+/// accepted wire bytes equal their encoding; only its word alignment is
+/// read. Word-aligned groups can then absorb the consumed bytes directly.
+/// Other atoms retain their encoder. The equality rests on two trait laws:
+/// a checked decode ([`CanonicalEncoding::from_bytes_le_checked`]) accepts
+/// only the bytes its value encodes to, and an extension element's base
+/// coordinates round-trip through `from_base_slice` and `to_base_vec`.
 fn receive_atoms<T: Encoding + FromNarg + Copy>(
     state: &mut VerifierChannel<'_>,
     count: usize,
+    canonical_byte_len: Option<usize>,
 ) -> Result<Vec<T>, AkitaError> {
     let mut atoms = Vec::new();
     if atoms.try_reserve_exact(count).is_err() {
@@ -493,17 +501,21 @@ fn receive_atoms<T: Encoding + FromNarg + Copy>(
     if count == 0 {
         return Ok(atoms);
     }
-    state
-        .prover_message_with(
-            move |reader| {
-                for _ in 0..count {
-                    atoms.push(T::from_narg(reader)?);
-                }
-                Ok(atoms)
-            },
-            |atoms| word_padded(&encode_atoms(atoms.iter().copied())),
-        )
-        .map_err(invalid_proof)
+    let decode = move |reader: &mut NargReader<'_>| {
+        for _ in 0..count {
+            atoms.push(T::from_narg(reader)?);
+        }
+        Ok(atoms)
+    };
+    if canonical_byte_len.is_some_and(|len| len.is_multiple_of(WORD_BYTES)) {
+        state.prover_message_as(decode).map_err(invalid_proof)
+    } else {
+        state
+            .prover_message_with(decode, |atoms| {
+                word_padded(&encode_atoms(atoms.iter().copied()))
+            })
+            .map_err(invalid_proof)
+    }
 }
 
 fn group_record(
@@ -737,7 +749,8 @@ pub fn receive_field_group<F: CanonicalEncoding>(
     );
     let record = state.guard(record)?;
     verifier_context(state, record);
-    let atoms = receive_atoms::<FieldAtom<F>>(state, value_count)?;
+    let atoms =
+        receive_atoms::<FieldAtom<F>>(state, value_count, value_count.checked_mul(F::NUM_BYTES))?;
     Ok(atoms.into_iter().map(FieldAtom::into_inner).collect())
 }
 
@@ -791,7 +804,7 @@ where
         .iter()
         .map(|&value| ExtensionAtom::new(value))
         .collect();
-    state.exchange(&mut atoms)?;
+    state.exchange_extension_atoms(&mut atoms)?;
     for (value, atom) in values.iter_mut().zip(atoms) {
         *value = atom.into_inner();
     }
@@ -1032,3 +1045,6 @@ impl FoldPreview {
 mod atom_encoding_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod canonical_receive_tests;
