@@ -67,5 +67,10 @@ name = "catalog_security"
 path = "examples/catalog_security.rs"
 required-features = ["catalog-security"]
 
+[[example]]
+name = "basis_sweep"
+path = "examples/basis_sweep.rs"
+required-features = ["catalog-gen"]
+
 [lints]
 workspace = true
