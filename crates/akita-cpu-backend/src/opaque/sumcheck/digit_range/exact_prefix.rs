@@ -2,6 +2,8 @@ use akita_error::AkitaError;
 use jolt_field::{solinas::parallel::*, Field};
 
 const EXACT_PREFIX_SEQUENTIAL_LEN: usize = 1 << 12;
+#[cfg(feature = "parallel")]
+const EXACT_PREFIX_TASK_LEN: usize = 1 << 10;
 
 /// Explicit prefix of a power-of-two table followed by one implicit default value.
 pub(crate) struct ExactPrefixTable<T: Copy> {
@@ -112,13 +114,22 @@ impl<T: Copy> ExactPrefixTable<T> {
             let output = &mut output_prefix[wave_start..wave_end];
             let source_len = (2 * output.len()).min(explicit_len - source_start);
             let source = &source_suffix[..source_len];
-            cfg_iter_mut!(output)
+            let fold = |(pair_index, folded): (usize, &mut T)| {
+                let left = source[2 * pair_index];
+                let right = source.get(2 * pair_index + 1).copied().unwrap_or(default);
+                *folded = fold_pair(left, right);
+            };
+            // A wave is a parallel region of its own; tasks of at least
+            // `EXACT_PREFIX_TASK_LEN` pairs keep the short early waves from
+            // being split down to single pairs.
+            #[cfg(feature = "parallel")]
+            output
+                .par_iter_mut()
+                .with_min_len(EXACT_PREFIX_TASK_LEN)
                 .enumerate()
-                .for_each(|(pair_index, folded)| {
-                    let left = source[2 * pair_index];
-                    let right = source.get(2 * pair_index + 1).copied().unwrap_or(default);
-                    *folded = fold_pair(left, right);
-                });
+                .for_each(fold);
+            #[cfg(not(feature = "parallel"))]
+            output.iter_mut().enumerate().for_each(fold);
             wave_start = wave_end;
         }
 

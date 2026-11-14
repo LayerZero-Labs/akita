@@ -1,4 +1,5 @@
 use super::exact_prefix::SplitEqualitySuffixMass;
+use crate::opaque::sumcheck::par_fold_by_grain;
 use jolt_field::solinas::parallel::*;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Zero};
@@ -7,7 +8,10 @@ use jolt_field::{Field, Zero};
 ///
 /// This is the only traversal of the split-equality blocks: exact-prefix
 /// reduction, canonical or delayed accumulation, outer weighting and the
-/// parallel reduction all live here.
+/// parallel reduction all live here. Blocks are grouped into tasks of at
+/// least a grain of pairs, and a round below two grains stays on the caller:
+/// the last rounds of every level hold a handful of pairs, and waking the
+/// pool for them costs more than the round.
 ///
 /// `pair_terms(pair_index, inner_weight)` returns two factor arrays whose
 /// lane-wise products are the pair's terms, already scaled by its inner
@@ -24,8 +28,9 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
     debug_assert!(explicit_pair_count <= first.len() * second.len());
     let explicit_block_count = explicit_pair_count.div_ceil(first.len());
     if E::SUM_IS_EXACT {
-        cfg_fold_reduce!(
-            0..explicit_block_count,
+        par_fold_by_grain(
+            cfg_into_iter!(0..explicit_block_count),
+            first.len(),
             || [E::Product::zero(); N],
             |mut outer, second_index| {
                 let block_start = second_index * first.len();
@@ -51,12 +56,13 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
                     *left += right;
                 }
                 left
-            }
+            },
         )
         .map(E::reduce_product)
     } else {
-        cfg_fold_reduce!(
-            0..explicit_block_count,
+        par_fold_by_grain(
+            cfg_into_iter!(0..explicit_block_count),
+            first.len(),
             || [E::zero(); N],
             |mut outer, second_index| {
                 let block_start = second_index * first.len();
@@ -82,7 +88,7 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
                     *left += right;
                 }
                 left
-            }
+            },
         )
     }
 }
