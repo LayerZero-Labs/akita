@@ -236,14 +236,23 @@ impl<F: Field> CpuAcceptedFold<F> {
             .len()
             .checked_mul(plan.num_digits_fold())
             .ok_or_else(|| AkitaError::Internal("Z plane count overflow".into()))?;
-        let mut planes = vec![[0i8; D]; plane_count];
+        // The flat vector comes zeroed from the allocator, and its pages are
+        // first touched by the workers below; `vec![[0; D]; n]` would be
+        // filled by this thread.
+        let mut coefficients = vec![
+            0i8;
+            plane_count.checked_mul(D).ok_or_else(|| {
+                AkitaError::Internal("Z plane extent overflow".into())
+            })?
+        ];
+        let (planes, _) = coefficients.as_chunks_mut::<D>();
         // Each row owns a disjoint `num_digits_fold`-wide plane window, so the
         // decomposition is embarrassingly parallel and byte-identical either
         // way. Keep the parallel form this path had before the kernel move.
         let num_digits_fold = plan.num_digits_fold();
         let log_basis_open = plan.log_basis_open();
         cfg_iter!(rows)
-            .zip(cfg_chunks_mut!(&mut planes, num_digits_fold))
+            .zip(cfg_chunks_mut!(planes, num_digits_fold))
             .for_each(|(row, row_planes)| {
                 balanced_decompose_centered_i32_i8_into(row, row_planes, log_basis_open);
             });
@@ -253,14 +262,14 @@ impl<F: Field> CpuAcceptedFold<F> {
             .and_then(|count| count.checked_mul(plan.num_digits_fold()))
             .ok_or_else(|| AkitaError::Internal("witness Z plane count overflow".into()))?;
         let range = plan.range();
-        if planes.len() != expected_planes || planes.as_flattened().len() != range.len() {
+        if plane_count != expected_planes || coefficients.len() != range.len() {
             return Err(AkitaError::Internal(format!(
                 "fold Z plane extent mismatch: expected {}, actual {}",
                 range.len(),
-                planes.as_flattened().len(),
+                coefficients.len(),
             )));
         }
-        builder.write_at(range.start, planes.as_flattened())
+        builder.write_at(range.start, &coefficients)
     }
 
     pub(crate) fn a_relation_quotients<const D: usize>(

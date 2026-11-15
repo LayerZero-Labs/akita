@@ -1,5 +1,7 @@
 use super::*;
-use crate::opaque::sumcheck::{single_row_tile_pairs, sum_partials};
+use crate::opaque::sumcheck::{
+    assume_initialized_fold_output, single_row_tile_pairs, sum_partials, uninitialized_fold_output,
+};
 use jolt_poly::OmittedConstantPoly;
 
 /// Accumulate the weighted sums of pairs `tile` of a flat live-prefix table.
@@ -103,7 +105,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let tile_pairs = single_row_tile_pairs(block_size);
         let precomputation = &self.range_poly;
         let num_coeffs_q = precomputation.num_coefficients();
-        let mut out = vec![E::zero(); next_live];
+        let mut out = uninitialized_fold_output(next_live);
         let tile_accumulators: Vec<_> = cfg_chunks_mut!(out, 2 * tile_pairs)
             .enumerate()
             .map(|(tile, tile_out)| {
@@ -120,10 +122,10 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                     |pair, weight, sums| {
                         let local_left = 2 * (pair - tile_start);
                         let left = fold(entry_start + local_left);
-                        tile_out[local_left] = left;
+                        let _ = tile_out[local_left].write(left);
                         let right = if local_left + 1 < tile_out.len() {
                             let right = fold(entry_start + local_left + 1);
-                            tile_out[local_left + 1] = right;
+                            let _ = tile_out[local_left + 1].write(right);
                             right
                         } else {
                             E::zero()
@@ -133,6 +135,9 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 )
             })
             .collect();
+        // The tiles partition `out`, a tile's pairs cover its entries, and
+        // `accumulate_live_prefix_tile` visits every pair of its tile once.
+        let out = assume_initialized_fold_output(out);
         (
             out,
             precomputation.round_poly_from_sums(

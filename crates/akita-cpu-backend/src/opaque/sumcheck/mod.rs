@@ -12,6 +12,7 @@ mod stage3;
 
 // --- Shared helpers ------------------------------------------------------
 
+use std::mem::{ManuallyDrop, MaybeUninit};
 use std::ops::AddAssign;
 
 use jolt_field::Field;
@@ -106,6 +107,26 @@ pub(crate) fn sum_partials<T: Copy + AddAssign, const N: usize>(
         add_assign_all(&mut total, &partial);
         total
     })
+}
+
+/// A fold output of `len` entries for its tasks to write, so that no thread
+/// fills the allocation before they do.
+pub(crate) fn uninitialized_fold_output<E>(len: usize) -> Vec<MaybeUninit<E>> {
+    let mut output = Vec::with_capacity(len);
+    output.resize_with(len, MaybeUninit::uninit);
+    output
+}
+
+/// The fold output once its tasks have written every entry.
+pub(crate) fn assume_initialized_fold_output<E>(output: Vec<MaybeUninit<E>>) -> Vec<E> {
+    let mut output = ManuallyDrop::new(output);
+    let ptr = output.as_mut_ptr().cast::<E>();
+    let len = output.len();
+    let capacity = output.capacity();
+    // SAFETY: `MaybeUninit<E>` has the same layout as `E`. Every caller writes
+    // all `len` entries before converting, and `ManuallyDrop` leaves ownership
+    // of the allocation to the returned vector.
+    unsafe { Vec::from_raw_parts(ptr, len, capacity) }
 }
 
 /// Pairs per parallel work item when a sum-check round has a single outer row.
