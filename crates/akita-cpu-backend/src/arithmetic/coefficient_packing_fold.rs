@@ -1,7 +1,10 @@
 use akita_challenges::SparseChallenge;
 use akita_error::{checked, AkitaError};
 use akita_params::SubringCoefficientPackingGeometry;
+use jolt_field::cfg_chunks;
 use jolt_field::{ExtField, Field, Ring};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use std::mem;
 
 const MAX_REFERENCE_ALLOCATION_BYTES: usize = 1 << 30;
@@ -495,6 +498,62 @@ pub(crate) fn fold_coefficient_packing_partials<F: Field + Ring>(
         partial_len,
     )?;
 
+    // Each term adds into every output coordinate, so a task folds a run of
+    // terms into sums of its own and the sums are added afterwards; field
+    // addition makes the result independent of the split.
+    let width = geometry.partial_base_field_width();
+    let terms_per_task = terms_per_fold_task(challenges.len(), width);
+    let (reduced, quotient) = if terms_per_task >= challenges.len() {
+        fold_packing_terms(geometry, challenges, partial_coordinates)?
+    } else {
+        let coordinates_per_task = checked::product([terms_per_task, width]).ok_or_else(|| {
+            AkitaError::InvalidInput("subring packing fold task extent overflow".into())
+        })?;
+        let sums = cfg_chunks!(challenges, terms_per_task)
+            .zip(cfg_chunks!(partial_coordinates, coordinates_per_task))
+            .map(|(challenges, partials)| fold_packing_terms(geometry, challenges, partials))
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let mut reduced = zero_vec::<F>("reduced packing product", width)?;
+        let mut quotient = zero_vec::<F>("packing quotient", width)?;
+        for (task_reduced, task_quotient) in sums {
+            for (total, value) in reduced.iter_mut().zip(task_reduced) {
+                *total += value;
+            }
+            for (total, value) in quotient.iter_mut().zip(task_quotient) {
+                *total += value;
+            }
+        }
+        (reduced, quotient)
+    };
+    Ok(CoefficientPackingFoldProduct {
+        geometry,
+        reduced_base_field_coordinates: reduced,
+        quotient_high_half_base_field_coordinates: quotient,
+    })
+}
+
+/// Terms one task folds: all of them unless the fold is large enough to pay
+/// for waking the pool, then an even share per worker.
+fn terms_per_fold_task(terms: usize, width: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        const PARALLEL_FOLD_COORDINATES: usize = 1 << 17;
+        if terms.saturating_mul(width) >= PARALLEL_FOLD_COORDINATES {
+            return terms.div_ceil(rayon::current_num_threads().max(1)).max(1);
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    let _ = width;
+    terms.max(1)
+}
+
+/// The reduced product and quotient of a run of terms, in the layout of
+/// [`fold_coefficient_packing_partials`]; lengths are the caller's to check.
+fn fold_packing_terms<F: Field + Ring>(
+    geometry: SubringCoefficientPackingGeometry,
+    challenges: &[SparseChallenge],
+    partial_coordinates: &[F],
+) -> Result<(Vec<F>, Vec<F>), AkitaError> {
     let mut reduced = zero_vec::<F>(
         "reduced packing product",
         geometry.partial_base_field_width(),
@@ -591,11 +650,7 @@ pub(crate) fn fold_coefficient_packing_partials<F: Field + Ring>(
             }
         }
     }
-    Ok(CoefficientPackingFoldProduct {
-        geometry,
-        reduced_base_field_coordinates: reduced,
-        quotient_high_half_base_field_coordinates: quotient,
-    })
+    Ok((reduced, quotient))
 }
 
 #[cfg(test)]
