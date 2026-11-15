@@ -1,10 +1,12 @@
 use super::{RecursiveWitnessFlat, SuffixWitnessBatchView};
-use crate::arithmetic::coefficient_packing::FusedPackingWeights;
+use crate::arithmetic::coefficient_packing::{
+    coefficient_packing_partials_from_digit_source, FusedPackingWeights, MAX_SUMMED_DIGIT,
+};
 use crate::opaque::{
     CpuBackend, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
     SubringCoefficientPackingPlan,
 };
-use crate::sources::block_digits::PackedDigits;
+use crate::sources::block_digits::{PackedDigits, RingValueSource};
 use crate::sources::dense::seam_packing_partials;
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
@@ -25,15 +27,37 @@ where
             actual: view.live_ring_elems,
         });
     }
-    let coordinates = seam_packing_partials::<F, E, _, D>(
-        &PackedDigits {
-            digits: view.digits,
-            num_rings: view.live_ring_elems,
-        },
-        view.live_coeff_len,
-        view.num_vars(),
-        fused_weights,
-    )?;
+    let digits = PackedDigits {
+        digits: view.digits,
+        num_rings: view.live_ring_elems,
+    };
+    let bounds = view.digits.bounds();
+    let digit_abs_bound = bounds.negative_abs_max().max(bounds.positive_max());
+    let coordinates = if digit_abs_bound <= MAX_SUMMED_DIGIT {
+        let live_coeff_len = view.live_coeff_len;
+        coefficient_packing_partials_from_digit_source::<F, E, _, D>(
+            fused_weights,
+            view.num_vars(),
+            live_coeff_len.div_ceil(D),
+            digit_abs_bound,
+            |position| RingValueSource::<F, D>::values(&digits, position),
+            |position, coefficient, values: &[i8; D]| {
+                // The last live ring may end inside the stored digits.
+                if position * D + coefficient < live_coeff_len {
+                    values[coefficient]
+                } else {
+                    0
+                }
+            },
+        )?
+    } else {
+        seam_packing_partials::<F, E, _, D>(
+            &digits,
+            view.live_coeff_len,
+            view.num_vars(),
+            fused_weights,
+        )?
+    };
     SubringCoefficientPackingPartials::new(point.geometry(), point.num_live_blocks(), coordinates)
 }
 
