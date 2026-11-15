@@ -113,7 +113,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        (0..self.required())
+        cfg_into_iter!(0..self.required())
             .map(|setup_idx| self.setup_index_weight_at(setup_idx, &group_weights))
             .collect()
     }
