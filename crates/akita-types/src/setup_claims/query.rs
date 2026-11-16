@@ -2,7 +2,7 @@ mod compilation;
 
 use super::{point_domain, SetupPolynomialId};
 use crate::setup_contribution::setup_index_weight::{
-    build_group_b_setup_tensors, lift_role_tensor,
+    build_group_b_setup_tensors, compact_affine_unit_families, lift_role_tensor,
 };
 use crate::{
     factor_aligned_role_tensors, prepare_reduced_role_coefficient_state, project_role_tensors,
@@ -338,6 +338,7 @@ impl<E: Field> SetupQuery<E> {
                         relation_point = high.to_vec();
                     }
                 }
+                let tensors = compact_affine_unit_families(tensors, 1)?;
                 terms.push(NativeTerm {
                     coefficient,
                     point: relation_point,

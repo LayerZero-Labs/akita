@@ -217,11 +217,11 @@ The field code is supplied by Akita's pinned `jolt-field` dependency.
 
 | Property | Primary source |
 | --- | --- |
-| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/mod.rs) |
-| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/word.rs) |
-| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/fp128.rs) |
-| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/unreduced.rs) |
-| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/a956128715473586423edb2085cc5dd889c9193d/crates/jolt-algebra/src/solinas/ext.rs) |
+| Registered pseudo-Mersenne types and exact rejection sampling | [`solinas/mod.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/mod.rs) |
+| 32- and 64-bit word arithmetic | [`solinas/word.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/word.rs) |
+| 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/fp128.rs) |
+| Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/unreduced.rs) |
+| Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/ext.rs) |
 | Production field selection | `crates/akita-config/src/proof_optimized/` |
 
 A field change must preserve canonical encoding, exact sampling, centered

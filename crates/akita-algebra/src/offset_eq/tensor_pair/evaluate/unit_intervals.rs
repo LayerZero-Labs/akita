@@ -262,7 +262,7 @@ pub(super) fn eval_scaled_right<F: Field, const LM: bool, const RM: bool, const 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{One, Prime128OffsetA7F7 as F};
+    use jolt_field::{One, Prime128Offset6A23801F as F};
 
     #[test]
     fn suffix_cache_hits_and_misses_respect_the_work_limit() {

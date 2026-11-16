@@ -235,16 +235,24 @@ macro_rules! __dispatch_protocol_policy_tiers {
         fp64: [$($d64:literal),+ $(,)?],
         fp32: [$($d32:literal),+ $(,)?]
     ) => {{
-        match $crate::protocol_dispatch_tier::<$F>() {
-            $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d128),+ })
-            }
-            $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d64),+ })
-            }
-            $crate::ProtocolRingDispatchTierId::Fp32 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d32),+ })
-            }
+        // The tier is a constant of `$F`, so const conditions keep rustc from
+        // instantiating `$body` for the other tiers' ring dimensions.
+        if const {
+            matches!(
+                $crate::protocol_dispatch_tier::<$F>(),
+                $crate::ProtocolRingDispatchTierId::Fp128
+            )
+        } {
+            $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d128),+ })
+        } else if const {
+            matches!(
+                $crate::protocol_dispatch_tier::<$F>(),
+                $crate::ProtocolRingDispatchTierId::Fp64
+            )
+        } {
+            $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d64),+ })
+        } else {
+            $crate::__dispatch_ring_dim_arms!($d, $D, $body, { $($d32),+ })
         }
     }};
 }
