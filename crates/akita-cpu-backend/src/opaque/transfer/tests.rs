@@ -171,6 +171,7 @@ fn run(signed: bool) {
         catalog,
         selection,
         None,
+        akita_verifier::SetupMode::Check,
     )
     .unwrap();
     let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(

@@ -21,11 +21,7 @@ struct PackedALayout<'a, E> {
     ratio: usize,
 }
 
-/// Target scan-job size. At fp128/D64 this is 2 MiB of contiguous setup data,
-/// large enough to amortize scheduling while exposing hundreds of root jobs.
-pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
-
-/// Partition `group`'s projected setup footprint into scan jobs.
+/// Partition `group`'s projected setup footprint into packed D/B/A segments.
 pub(super) fn scan_partition<E: Field>(
     group: &SetupContributionGroupPlan<E>,
     active_d_cols: usize,
@@ -197,20 +193,8 @@ fn build_packed_segments<E: Field>(
             a_row_weight,
         });
     }
-    let mut jobs = Vec::new();
-    for segment in segments {
-        let mut lo = segment.lo;
-        while lo < segment.hi {
-            let hi = lo.saturating_add(SETUP_SCAN_JOB_RINGS).min(segment.hi);
-            let mut job = segment.clone();
-            job.lo = lo;
-            job.hi = hi;
-            jobs.push(job);
-            lo = hi;
-        }
-    }
 
-    Ok((required, jobs))
+    Ok((required, segments))
 }
 
 #[inline(always)]

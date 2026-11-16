@@ -5,9 +5,11 @@ use crate::GrindingReplay;
 use akita_error::AkitaError;
 use akita_params::{ChallengeFieldOrder, GrindingPlan, GrindingSite};
 use akita_transcript::{
-    bind_instance, exchange_extension_group, new_prover_channel, new_verifier_channel,
-    ChallengeCodec, ProofChannel, ProtocolSiteId, ProverChannel, VerifierChannel,
+    bind_instance, exchange_extension_group, new_verifier_channel, ChallengeCodec, ProofChannel,
+    ProtocolSiteId, VerifierChannel,
 };
+#[cfg(feature = "prover")]
+use akita_transcript::{new_prover_channel, ProverChannel};
 use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 const FAMILY: u32 = 0x53424154;
@@ -83,6 +85,7 @@ where
 }
 
 /// Prover channel of a standalone reduction under `plan`, with its instance bound.
+#[cfg(feature = "prover")]
 pub fn standalone_prover_channel<F, E>(
     session: &[u8],
     statement: &SetupBatchStatement<E>,

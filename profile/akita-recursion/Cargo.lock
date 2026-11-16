@@ -732,7 +732,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 [[package]]
 name = "common"
 version = "0.2.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "allocative",
  "ark-serialize",
@@ -1184,7 +1184,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-akita"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -1214,7 +1214,7 @@ dependencies = [
 [[package]]
 name = "jolt-algebra"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "ark-bn254",
  "ark-ff",
@@ -1231,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "jolt-claims"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "derive_more",
  "jolt-claims-derive",
@@ -1251,7 +1251,7 @@ dependencies = [
 [[package]]
 name = "jolt-claims-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1261,7 +1261,7 @@ dependencies = [
 [[package]]
 name = "jolt-crypto"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1282,7 +1282,7 @@ dependencies = [
 [[package]]
 name = "jolt-dory"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1302,7 +1302,7 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-algebra",
 ]
@@ -1310,7 +1310,7 @@ dependencies = [
 [[package]]
 name = "jolt-host"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "bincode 2.0.1",
  "common",
@@ -1327,7 +1327,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-ntt"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-inlines-sdk",
 ]
@@ -1335,7 +1335,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-sdk"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "inventory",
  "jolt-platform",
@@ -1348,7 +1348,7 @@ dependencies = [
 [[package]]
 name = "jolt-kernels"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-claims",
  "jolt-field",
@@ -1372,7 +1372,7 @@ dependencies = [
 [[package]]
 name = "jolt-kernels-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1382,7 +1382,7 @@ dependencies = [
 [[package]]
 name = "jolt-lookup-tables"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-field",
  "jolt-riscv",
@@ -1393,7 +1393,7 @@ dependencies = [
 [[package]]
 name = "jolt-openings"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
@@ -1426,7 +1426,7 @@ dependencies = [
 [[package]]
 name = "jolt-platform"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -1436,7 +1436,7 @@ dependencies = [
 [[package]]
 name = "jolt-poly"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-field",
  "jolt-transcript",
@@ -1452,7 +1452,7 @@ dependencies = [
 [[package]]
 name = "jolt-program"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "ark-serialize",
  "common",
@@ -1466,7 +1466,7 @@ dependencies = [
 [[package]]
 name = "jolt-prover"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "common",
  "jolt-akita",
@@ -1485,6 +1485,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "jolt-zk",
  "rayon",
  "serde",
  "thiserror",
@@ -1495,7 +1496,7 @@ dependencies = [
 [[package]]
 name = "jolt-r1cs"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-field",
  "serde",
@@ -1505,7 +1506,7 @@ dependencies = [
 [[package]]
 name = "jolt-riscv"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "ark-serialize",
  "serde",
@@ -1516,7 +1517,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "bincode 2.0.1",
  "bytemuck",
@@ -1544,7 +1545,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "common",
  "proc-macro2",
@@ -1555,7 +1556,7 @@ dependencies = [
 [[package]]
 name = "jolt-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
@@ -1571,7 +1572,7 @@ dependencies = [
 [[package]]
 name = "jolt-transcript"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "ark-bn254",
  "ark-ff",
@@ -1586,7 +1587,7 @@ dependencies = [
 [[package]]
 name = "jolt-utils"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "num-traits",
  "rayon",
@@ -1595,7 +1596,7 @@ dependencies = [
 [[package]]
 name = "jolt-verifier"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "ark-serialize",
  "bincode 2.0.1",
@@ -1622,7 +1623,7 @@ dependencies = [
 [[package]]
 name = "jolt-verifier-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1632,7 +1633,7 @@ dependencies = [
 [[package]]
 name = "jolt-witness"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "common",
  "jolt-claims",
@@ -1650,7 +1651,7 @@ dependencies = [
 [[package]]
 name = "jolt-witness-derive"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1660,7 +1661,7 @@ dependencies = [
 [[package]]
 name = "jolt-zk"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "jolt-claims",
  "jolt-crypto",
@@ -1671,6 +1672,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-utils",
  "rand_core",
+ "rayon",
  "serde",
  "thiserror",
 ]
@@ -2306,7 +2308,7 @@ dependencies = [
 [[package]]
 name = "tracer"
 version = "0.2.0"
-source = "git+https://github.com/a16z/jolt?rev=a956128715473586423edb2085cc5dd889c9193d#a956128715473586423edb2085cc5dd889c9193d"
+source = "git+https://github.com/a16z/jolt?rev=25d87ba68bde9f4a85ac986f5487b2e7b7db2699#25d87ba68bde9f4a85ac986f5487b2e7b7db2699"
 dependencies = [
  "addr2line",
  "ark-serialize",

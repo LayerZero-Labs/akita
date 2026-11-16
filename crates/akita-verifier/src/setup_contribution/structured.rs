@@ -709,7 +709,7 @@ fn lb2_t<E: Field>(t_eq: &[E], t_row_stride: usize, row_weights: &[E], gadget: &
 #[cfg(test)]
 mod row_folding_tests {
     use super::*;
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
 
     #[test]
     fn small_groups_keep_the_original_row_layout() {

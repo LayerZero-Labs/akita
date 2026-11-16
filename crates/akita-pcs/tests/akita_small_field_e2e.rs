@@ -50,9 +50,10 @@
 
 #![allow(missing_docs)]
 
-mod common;
+use crate::common;
 #[path = "small_field_drivers/reduced_eor.rs"]
 mod reduced_eor;
+#[path = "small_field_drivers/mod.rs"]
 mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};

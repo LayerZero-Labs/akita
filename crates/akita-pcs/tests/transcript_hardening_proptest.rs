@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-mod common;
+use crate::common;
 
 use akita_cpu_backend::CpuBackend;
 use akita_params::OpeningClaimsLayout;

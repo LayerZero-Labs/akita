@@ -69,9 +69,9 @@ where
     if blocks == 131 {
         // Multiple 2048-ring jobs and a partial last job, without padding away
         // the unequal ownership or physical-prefix boundaries.
-        assert!(plan.required() > super::super::segments::SETUP_SCAN_JOB_RINGS);
+        assert!(plan.required() > super::super::scan::SETUP_SCAN_JOB_RINGS);
         assert_ne!(
-            plan.required() % super::super::segments::SETUP_SCAN_JOB_RINGS,
+            plan.required() % super::super::scan::SETUP_SCAN_JOB_RINGS,
             0
         );
     }

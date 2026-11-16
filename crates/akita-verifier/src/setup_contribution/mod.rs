@@ -9,10 +9,9 @@
 //!   one direct scan (per-group column weights and packed segment partitions).
 //!   Only the direct verifier path builds it; the deferred path evaluates
 //!   structured groups in closed form from the plan alone.
-//! - `segments`: the packed D/B/A partition used by the specialized
-//!   single-group direct scanner.
-//! - `scan`: direct evaluation of the setup matrix. Multi-group scans add
-//!   every group's weight before evaluating each shared setup ring once.
+//! - `segments`: the packed D/B/A partition each scan job walks.
+//! - `scan`: direct evaluation of the setup matrix. Every scan adds each
+//!   group's weight before evaluating each shared setup ring once.
 //! - `structured` / `structured_reduced`: closed-form structured E/T/Z
 //!   contractions for the deferred, cached-lifted, and reduced paths.
 //! - [`SetupIndexWeightMle`] and [`PreparedCoefficientFunctional`] are shared
@@ -20,9 +19,8 @@
 //!
 //! The direct scanner and the setup-index weight implement the same additive
 //! setup-position weight. Direct setup evaluation always projects role
-//! dimensions onto one base ring dimension. A singleton retains the specialized
-//! segment hot loop; a multi-group evaluation fuses overlapping group views into
-//! one base-dimension scan.
+//! dimensions onto one base ring dimension and fuses overlapping group views
+//! into one base-dimension scan.
 
 mod direct_scan;
 mod kernels;
@@ -71,10 +69,7 @@ use akita_types::{
 };
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
-use kernels::{
-    base_ring_segment_inner_sum_typed, dispatch_segment_roles,
-    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment, RoleProjection,
-};
+use kernels::{role_projection, GroupSetupSegment, RoleProjection};
 use segments::scan_partition;
 
 pub(crate) use direct_scan::materialize_reduced_direct_scan_weights;

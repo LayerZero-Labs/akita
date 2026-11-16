@@ -24,8 +24,8 @@ the prover and verifier context streams to be non-empty and identical.
 The PCS integration tests enable this with:
 
 ```bash
-cargo test -p akita-pcs --features logging-transcript --test transcript_hardening
-cargo test -p akita-pcs --features logging-transcript --test transcript_hardening_proptest
+cargo test -p akita-pcs --features logging-transcript --test integration -- transcript_hardening::
+cargo test -p akita-pcs --features logging-transcript --test integration -- transcript_hardening_proptest::
 ```
 
 For the full design, see [`book/src/how/transcript.md`](../../book/src/how/transcript.md).

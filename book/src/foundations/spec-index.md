@@ -44,6 +44,7 @@ policy and the checker use the same live set in
 | [`recompute-last-terminal-block`](../../../specs/recompute-last-terminal-block.md) | active | Omits the last live block of the terminal `e` and `t` segments and binds each by a 32-byte digest. |
 | [`opaque-chunk-aware-fold-response`](../../../specs/opaque-chunk-aware-fold-response.md) | proposed | Proposal, not current behavior: keep every folded response behind the opening-compute boundary as an opaque handle. |
 | [`opaque-prover-consumer`](../../../specs/opaque-prover-consumer.md) | proposed | Proposal, not current behavior: make protocol orchestration independent of CPU witness representations. |
+| [`verifier-setup-scan`](../../../specs/verifier-setup-scan.md) | implemented | Cost model, exactness argument, and measured spans of the direct setup-contribution scan; records the rejected column-first contraction. |
 
 ## Archived records
 
