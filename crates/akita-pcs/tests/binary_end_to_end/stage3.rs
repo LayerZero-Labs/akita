@@ -1,9 +1,20 @@
 //! Typed-prefix admission and Stage 3 transcript mutation scenarios.
 
 use super::*;
+use akita_params::{GroupCommitPhaseParams, PrecommittedGroupProfiles};
+use akita_schedules::ResolvedScheduleRow;
 
-#[test]
-fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof() {
+fn with_binary_commit_fixture(
+    test: impl FnOnce(
+            &AkitaCommitmentScheme<BinaryTestSuffix>,
+            &akita_pcs::AkitaProverSetup<F>,
+            &CpuBackend<F, F>,
+            &ResolvedScheduleRow,
+            GroupCommitPhaseParams,
+            &dyn Fn(u64) -> BinaryCommittedGroupManifest,
+        ) + Send
+        + 'static,
+) {
     init_rayon_pool();
     run_on_large_stack(|| {
         let scheme = AkitaCommitmentScheme::<BinaryTestSuffix>::new(test_catalog());
@@ -14,12 +25,6 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
             ))
             .unwrap();
         let carrier = row.profiles().final_group;
-        let first = row.schedule().recursive_folds[0]
-            .params
-            .setup_prefix()
-            .unwrap()
-            .slot_id()
-            .unwrap();
         let setup = scheme.setup_prover(18, 1).unwrap();
         let backend = CpuBackend::<F, F>::new(setup.expanded.clone()).unwrap();
         let index = BinaryIndexMap::new(128, 8, 8, 2).unwrap();
@@ -41,6 +46,19 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
             )
             .unwrap()
         };
+        test(&scheme, &setup, &backend, row, carrier, &make_manifest);
+    });
+}
+
+#[test]
+fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof() {
+    with_binary_commit_fixture(|scheme, setup, backend, row, carrier, make_manifest| {
+        let first = row.schedule().recursive_folds[0]
+            .params
+            .setup_prefix()
+            .unwrap()
+            .slot_id()
+            .unwrap();
         let installed_manifest = make_manifest(0);
         let typed = BinaryTypedPrefix::new(
             &installed_manifest,
@@ -56,7 +74,7 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
         let prefixes = backend
             .prepare_binary_typed_prefixes(&installed_manifest, &typed, &first, &[])
             .unwrap();
-        let ordinary = scheme.setup_verifier(&setup).unwrap();
+        let ordinary = scheme.setup_verifier(setup).unwrap();
         let prepared = backend
             .prepare_binary_typed_verifier_setup(
                 &ordinary,
@@ -111,6 +129,76 @@ fn stage3_prefix_context_rejects_manifest_swap_and_missing_context_before_proof(
                 ),
                 "{name} did not reject at prefix-context admission"
             );
+        }
+    });
+}
+
+#[test]
+fn binary_commit_context_checks_profile_and_index_but_not_roster_contents() {
+    with_binary_commit_fixture(|scheme, _, backend, _, carrier, make_manifest| {
+        for setup_group in [0, 1, 7] {
+            let manifest = make_manifest(setup_group);
+            let source = backend
+                .import_binary_source(manifest, carrier, vec![vec![1; 8]])
+                .unwrap();
+            let precommitteds = (setup_group > 0).then(|| {
+                PrecommittedGroupProfiles::from_profiles(vec![carrier; setup_group as usize])
+                    .unwrap()
+            });
+            let context = |profile| match &precommitteds {
+                Some(roster) => GroupContext::explicit_with_precommitted_groups(profile, roster),
+                None => GroupContext::explicit(profile),
+            };
+            let commitment = backend
+                .commit(scheme.schedules(), &source, context(&carrier))
+                .unwrap()
+                .committed_group;
+            assert_eq!(commitment.profile(), &carrier);
+            let mut wrong_profile = carrier;
+            wrong_profile.group = PolynomialGroupLayout::singleton(17);
+            assert!(matches!(
+                backend.commit(scheme.schedules(), &source, context(&wrong_profile)),
+                Err(AkitaError::InvalidInput(message))
+                    if message == "binary source differs from its explicit carrier profile"
+            ));
+            let wrong_roster = PrecommittedGroupProfiles::from_profiles(vec![carrier; 2]).unwrap();
+            let mut wrong_contexts = vec![GroupContext::explicit_with_precommitted_groups(
+                &carrier,
+                &wrong_roster,
+            )];
+            if setup_group > 0 {
+                wrong_contexts.push(GroupContext::explicit(&carrier));
+            }
+            for wrong_context in wrong_contexts {
+                assert!(matches!(
+                    backend.commit(scheme.schedules(), &source, wrong_context),
+                    Err(AkitaError::InvalidInput(message)) if message
+                        == "binary commitment group index differs from the source setup group"
+                ));
+            }
+            if setup_group > 0 {
+                let foreign_roster = PrecommittedGroupProfiles::from_profiles(vec![
+                    wrong_profile;
+                    setup_group
+                        as usize
+                ])
+                .unwrap();
+                let foreign = backend
+                    .commit(
+                        scheme.schedules(),
+                        &source,
+                        GroupContext::explicit_with_precommitted_groups(&carrier, &foreign_roster),
+                    )
+                    .unwrap()
+                    .committed_group;
+                let mut expected_bytes = Vec::new();
+                commitment
+                    .serialize_compressed(&mut expected_bytes)
+                    .unwrap();
+                let mut foreign_bytes = Vec::new();
+                foreign.serialize_compressed(&mut foreign_bytes).unwrap();
+                assert_eq!(foreign_bytes, expected_bytes);
+            }
         }
     });
 }

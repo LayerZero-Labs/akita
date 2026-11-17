@@ -175,6 +175,13 @@ Explicit mode commits the supplied `GroupCommitPhaseParams`. The opening
 schedule validates its compatibility when the commitment is consumed. Use
 explicit mode when the application owns the reviewed parameter distribution.
 
+A binary group committed after earlier groups needs its manifest setup group
+index. `GroupContext::explicit_with_precommitted_groups(&profile, &prior)`
+supplies it: the number of profiles in `prior` is the group index. A binary
+commit checks that index and the carrier profile; only the roster length is
+read at commit time. The binary opening entry points do not yet open a group
+at an index above zero.
+
 ## What the verifier receives
 
 The verifier rebuilds the same ordered claims with borrowed commitments and

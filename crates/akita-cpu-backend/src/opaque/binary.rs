@@ -160,12 +160,17 @@ where
     let profile = context.explicit_profile().ok_or_else(|| {
         AkitaError::InvalidInput("binary commitment requires an explicit suffix carrier".into())
     })?;
-    if profile != &binary.carrier_profile
-        || u64::try_from(context.group_index()).map_err(|_| AkitaError::InvalidProof)?
-            != binary.manifest.setup_group()
-    {
+    if profile != &binary.carrier_profile {
         return Err(AkitaError::InvalidInput(
-            "binary source manifest differs from its explicit ordered commitment context".into(),
+            "binary source differs from its explicit carrier profile".into(),
+        ));
+    }
+    let group_index = u64::try_from(context.group_index()).map_err(|_| {
+        AkitaError::InvalidInput("binary commitment group index does not fit u64".into())
+    })?;
+    if group_index != binary.manifest.setup_group() {
+        return Err(AkitaError::InvalidInput(
+            "binary commitment group index differs from the source setup group".into(),
         ));
     }
     binary.manifest.validate_carrier(profile)?;
