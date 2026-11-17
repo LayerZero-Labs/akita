@@ -249,7 +249,7 @@ E_{m-1}
 =c_{m-1}^{-1}\Bigl(
 \mathbf A\mathbf z-\sum_{b<m-1}c_b\mathbf t_b
 \Bigr).
-\tag{10}
+\tag{9}
 $$
 
 Once (4) and (5) hold, the last block carries no further information, so the
@@ -266,14 +266,14 @@ challenges and $E_{m-1}$ before the $c_b$. The digests enforce this order:
 - The terminal prover sends every $E_b$ but the last, followed by a digest
   of the last, before the $c_b$ are sampled.
 
-The verifier computes the last block from (10), hashes its canonical
+The verifier computes the last block from (9), hashes its canonical
 coefficients, and compares the result with the digest it received earlier.
 The scalar opening check (6) or (7) then runs over all $E_b$, including the
 recovered one.
 
 ### Why omitting the block is sound
 
-Computing (10) alone proves nothing, because it makes (4) and (5) true by
+Computing (9) alone proves nothing, because it makes (4) and (5) true by
 construction. The digest comparison carries the argument. It reduces
 soundness to that of the *full-response protocol*, which sends the last
 block as fields in place of each digest, in the classical random-oracle
@@ -302,7 +302,7 @@ $$
 \epsilon_{\text{digest}}
 \le
 \epsilon+\frac{\binom{Q}{2}+2Q}{2^{256}},
-\tag{11}
+\tag{10}
 $$
 
 where $\epsilon$ is the soundness error of the full-response protocol with
@@ -316,7 +316,7 @@ Three points keep the argument exact:
   digest precedes the terminal fold-response nonce and the $c_b$. The
   terminal does not absorb $\mathbf t_{m-1}$ again after recovering it,
   because the earlier digest already binds it in the same transcript.
-- Statement (11) compares the two interactive protocols. A digest absorbs
+- Statement (10) compares the two interactive protocols. A digest absorbs
   different bytes than a block does, so the Fiat-Shamir challenges differ
   from those of a full-response proof. Expanding a proof does not yield a
   full-response proof.
@@ -330,7 +330,7 @@ but each fork recovers its own block from its own challenges and response.
 Two such forks recover the same block unless $H$ collides among the queries
 made while the tree is built. Outside that event, the extractor for the
 full-response protocol applies unchanged. The digest therefore adds a
-collision term over all $H$ queries to the Fiat-Shamir bound. Bound (11) does
+collision term over all $H$ queries to the Fiat-Shamir bound. Bound (10) does
 not carry over as written. A prover that restores state can expose a fresh
 digest in every prefix it queries, so the hit term grows with the number of
 $H$ queries times the number of digests exposed, not with $2Q$. Both terms
@@ -347,7 +347,7 @@ $q>(kB^2)^{k/2}$. For $B=2$ this needs only $q>256$.
 The verifier does not trust its own division either. It inverts $c_{m-1}$
 by multiplying with the conjugate $c_{m-1}(-X)$, whose product with
 $c_{m-1}$ lies in a ring of half the degree, and repeats until one field
-inversion remains. It then multiplies each candidate from (10) back by the
+inversion remains. It then multiplies each candidate from (9) back by the
 sparse challenge and checks (4) and (5) as written. A wrong inverse can
 therefore only cause a rejection. A challenge with no inverse is rejected.
 Recovery adds the inversion and $1+n_A$ dense multiplications by
