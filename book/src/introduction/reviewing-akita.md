@@ -157,6 +157,54 @@ The [Optimizations](../how/optimizations.md) chapter maps the main kernels. The
 [NTT, CRT, and fast ring arithmetic](../foundations/ntt-crt.md) chapter explains
 the representations and exact reconstruction bounds.
 
+## Fuzzing
+
+Fuzzing is a test method that generates many random or mutated inputs and
+watches the code under test for a crash, a hang, or a wrong result. Akita
+keeps a standalone fuzzing campaign in the `fuzz/` directory. It uses
+`cargo-fuzz` and libFuzzer, and it is built to run for days and to resume
+after an interruption.
+
+The targets are registered in `fuzz/campaign/targets.toml` in three kinds:
+
+| Kind | What the targets exercise | Examples |
+| --- | --- | --- |
+| Primitive | Field, ring and NTT arithmetic, decomposition, multilinear helpers, sum-check, transcript, fold-challenge sampling | `field_arith`, `ring_ntt`, `fold_challenges` |
+| Boundary | Decoders and the public prover and verifier entry points | `public_deserialize`, `schedule_artifact`, `verifier_boundary` |
+| End to end | Complete commit, prove, and verify runs on catalog rows | `pcs_dense`, `pcs_recursive`, `pcs_reject` |
+
+`fuzz/COVERAGE.md` lists every subsystem with its target and marks which of
+four properties the target checks:
+
+- **Robustness**: no crash or hang on arbitrary input at a public entry
+  point.
+- **Completeness**: valid supported statements prove and verify.
+- **Soundness testing**: false statements and invalid proofs are rejected.
+- **Resource behavior**: bounded requests stay within limits.
+
+The `Fuzz` workflow in `.github/workflows/fuzz.yml` runs the targets marked
+for CI for 60 seconds each. `fuzz/README.md` explains how to run the whole
+campaign and how to reproduce and minimize a finding.
+
+A reviewer should read the limits that `fuzz/COVERAGE.md` states for itself:
+
+- A passing target covers the inputs it sampled. It does not cover every
+  admissible table, point, or catalog row.
+- The rejection target mostly tests binding. A changed statement changes the
+  Fiat-Shamir challenges, so the proof fails at its first check even if a
+  later algebraic check were wrong.
+- No target is a cheating prover that builds a consistent transcript for a
+  false statement.
+- Production-sized rows are not fuzzed, because one case would take minutes
+  and gigabytes under the sanitizer.
+- CPU-dependent kernels are exercised only on the machine that runs the
+  campaign.
+
+Fuzzing is therefore evidence for robustness and for the
+[verifier no-panic contract](../how/verification.md#the-verifier-no-panic-contract)
+on the inputs it reached. It does not replace the soundness argument in the
+[security model](../how/security.md).
+
 ## Understand what each repository source proves
 
 The repository has several forms of documentation, and they have different
@@ -169,6 +217,7 @@ jobs.
 | Live specifications | Accepted designs that still contain details not folded into the Book |
 | The Book | The maintained explanation of current behavior |
 | Tests | Evidence for selected valid cases, rejection paths, and cross implementation agreement |
+| Fuzzing campaign | Evidence that sampled inputs cause no crash, hang, or wrong acceptance |
 | Archived specifications | Design history, not current requirements |
 
 When these sources disagree, record a documentation or implementation defect.

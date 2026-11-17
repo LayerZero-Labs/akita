@@ -118,6 +118,15 @@ paths; every other target keeps the portable path.
 | --- | --- |
 | `ntt-inline` | 64-point i32 negacyclic NTT and six-product pointwise dot (`jolt-inlines-ntt`) |
 
+`setup-sop-structured` is a second guest option. It is a feature of
+`akita-verifier`, forwarded by `akita-pcs`, and it is off by default. When it
+is on, the structured E, T, and Z contractions of the direct setup scan add
+their two-factor products through `Field::sum_of_products` and
+`Field::dot_product`. A field-inline guest then
+reads out one value per sum, not one per product. The result is the same field
+element on every path, so proofs and verification results do not change.
+Without the feature, the code compiles to the original statements.
+
 ## Diagnostic features
 
 | Feature | Purpose |
@@ -191,6 +200,29 @@ cargo test --release -p akita-pcs \
   --features parallel,logging-transcript,transcript-keccak \
   -- --test-threads=1
 ```
+
+## Benchmark-only features
+
+`benchmark-support` is a feature of `akita-verifier`. It exports the fixture
+`relation_evaluator_benchmark_case`, its `_with_chunks` variant, and the
+`RelationEvaluatorBenchmarkCase` type, which drive production verifier kernels
+from a benchmark. The `relation_evaluator` and `evaluation_trace` benches
+require it. It adds no protocol behavior, and an application build does not
+need it.
+
+The Jolt recursion profile under `profile/akita-recursion/` has its own
+benchmark features. They are not features of the published Akita crates.
+
+| Feature | Crate | Effect |
+| --- | --- | --- |
+| `trusted-benchmark-artifact` | `akita-recursion-glue`, forwarded by the guest | The guest decodes the host-produced setup through a trusted fixed-width path and does not derive the public matrix from its seed again |
+| `benchmark-guest` | guest | Enables `guest` and `trusted-benchmark-artifact` together |
+
+The trusted path still validates the wire format, the setup shape, canonical
+field values, and every allocation bound. It relies on the host to have
+decoded the artifact strictly, derived the setup from its seed, and verified
+the proof first. Use it only to measure. A plain `guest` build keeps the
+strict decode. [Jolt recursion](./jolt-recursion.md) describes the profile.
 
 ## Profile CI features
 

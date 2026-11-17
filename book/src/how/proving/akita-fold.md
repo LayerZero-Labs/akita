@@ -575,6 +575,96 @@ the resulting $\mathbf z$ fits that scheduled bound. This grinding helps the
 honest prover find a compact response; the range check on its committed digits
 is what certifies the bound in the protocol.
 
+#### Rejection sampling the fold response
+
+The worst-case bound above is loose. The schedule therefore gives
+$\mathbf z$ a smaller bound, the response cap, and the prover retries until
+$\mathbf z$ fits. This subsection explains the cap and the retry.
+
+**The cap.** Let $B$ be the number of folded blocks, which is the number of
+claims times the number of live blocks. Let $s_\infty$ bound the witness
+coefficients. A sparse challenge has $a$ coefficients of magnitude 1 and $b$
+of magnitude 2, so its squared Euclidean norm is at most $a+4b$. The
+deterministic envelope is
+
+$$
+\beta_\infty
+=B\cdot\min\bigl(\lVert c\rVert_\infty\lVert s\rVert_1,\;
+\lVert c\rVert_1\lVert s\rVert_\infty\bigr).
+$$
+
+The signs of the challenge coefficients are independent and uniform. Each
+coefficient of $\mathbf z$ is therefore a sum of fixed numbers with random
+signs, and such a sum is rarely close to its worst case. The tail threshold
+is
+
+$$
+t_*=\Bigl\lceil\sqrt{2\,B\,(a+4b)\,s_\infty^2\,\ell}\,\Bigr\rceil,
+\qquad
+\ell=\Bigl\lceil\ln\frac{2N}{1-p}\Bigr\rceil,
+$$
+
+where $N$ is the number of folded coefficients and $p=1/8$ is the target
+probability that one attempt fits. The code computes $\ell$ as a conservative
+integer upper bound of the logarithm. The cap is $\min(\beta_\infty,t_*)$. The
+function `fold_witness_linf_cap` in
+`crates/akita-params/src/sis/norm_bound.rs` returns it, and all arithmetic on
+this path is checked integer arithmetic.
+
+For example, take the D64 challenge family with $a=31$ and $b=10$, so
+$a+4b=71$ and $\lVert c\rVert_1=51$. Take $B=16$ blocks, $s_\infty=1$, and
+$N=2^{16}$, for which $\ell=13$. Then
+$t_*=\lceil\sqrt{2\cdot16\cdot71\cdot13}\rceil=\lceil\sqrt{29536}\rceil=172$,
+while $\beta_\infty=16\cdot51=816$. The cap is 172, and a response under
+that cap needs fewer digits than one sized for 816.
+
+**The retry.** The challenges come from the transcript, so the prover needs a
+way to obtain different challenges for the same statement. Each fold has one
+fold-response nonce, a number that the prover sends before the challenges are
+drawn. A different nonce gives different challenges.
+
+1. The prover takes the candidate nonces $0,1,2,\ldots$ in order.
+2. For each candidate, it works on a copy of the transcript state. It absorbs
+   the nonce, performs the fold's proof of work, and draws the challenges of
+   every group.
+3. It computes each group's response and compares it with that group's cap.
+   If any group fails, it moves to the next candidate.
+4. When every group passes, it writes that nonce to the real transcript and
+   draws the same challenges there.
+5. After `FOLD_RESPONSE_ATTEMPTS = 4096` candidates without success, the
+   prover returns an error.
+
+The verifier does not retry. It reads the nonce, rejects a value outside the
+12-bit range, and draws the challenges in the same order. The nonce is
+canonical unsigned LEB128 in the proof and one 64-bit word in the transcript;
+see [the order within one fold](../transcript.md#order-within-one-fold).
+
+**What is a protocol rule.** The nonce encoding, its transcript position, the
+limit of 4096, and each cap are fixed by the protocol version and the
+schedule. The order in which the prover tries candidates is an implementation
+choice: the verifier accepts any in-range nonce whose response passes the
+checks. The value $p=1/8$ is an offline sizing input. It is not a probability
+that the protocol guarantees.
+
+**Why soundness is unaffected.** The verifier does not treat the nonce as
+evidence that $\mathbf z$ is small. The range check on the committed digits,
+or the direct bound check at the terminal fold, certifies that. The retries
+count as random-oracle queries of the prover, which the Fiat-Shamir bound
+already charges; see
+[Fiat-Shamir queries and fold nonces](../../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
+
+An L2 fold at ring dimension 64 or 128 has a second reason to reject a
+candidate: its challenge family filters challenges by operator norm, and a
+candidate whose pool of acceptable challenges runs out is skipped in the same
+loop. [Transcript and instance binding](../transcript.md) describes that
+filter.
+
+The search is `first_jointly_accepted_nonce` in
+`crates/akita-prover/src/protocol/fold_grind.rs`. The tests
+`fold_linf_grinding_round_trips_through_messages` in
+`crates/akita-pcs/tests/fold_linf.rs` and
+`joint_grind_skips_different_group_first_nonces` in `fold_grind.rs` cover it.
+
 A fold over several committed groups uses one shared nonce, so every group's
 response must fit in the same attempt. A group sized by the universal
 digit-depth policy fits with probability at least $1/8$ per attempt on its

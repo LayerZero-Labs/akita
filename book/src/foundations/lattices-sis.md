@@ -136,8 +136,8 @@ Since $s\neq s'$, the difference $z=s-s'$ is nonzero. Since both openings are
 short, the triangle inequality gives a bound on $z$. The collision has produced
 a short nonzero kernel vector for the public matrix.
 
-This is the basic binding argument. The full Akita proof uses weak openings and
-fold challenges, so its collision bound includes the challenge norm and the
+This is the basic binding argument. The full Akita proof uses
+[weak openings](./glossary.md#security-analysis) and fold challenges, so its collision bound includes the challenge norm and the
 accepted response norm. The same structure remains. Two incompatible accepted
 openings produce a bounded Module-SIS solution.
 

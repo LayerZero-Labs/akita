@@ -180,6 +180,59 @@ segments omit their last live block. The proof binds that block with a digest
 and the verifier recomputes it.
 [Terminal verification](../verifying/terminal.md) gives the equations.
 
+## The terminal fold in order
+
+Recursion must stop at some level. At the terminal level the witness is small
+enough to send, so the prover sends it in folded form and the verifier checks
+it directly. The prover sends three kinds of values:
+
+- the folded response $\mathbf z=\sum_b c_b\mathbf s_b$, where $\mathbf s_b$
+  is the digit vector of block $b$ and $c_b$ is its fold challenge;
+- one ring opening partial $E_b$ per block, which is that block's contribution
+  to the opening value; and
+- the inner image $\mathbf t_b=\mathbf A\mathbf s_b$ of each block.
+
+The inner images are not sent at the terminal level. The predecessor fold
+already sent and absorbed them as its next-witness binding, before its own
+challenges. The prover therefore cannot choose new inner images after it
+sees the opening point that the terminal receives.
+
+The prover runs these steps, which mirror the verifier's
+[replay order](../verifying/terminal.md#replay-order):
+
+1. Check that the scheduled terminal geometry matches the witness handed
+   over, and that no setup-prefix opening is pending.
+2. Take the inner images from the commitment material that the predecessor
+   bound. Keep every block except the last.
+3. Over a proper extension field, run the extension-opening reduction for the
+   incoming point. Then absorb the protocol point.
+4. Compute the opening partials. Send every $E_b$ except the last, then a
+   32-byte digest of the last.
+5. Search the fold-response nonce, draw the sparse challenges $c_b$, and fold.
+   Retry until $\mathbf z$ fits the terminal response cap. This is the search
+   described in
+   [Rejection sampling the fold response](./akita-fold.md#rejection-sampling-the-fold-response).
+6. Encode $\mathbf z$ and assemble the terminal response.
+
+The last block of the partials and of the inner images is never sent. The two
+terminal ring checks are linear in that block, so the verifier solves for it.
+The prover must still fix the block before the challenges that test it, and
+the digest does that. Each terminal group therefore carries two 32-byte
+digests: one for the last $\mathbf t_b$, sent by the predecessor, and one for
+the last $E_b$, sent in step 4. Across the shipped catalog this saves between
+4,032 and 6,080 proof bytes per row.
+[Recompute the last block](../verifying/terminal.md#recompute-the-last-block)
+gives the equations and the soundness argument.
+
+The send order is a protocol rule: $\mathbf t_b$ before the predecessor's
+challenges, and $E_b$ before the $c_b$. How a backend computes the partials
+and the response is an implementation choice. The prover code is
+`prove_terminal_suffix` in `crates/akita-prover/src/protocol/prove/suffix.rs`
+and `sample_terminal_fold_response` in
+`crates/akita-prover/src/protocol/fold_grind.rs`. The transcript tests in
+`crates/akita-pcs/tests/transcript_hardening.rs` check that prover and
+verifier agree on this order.
+
 [Recursion and proof shape](../recursion.md) explains how these records are
 encoded and connected.
 
