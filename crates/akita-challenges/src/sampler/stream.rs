@@ -447,6 +447,45 @@ impl SparseChallengeStream {
         )
     }
 
+    pub(crate) const fn uses_checked_ternary(&self) -> bool {
+        self.count >= 1024
+            && self.shell.ring_d == 128
+            && self.shell.config.count_pm1 == 31
+            && self.shell.config.count_pm2 == 0
+            && self.shell.rejection.is_none()
+    }
+
+    pub(crate) fn decode_ternary_hints(&self, message: &[u8]) -> Result<Vec<[u64; 4]>, AkitaError> {
+        if message.len() != self.message_len || !self.uses_checked_ternary() {
+            return Err(AkitaError::InvalidProof);
+        }
+        crate::checked_hint::take(
+            crate::checked_hint::HintTape::Ternary,
+            self.count,
+            |hints| {
+                let mut output = Vec::new();
+                output
+                    .try_reserve_exact(self.count)
+                    .map_err(|_| AkitaError::InvalidProof)?;
+                for (index, chunk) in hints.chunks_exact(4).enumerate() {
+                    let start = index
+                        .checked_mul(self.shell.candidate_bits)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let signs = read_bits(message, start, 31)? as u64;
+                    let rank = read_bits(
+                        message,
+                        start.checked_add(31).ok_or(AkitaError::InvalidProof)?,
+                        self.shell.rank_bits,
+                    )?;
+                    let words = chunk.try_into().map_err(|_| AkitaError::InvalidProof)?;
+                    crate::checked_hint::ternary::validate(&words, rank, signs)?;
+                    output.push(words);
+                }
+                Ok(output)
+            },
+        )
+    }
+
     fn decode_all(
         &self,
         decoder: &CandidateDecoder<'_>,

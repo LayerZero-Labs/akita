@@ -289,6 +289,13 @@ schedule's full candidate pools and the
 [schedule-derived budget formula](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame).
 A smaller application budget can reject otherwise valid proofs.
 
+Unfiltered D128 draws with 31 unit-magnitude coefficients can use the packed
+ternary tape in an `AKITAH03` frame when the batch has at least 1024 challenges.
+The verifier authenticates each supplied support and sign against the original
+transcript stream, then evaluates six coefficients per lookup group. It keeps
+the same challenge distribution and proof format. Older advice frames retain
+their existing decoding paths.
+
 An existing session, an oversized input, or malformed framing is rejected before
 any tape allocation. Tape storage uses fallible allocation; failures return
 `AkitaError::InvalidProof` without installing a partial session. Decoding borrows

@@ -153,3 +153,38 @@ fn tape_allocation_failures_reject_and_allow_retry() {
         }
     }
 }
+
+#[test]
+fn ternary_frame_allocation_failures_leave_no_partial_session() {
+    #[repr(align(8))]
+    struct Storage([u8; 104]);
+    let mut frame = b"AKITAH03".to_vec();
+    frame.extend_from_slice(&32u64.to_le_bytes());
+    frame.extend_from_slice(&32u64.to_le_bytes());
+    frame.extend((1..=9u64).flat_map(u64::to_le_bytes));
+    for offset in [0, 1] {
+        let mut storage = Storage([0; 104]);
+        storage.0[offset..offset + frame.len()].copy_from_slice(&frame);
+        let bytes = &storage.0[offset..offset + frame.len()];
+        for allowed in 0..3 {
+            let (result, attempts) =
+                with_allocation_budget(allowed, || install_checked_hints(bytes, bytes.len()));
+            assert!(result.is_err());
+            assert_eq!(attempts, allowed + 1);
+            assert!(!active());
+            install_checked_hints(bytes, bytes.len()).unwrap();
+            for (tape, expected) in [
+                (HintTape::Quartets, &[1, 2, 3, 4][..]),
+                (HintTape::Ternary, &[5, 6, 7, 8][..]),
+                (HintTape::Positions, &[9][..]),
+            ] {
+                take(tape, 1, |words| {
+                    assert_eq!(words, expected);
+                    Ok(())
+                })
+                .unwrap();
+            }
+            finish_checked_hints().unwrap();
+        }
+    }
+}
