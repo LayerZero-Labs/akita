@@ -23,13 +23,22 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 
 ## Quick start with an exact CI case
 
-You need the [Jolt CLI](https://github.com/a16z/jolt) installed
-(`cargo install --path .` from a clone of `jolt` at the same rev this
-crate pins, `a95612871547...`). The first prove run downloads a ~30 GB
+You need the [Jolt CLI](https://github.com/a16z/jolt) installed at the same
+rev that this workspace pins for the Jolt SDK. The rev changes when the pin is
+bumped, so read it from `Cargo.lock` instead of copying it from this page. The
+smoke workflow reads it the same way:
+
+```bash
+rev=$(grep -m1 -o 'git+https://github.com/a16z/jolt?rev=[0-9a-f]*' Cargo.lock | sed 's/.*rev=//')
+cargo install --git https://github.com/a16z/jolt --rev "$rev" --locked jolt
+```
+
+The first prove run downloads a ~30 GB
 Dory PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on
 first run, instant on subsequent).
 
-**All commands below assume you're in `profile/akita-recursion/`.**
+**All commands on this page, including the two above, assume you're in
+`profile/akita-recursion/`.**
 
 ```bash
 cd profile/akita-recursion
