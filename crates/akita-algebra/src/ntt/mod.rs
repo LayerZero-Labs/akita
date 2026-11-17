@@ -17,6 +17,7 @@ pub mod neon;
 mod plan;
 pub mod prime;
 pub mod tables;
+pub mod tile_dot;
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) use batched_four_point_policy::batched_four_point_eligible;
