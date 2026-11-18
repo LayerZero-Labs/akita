@@ -19,10 +19,9 @@ pub struct LaneDif {
     /// `omega^j` for `j < POINTS / 2` with its Shoup quotient
     /// `floor(omega^j * 2^32 / p)`.
     shoup: [(u32, u32); POINTS / 2],
-    /// `omega^j` centered in `[-p/2, p/2]`, and its Barrett quotient
-    /// `round(omega^j * 2^31 / p)`.
-    #[cfg_attr(not(target_arch = "aarch64"), expect(dead_code))]
-    barrett: ([i32; POINTS / 2], [i32; POINTS / 2]),
+    /// `omega^j` for `j < POINTS / 2` in the NEON kernels' Barrett form.
+    #[cfg(target_arch = "aarch64")]
+    barrett: super::neon::BarrettTable<i32, { POINTS / 2 }>,
 }
 
 impl LaneDif {
@@ -44,21 +43,11 @@ impl LaneDif {
             return None;
         }
         let shoup = powers.map(|w| (w, ((u64::from(w) << 32) / u64::from(p)) as u32));
-        let centered = powers.map(|w| {
-            if w > p / 2 {
-                w as i32 - p as i32
-            } else {
-                w as i32
-            }
-        });
-        let quotients = centered.map(|w| {
-            // round(w * 2^31 / p) = floor((w * 2^32 + p) / 2p).
-            ((i64::from(w) << 32) + i64::from(p)).div_euclid(2 * i64::from(p)) as i32
-        });
         Some(Self {
             p,
             shoup,
-            barrett: (centered, quotients),
+            #[cfg(target_arch = "aarch64")]
+            barrett: super::neon::BarrettTable::from_fn(i64::from(p), |j| i64::from(powers[j])),
         })
     }
 
@@ -80,6 +69,9 @@ impl LaneDif {
         );
         assert_eq!(points.len(), out.len(), "output length");
         let lanes = points.len() / POINTS;
+        if lanes == 0 {
+            return;
+        }
         #[cfg(target_arch = "aarch64")]
         if plan.uses_neon() && lanes.is_multiple_of(4) {
             // SAFETY: the plan proves NEON support; both slices hold sixteen
@@ -91,8 +83,7 @@ impl LaneDif {
                     out.as_mut_ptr(),
                     lanes,
                     self.p as i32,
-                    &self.barrett.0,
-                    &self.barrett.1,
+                    &self.barrett,
                 );
             }
             return;
@@ -206,7 +197,7 @@ mod tests {
             state ^= state << 17;
             state % bound
         };
-        for lanes in [4, 32, 3] {
+        for lanes in [0, 4, 32, 3] {
             for extreme in [false, true] {
                 let points: Vec<u32> = (0..POINTS * lanes)
                     .map(|_| {

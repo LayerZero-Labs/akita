@@ -28,7 +28,7 @@ pub(crate) use i32_kernels::{
     forward_ntt_cyclic_i8_i32, forward_ntt_i32, forward_ntt_i8_i32, inverse_ntt_cyclic_i32,
     inverse_ntt_i32, lane_dif16_i32, pointwise_dot_acc_i32, pointwise_mul_acc_i32,
 };
-pub(crate) use twiddles::BarrettTwiddles;
+pub(crate) use twiddles::{BarrettTable, BarrettTwiddles};
 
 /// Whether the NEON NTT path is active. Cached on first call.
 /// Set `AKITA_SCALAR_NTT=1` to force scalar fallback.

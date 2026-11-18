@@ -848,9 +848,8 @@ unsafe fn unit_butterfly(u: int32x4_t, v: int32x4_t, m: Modulus) -> (int32x4_t, 
 /// Sixteen-point decimation-in-frequency transform across blocks of lanes:
 /// output lane `l` of block `i` is congruent to the sum over `v` of
 /// `w^(rev(i) * v)` times lane `l` of point `v`, where `rev` reverses the
-/// four bits of `i` and `values[j]`, `quotients[j]` are `w^j` centered and
-/// its Barrett quotient. Each group of four lanes keeps its sixteen points
-/// in registers through all four stages.
+/// four bits of `i` and entry `j` of `twiddles` is `w^j`. Each group of four
+/// lanes keeps its sixteen points in registers through all four stages.
 ///
 /// # Safety
 ///
@@ -866,16 +865,12 @@ pub(crate) unsafe fn lane_dif16_i32(
     out: *mut i32,
     lanes: usize,
     p: i32,
-    values: &[i32; 8],
-    quotients: &[i32; 8],
+    twiddles: &BarrettTable<i32, 8>,
 ) {
     let m = Modulus::new(p);
     macro_rules! twiddle {
         ($j:expr) => {
-            Multiplier {
-                value: vdupq_n_s32(values[$j]),
-                quotient: vdupq_n_s32(quotients[$j]),
-            }
+            Multiplier::broadcast(twiddles, $j)
         };
     }
     let (w1, w2, w3, w4) = (twiddle!(1), twiddle!(2), twiddle!(3), twiddle!(4));
