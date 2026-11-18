@@ -101,6 +101,9 @@ fn visit_fold_opening(
     work: &mut OracleWork,
     frontier: &mut OracleFrontier,
 ) -> Result<(), AkitaError> {
+    if !matches!(state.level, 2 | 3) && fold_opening.log_basis < state.current_log_basis {
+        return Ok(());
+    }
     let policy = ctx.policy;
     for &payload_mode in state.payload_phase.candidate_modes(state.level, false) {
         for relation_transition in relation::transitions(

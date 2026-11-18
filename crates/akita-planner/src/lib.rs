@@ -2,9 +2,12 @@
 //!
 //! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
 //! is [`find_schedule`], which runs a dynamic program to optimize a schedule
-//! lookup key under its catalog-bound selection policy. Root precommit opening
-//! products above 256 are sized exhaustively and retain the 256 assignments with
-//! the smallest combined next witness in each fixed root context.
+//! lookup key under its catalog-bound selection policy. Nonterminal basis
+//! decreases are searched only at levels 2 and 3 (the root is level 0); terminal
+//! bases are unrestricted. This is an empirical search heuristic, not a protocol
+//! restriction or an optimality guarantee for untested requests. Root precommit
+//! opening products above 256 are sized exhaustively and retain the 256 assignments
+//! with the smallest combined next witness in each fixed root context.
 //! [`find_adapted_schedule`] is the fast path for adding exact precommitted
 //! producers to an approved scalar row while retaining its structural schedule
 //! skeleton; it falls back to [`find_schedule`] when that skeleton is
