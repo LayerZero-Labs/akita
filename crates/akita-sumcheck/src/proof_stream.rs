@@ -889,7 +889,7 @@ mod tests {
                 .collect::<Vec<_>>())
         }
 
-        // Pinned at protocol v8: a change here is a proof-format change.
+        // Pinned at protocol v9: a change here is a proof-format change.
         let (evaluations, claim) = fixture();
         let mut standard = DenseInstance {
             evaluations,
@@ -957,17 +957,17 @@ mod tests {
         ];
         #[cfg(feature = "transcript-blake2b")]
         let expected = [
-            "4000000000000000000000000000000058271aa3c7ded0b795de680c6b56d2778f77225a89bc93b8d32d7d3040fe8d58e550f95bd281ec3867cf53259e1effa4",
-            "cf89c6e8b137f46da5371ac39a95f41db558256249d32a37a22f92aac23429472605ba6be3a828571f4e4583df072e3e789fef0048c9fd3479e2a6af4a611bd9",
-            "4800000000000000000000000000000070b4a706598029c402d1eb04692622a2",
-            "60483414b8932a4a3b86398a6a65519666422cfb23da5eef09ac6d992f183327",
+            "40000000000000000000000000000000605bff92e0dbcd4cab2182400f50e348808cba8cdf936cb6df943f2c71c68cd34b4f928ecec782d02514eb30fb45b611",
+            "d1d6bf24f87633d36a8820d003d43812b5b7ced07b69018402a1ff629ac7c62bff410db2771f537d6dd2b2a6b0f8fb29709887bddaaa9d037675e44d6eb1151d",
+            "48000000000000000000000000000000185bf7391895c2dad6897823b98155c0",
+            "a8b72618b3bc5dae86cfa6c7ab1da4987e3598d106840640fe12e47881f1fc57",
         ];
         #[cfg(feature = "transcript-keccak")]
         let expected = [
-            "40000000000000000000000000000000096a0cc300dbe13a0899338012f8b0ef6f9beda4064dd37b0bff01619a28180c65bc4ab0c6b6a36e2acb67a03dded02b",
-            "ad19c330c076b80e42e60ca0043eecfbabd8d990e19798d7a10c3a4824eb0fc58afb74d710842e2ce9b2f91b7c327129e0aceef4d7b005b64854bcb8430399a5",
-            "480000000000000000000000000000008af5f52a7d6f3650b0bb9943e43fe6f8",
-            "4739ff166c922b06700ebda24c2c74ffeeb68350ad738eb3c1dd55dd8f980ee0",
+            "400000000000000000000000000000009978507258f9c2f45d9de788cdf5fce664566f2d73f3dd410e98bc789e74b5c6938877081f963b44be11c23187df7885",
+            "511d941c56be307d57e73962733dbff9dbc511bdb11ddfd1573212ed6dbecdb48bf66f5c1927d3c86df158fd4d8987c8c2a17e7d8db3ae0c1ed5bf0a3619b4e1",
+            "48000000000000000000000000000000287efafe7bf5fa1284629c91c9648620",
+            "1bba759d443ad8280a6a330badcc6cc728db4d292898e002e81cf203242a8d23",
         ];
         assert_eq!(actual, expected);
     }

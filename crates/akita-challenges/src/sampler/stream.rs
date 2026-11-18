@@ -7,26 +7,29 @@
 //! `j` occupies bits `[j K, (j + 1) K)`, and the bits past the last candidate
 //! are ignored.
 //!
-//! A candidate is a `K`-bit integer `R`. Its low `w = count_pm1 + count_pm2`
-//! bits are the signs of the nonzero coefficients in output order (0 is `+`).
-//! The remaining `K - w` bits are a position rank `r = r_a + C(d, a) r_b`:
-//! `r_a` unranks to the ±1 positions and `r_b` to the ±2 positions among the
-//! `d - a` remaining slots, both in colexicographic order. On `[0, |S|)` this
-//! is a bijection onto the shell `S` of all such vectors.
+//! A candidate is `K = w + m` bits. Its low `w = count_pm1 + count_pm2` bits
+//! are the signs of the nonzero coefficients in output order (0 is `+`). The
+//! next `m` bits are a rank word `x`. With `R = C(d, a) C(d - a, b)` position
+//! patterns, `m = min(ceil(log2 R) + 16, 128)`, and the Lemire map
+//! `x R = hi 2^m + lo` gives the position rank `r = hi`, accepted when
+//! `lo >= 2^m mod R`. Every rank in `[0, R)` then has exactly
+//! `floor(2^m / R)` accepted rank words, so an accepted rank is exactly
+//! uniform, and a rank word is rejected with probability below
+//! `2^-(m - ceil(log2 R))`. The rank splits as `r = r_a + C(d, a) r_b`: `r_a`
+//! unranks to the ±1 positions and `r_b` to the ±2 positions among the
+//! `d - a` remaining slots, both in colexicographic order. Signs and rank
+//! together are a bijection onto the shell `S` of all such vectors.
 //!
-//! An unfiltered family uses `K = floor(log2 |S|)`, so every candidate is
-//! accepted and the challenges are exactly uniform on the first `2^K` shell
-//! elements. An operator-norm family uses `K = ceil(log2 |S|)` over the whole
-//! shell: a candidate is accepted when its rank is in range and the certified
-//! predicate accepts it, and the first `count` accepted candidates are the
-//! challenges. Running out is an error, so the verifier rejects. Whether a
-//! candidate is accepted does not depend on the accepted values, so the
-//! challenges of a message that does not run out are exactly uniform on the
-//! accepted set. The pool size only bounds how often an honest message runs
-//! out: at most `2^-161` at the sizing rate below the measured predicate rate.
-//! At the certified rate the bound depends on the count `W`: at most `2^-32`
-//! for D64 with `W <= 64` and `2^-79` for D128 with `W <= 191`, and no useful
-//! bound for D64 past about `W = 200`.
+//! Every family samples the whole shell. An operator-norm family also
+//! applies its certified predicate. The first `count` accepted candidates are
+//! the challenges, and running out is an error, so the verifier rejects.
+//! Whether a candidate is accepted does not depend on the accepted values, so
+//! the challenges of a message that does not run out are exactly uniform on
+//! the accepted set: the shell for an unfiltered family, the predicate's
+//! accepted part of it for an operator-norm one. The pool size only bounds how
+//! often an honest message runs out: at most `2^-161`, exactly for an
+//! unfiltered family and at the sizing rate below the measured predicate rate
+//! for an operator-norm one.
 
 use super::ChallengePolicy;
 use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
@@ -42,6 +45,11 @@ const MAX_RING_DIM: usize = 2048;
 const POOL_FAILURE_BITS: u128 = 161;
 /// `224 >= 2 * 161 * ln 2`, the Chernoff exponent constant for `2^-161`.
 const POOL_CHERNOFF_SCALE: u128 = 224;
+/// Rank-word bits beyond `ceil(log2 R)`, so a rank word is rejected with
+/// probability below `2^-16`.
+const RANK_SLACK_BITS: u32 = 16;
+/// Least slack once the rank word is capped at 128 bits.
+const MIN_RANK_SLACK_BITS: u32 = 8;
 /// Largest pool the sizing search considers.
 const MAX_POOL_CANDIDATES: u128 = 1 << 32;
 /// Largest message, matching Jolt's per-message squeeze limit.
@@ -72,40 +80,46 @@ fn capture_enabled() -> bool {
     }
 }
 
-/// Lower bounds used to size an operator-norm pool.
+/// Lower bounds used to size a candidate pool.
 ///
-/// `accept` is a rational `u / v` for the probability that one candidate is
-/// accepted: the exact in-range rate times a sizing predicate rate about 3.7
-/// (D64) or 3.8 (D128) standard errors below the rate measured on 20,000
-/// draws. It is an estimate, not a proven bound; the certificate proves only
-/// a lower combined rate. `fail_bits` is a rational lower bound on
-/// `-log2(1 - u / v)`. A wrong rate changes only how often an honest message
-/// runs out, never which challenges are accepted.
+/// `accept` is a rational `u / v` lower bound on the probability `p` that one
+/// candidate is accepted, and `fail_bits` a rational lower bound on
+/// `-log2(1 - p)`. The two bound `p` independently: `fail_bits` may exceed
+/// `-log2(1 - u / v)`. For an unfiltered family both are proven bounds on the
+/// rank-word acceptance. For an operator-norm family they are the rank-word
+/// acceptance times a sizing predicate rate about 3.7 (D64) or 3.8 (D128)
+/// standard errors below the rate measured on 20,000 draws: an estimate, not a
+/// proven bound; the certificate proves only a lower combined rate. A wrong
+/// rate changes only how often an honest message runs out, never which
+/// challenges are accepted.
 struct PoolRates {
     accept: (u128, u128),
     fail_bits: (u128, u128),
 }
 
 /// Pool rates and certified accepted-set exponent of one rejection policy.
+///
+/// The rates assume the full rank-word slack: a rank word is accepted with
+/// probability at least `1 - 2^-16`, and the shell setup checks the slack.
 fn operator_norm_rates(rejection: OperatorNormRejection) -> Result<(PoolRates, u32), AkitaError> {
     match rejection {
-        // In-range rate 0.5557, sizing predicate rate 0.65 (measured 0.6623).
-        // The certificate retains 2^128.062 accepted challenges, a combined
-        // rate of at least 0.1305.
+        // Sizing predicate rate 0.65 (measured 0.6623), times `1 - 2^-16`.
+        // The certificate retains 2^128.062 accepted challenges, a predicate
+        // rate of at least 0.2349 on the shell.
         OperatorNormRejection::D64_SELECTIVE_L2 => Ok((
             PoolRates {
-                accept: (3611, 10_000),
-                fail_bits: (64, 100),
+                accept: (6499, 10_000),
+                fail_bits: (151, 100),
             },
             128,
         )),
-        // In-range rate 0.7692, sizing predicate rate 0.78 (measured 0.7908).
-        // The certificate retains 2^128.563 accepted challenges, a combined
-        // rate of at least 0.3694.
+        // Sizing predicate rate 0.78 (measured 0.7908), times `1 - 2^-16`.
+        // The certificate retains 2^128.563 accepted challenges, a predicate
+        // rate of at least 0.4802 on the shell.
         OperatorNormRejection::D128_SELECTIVE_L2 => Ok((
             PoolRates {
-                accept: (5999, 10_000),
-                fail_bits: (132, 100),
+                accept: (7799, 10_000),
+                fail_bits: (218, 100),
             },
             128,
         )),
@@ -115,8 +129,8 @@ fn operator_norm_rates(rejection: OperatorNormRejection) -> Result<(PoolRates, u
     }
 }
 
-/// The count-independent layout of one sparse family: its shell, rank
-/// width and guaranteed set size. A family validates it once and then lays
+/// The count-independent layout of one sparse family: its shell, rank-word
+/// width and threshold, and guaranteed set size. A family validates it once and then lays
 /// out a message for any challenge count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseChallengeShell {
@@ -126,6 +140,9 @@ pub(crate) struct SparseChallengeShell {
     candidate_bits: usize,
     rank_bits: u32,
     rank_space: u128,
+    /// `2^rank_bits mod rank_space`: a rank word whose low product half is
+    /// below it is rejected.
+    reject_below: u128,
     pm1_rank_space: u128,
     set_bits: u32,
 }
@@ -199,23 +216,39 @@ impl SparseChallengeShell {
         })?;
         let weight = u32::try_from(config.weight())
             .map_err(|_| AkitaError::InvalidSetup("sparse challenge weight exceeds u32".into()))?;
-        let (rank_bits, set_bits) = match rejection {
-            None => {
-                let rank_bits = u128::BITS - 1 - rank_space.leading_zeros();
-                let set_bits = rank_bits.checked_add(weight).ok_or_else(|| {
+        // `ceil(log2 R)` and the rank word `m = ceil(log2 R) + slack <= 128`.
+        let ceil_rank_bits = u128::BITS - (rank_space - 1).leading_zeros();
+        let rank_bits = ceil_rank_bits
+            .saturating_add(RANK_SLACK_BITS)
+            .min(u128::BITS);
+        let slack = rank_bits - ceil_rank_bits;
+        if slack < MIN_RANK_SLACK_BITS {
+            return Err(AkitaError::InvalidSetup(
+                "sparse position rank space leaves too little rank-word slack".into(),
+            ));
+        }
+        let reject_below = if rank_bits == u128::BITS {
+            (u128::MAX % rank_space + 1) % rank_space
+        } else {
+            (1u128 << rank_bits) % rank_space
+        };
+        let set_bits = match rejection {
+            // Fold pricing keeps the integer floor `2^set_bits <= |S|`.
+            None => (u128::BITS - 1 - rank_space.leading_zeros())
+                .checked_add(weight)
+                .ok_or_else(|| {
                     AkitaError::InvalidSetup("sparse challenge width overflow".into())
-                })?;
-                (rank_bits, set_bits)
-            }
+                })?,
             Some(rejection) => {
                 rejection
                     .validate(ring_d, config)
                     .map_err(|error| AkitaError::InvalidSetup(error.into()))?;
-                let (_, certified_bits) = operator_norm_rates(rejection)?;
-                (
-                    u128::BITS - (rank_space - 1).leading_zeros(),
-                    certified_bits,
-                )
+                if slack < RANK_SLACK_BITS {
+                    return Err(AkitaError::InvalidSetup(
+                        "operator-norm pool rates need the full rank-word slack".into(),
+                    ));
+                }
+                operator_norm_rates(rejection)?.1
             }
         };
         let candidate_bits = usize::try_from(rank_bits)
@@ -230,6 +263,7 @@ impl SparseChallengeShell {
             candidate_bits,
             rank_bits,
             rank_space,
+            reject_below,
             pm1_rank_space,
             set_bits,
         })
@@ -247,11 +281,29 @@ impl SparseChallengeShell {
         self.rejection
     }
 
-    /// Guaranteed `log2` size of the set each challenge is uniform on: `K` for
-    /// an unfiltered family, the certified exponent for an operator-norm one.
-    /// It does not depend on the challenge count.
+    /// Guaranteed `log2` size of the set each challenge is uniform on:
+    /// `floor(log2 |S|)` for an unfiltered family, the certified exponent for
+    /// an operator-norm one. It does not depend on the challenge count.
     pub(crate) const fn set_bits(&self) -> u32 {
         self.set_bits
+    }
+
+    /// Pool rates of this family: exact rank-word bounds for an unfiltered
+    /// family, the sizing rates for an operator-norm one.
+    fn pool_rates(&self) -> Result<PoolRates, AkitaError> {
+        if let Some(rejection) = self.rejection {
+            return Ok(operator_norm_rates(rejection)?.0);
+        }
+        // A rank word is rejected with probability `q = t / 2^m`, and
+        // `-log2 q >= m - bitlen(t)`. Setup keeps `m - bitlen(t) >= 8`, and
+        // `1 - q >= 1 - 2^-s` for `s = min(m - bitlen(t), 16)`.
+        let t = self.reject_below;
+        let fail_bits = self.rank_bits - (u128::BITS - t.leading_zeros());
+        let s = fail_bits.min(RANK_SLACK_BITS);
+        Ok(PoolRates {
+            accept: ((1 << s) - 1, 1 << s),
+            fail_bits: (u128::from(fail_bits), 1),
+        })
     }
 
     /// Lay out `count` challenges of this family.
@@ -266,9 +318,10 @@ impl SparseChallengeShell {
                 "a sparse challenge message needs at least one challenge".into(),
             ));
         }
-        let candidates = match self.rejection {
-            None => count,
-            Some(rejection) => pool_len(count, &operator_norm_rates(rejection)?.0)?,
+        let candidates = if self.reject_below == 0 && self.rejection.is_none() {
+            count
+        } else {
+            pool_len(count, &self.pool_rates()?)?
         };
         let message_len = candidates
             .checked_mul(self.candidate_bits)
@@ -305,15 +358,15 @@ impl SparseChallengeStream {
         self.message_len
     }
 
-    /// Guaranteed `log2` size of the set each challenge is uniform on: `K` for
-    /// an unfiltered family, the certified exponent for an operator-norm one.
+    /// Guaranteed `log2` size of the set each challenge is uniform on:
+    /// `floor(log2 |S|)` for an unfiltered family, the certified exponent for
+    /// an operator-norm one.
     #[must_use]
     pub const fn set_bits(&self) -> u32 {
         self.shell.set_bits
     }
 
-    /// Number of candidates in the message: `count` for an unfiltered family,
-    /// the pool size for an operator-norm one.
+    /// Number of candidates in the message: the pool size.
     #[must_use]
     pub const fn candidates(&self) -> usize {
         self.candidates
@@ -325,8 +378,8 @@ impl SparseChallengeStream {
         self.shell.candidate_bits
     }
 
-    /// Decode a message into `count` challenges, or `None` when an
-    /// operator-norm pool runs out.
+    /// Decode a message into `count` challenges, or `None` when the pool runs
+    /// out.
     ///
     /// A prover treats `None` as a failed candidate and moves on; a verifier
     /// rejects.
@@ -380,24 +433,22 @@ impl SparseChallengeStream {
             message,
             binomials: &binomials,
         };
-        match policy {
-            ChallengePolicy::Unrestricted => self.decode_all(&decoder).map(Some),
-            ChallengePolicy::OperatorNorm { threshold, table } => {
-                let accept = |index: usize| -> Result<Option<SparseChallenge>, AkitaError> {
-                    let Some(challenge) = decoder.candidate(index)? else {
-                        return Ok(None);
-                    };
-                    Ok(table
-                        .accept_strict_parts(
-                            &challenge.positions,
-                            &challenge.coeffs,
-                            u64::from(threshold),
-                        )?
-                        .then_some(challenge))
-                };
-                self.first_accepted(position_hints, accept)
+        let accept = |index: usize| -> Result<Option<SparseChallenge>, AkitaError> {
+            let Some(challenge) = decoder.candidate(index)? else {
+                return Ok(None);
+            };
+            match &policy {
+                ChallengePolicy::Unrestricted => Ok(Some(challenge)),
+                ChallengePolicy::OperatorNorm { threshold, table } => Ok(table
+                    .accept_strict_parts(
+                        &challenge.positions,
+                        &challenge.coeffs,
+                        u64::from(*threshold),
+                    )?
+                    .then_some(challenge)),
             }
-        }
+        };
+        self.first_accepted(position_hints, accept)
     }
 
     /// Shared eligibility rule for quartet advice and host position-tape capture.
@@ -409,14 +460,17 @@ impl SparseChallengeStream {
             && self.shell.rejection.is_none()
     }
 
+    /// Check one quartet record per accepted candidate, in candidate order.
+    ///
+    /// A candidate whose rank word is rejected consumes no record. Running out
+    /// of candidates before `count` are accepted rejects, as the verifier does
+    /// on the unhinted path.
     pub(crate) fn decode_checked_hints(&self, message: &[u8]) -> Result<Vec<[u64; 4]>, AkitaError> {
-        if message.len() != self.message_len
-            || !self.uses_checked_quartets()
-            || self.shell.candidate_bits != 128
-        {
+        if message.len() != self.message_len || !self.uses_checked_quartets() {
             return Err(AkitaError::InvalidProof);
         }
-        let message_words = crate::checked_hint::native_words(message)?;
+        let weight = self.shell.config.weight();
+        let candidate_bits = self.shell.candidate_bits;
         crate::checked_hint::take(
             crate::checked_hint::HintTape::Quartets,
             self.count,
@@ -425,15 +479,27 @@ impl SparseChallengeStream {
                 output
                     .try_reserve_exact(self.count)
                     .map_err(|_| AkitaError::InvalidProof)?;
-                for index in 0..self.count {
-                    let low = u64::from_le(message_words[index * 2]);
-                    let high = u64::from_le(message_words[index * 2 + 1]);
-                    let rank = ((high as u128) << 23) | ((low >> 41) as u128);
-                    if rank >= self.shell.rank_space {
+                let mut index = 0;
+                while output.len() < self.count {
+                    if index == self.candidates {
                         return Err(AkitaError::InvalidProof);
                     }
-                    let signs = low & ((1u64 << 41) - 1);
-                    let pos = index * 4;
+                    let start = index * candidate_bits;
+                    index += 1;
+                    let word = read_bits(message, start + weight, self.shell.rank_bits)
+                        .map_err(|_| AkitaError::InvalidProof)?;
+                    let Some(rank) = lemire_rank(
+                        word,
+                        self.shell.rank_space,
+                        self.shell.rank_bits,
+                        self.shell.reject_below,
+                    ) else {
+                        continue;
+                    };
+                    let signs = read_bits(message, start, weight as u32)
+                        .map_err(|_| AkitaError::InvalidProof)?
+                        as u64;
+                    let pos = output.len() * 4;
                     let words = [hints[pos], hints[pos + 1], hints[pos + 2], hints[pos + 3]];
                     // Upper padding is a canonical zero, so unused bits cannot carry unchecked state.
                     if (words[0] | words[1] | words[2] | words[3]) >> 40 != 0 {
@@ -445,29 +511,6 @@ impl SparseChallengeStream {
                 Ok(output)
             },
         )
-    }
-
-    fn decode_all(
-        &self,
-        decoder: &CandidateDecoder<'_>,
-    ) -> Result<Vec<SparseChallenge>, AkitaError> {
-        let decode = |index: usize| {
-            decoder.candidate(index)?.ok_or_else(|| {
-                AkitaError::Internal("an unfiltered sparse candidate was out of range".into())
-            })
-        };
-        #[cfg(feature = "parallel")]
-        if !decoder.position_hints && self.parallel() {
-            return (0..self.count).into_par_iter().map(decode).collect();
-        }
-        let mut result = Vec::new();
-        result
-            .try_reserve_exact(self.count)
-            .map_err(|_| AkitaError::InvalidInput("challenge allocation failed".into()))?;
-        for index in 0..self.count {
-            result.push(decode(index)?);
-        }
-        Ok(result)
     }
 
     fn first_accepted(
@@ -527,8 +570,8 @@ impl SparseChallengeStream {
 
 /// Least pool size `B >= count` whose run-out probability is at most
 /// `2^-161` by either the union bound
-/// `(B - W + 1) r >= 161 + (W - 1) bitlen(B)` or the Chernoff bound
-/// `(B u - W v)^2 >= 224 B u v` with `B u > W v`.
+/// `(B - W + 1) r >= 161 + min(W - 1, B - W + 1) bitlen(B)` or the Chernoff
+/// bound `(B u - W v)^2 >= 224 B u v` with `B u > W v`.
 fn pool_len(count: usize, rates: &PoolRates) -> Result<usize, AkitaError> {
     let overflow = || AkitaError::InvalidSetup("operator-norm pool size overflow".into());
     let (u, v) = rates.accept;
@@ -580,9 +623,14 @@ fn pool_len(count: usize, rates: &PoolRates) -> Result<usize, AkitaError> {
             .ok_or_else(overflow)?;
     }
     // The union bound's right side steps up with `bitlen(B)`, so it can hold
-    // and then fail again. Within one bit length it holds exactly from
-    // `B = W - 1 + ceil((161 + (W - 1) L) r_den / r_num)` on, so the least
-    // `B` in `[W, least)` is the first class's bound that lands in its class.
+    // and then fail again. Within one bit length `L`, write `k = B - W + 1`
+    // for the rejections that run the pool out; `k r - min(W - 1, k) L` is
+    // nondecreasing in `k` when `r > L`, and when `r <= L` it is negative
+    // below `k = W - 1`. So the bound holds exactly from
+    // `k = ceil(161 r_den / (r_num - L r_den))` on when `r > L` and that is at
+    // most `W - 1`, and otherwise from `k = ceil((161 + (W - 1) L) r_den / r_num)`
+    // on. The least `B` in `[W, least)` is the first class's bound that lands
+    // in its class.
     let pool = if w == 0 {
         least
     } else {
@@ -591,12 +639,28 @@ fn pool_len(count: usize, rates: &PoolRates) -> Result<usize, AkitaError> {
         for len in bit_len(w)..=bit_len(least - 1) {
             let class_low = w.max(1 << (len - 1));
             let class_high = ((1u128 << len) - 1).min(least - 1);
-            let tail = (w - 1)
-                .checked_mul(u128::from(len))
-                .and_then(|bits| bits.checked_add(POOL_FAILURE_BITS))
-                .and_then(|bits| bits.checked_mul(r_den))
-                .and_then(|need| need.checked_add(r_num.checked_sub(1)?)?.checked_div(r_num))
-                .ok_or_else(overflow)?;
+            let len = u128::from(len);
+            let few = len
+                .checked_mul(r_den)
+                .and_then(|lost| r_num.checked_sub(lost))
+                .filter(|&gain| gain > 0)
+                .map(|gain| {
+                    POOL_FAILURE_BITS
+                        .checked_mul(r_den)
+                        .and_then(|need| need.checked_add(gain - 1)?.checked_div(gain))
+                        .ok_or_else(overflow)
+                })
+                .transpose()?
+                .filter(|&k| k < w);
+            let tail = match few {
+                Some(k) => k,
+                None => (w - 1)
+                    .checked_mul(len)
+                    .and_then(|bits| bits.checked_add(POOL_FAILURE_BITS))
+                    .and_then(|bits| bits.checked_mul(r_den))
+                    .and_then(|need| need.checked_add(r_num.checked_sub(1)?)?.checked_div(r_num))
+                    .ok_or_else(overflow)?,
+            };
             let first = (w - 1)
                 .checked_add(tail)
                 .ok_or_else(overflow)?
@@ -836,7 +900,7 @@ struct CandidateDecoder<'a> {
 }
 
 impl CandidateDecoder<'_> {
-    /// Candidate `index`, or `None` when its position rank is out of range.
+    /// Candidate `index`, or `None` when its rank word is rejected.
     fn candidate(&self, index: usize) -> Result<Option<SparseChallenge>, AkitaError> {
         let stream = self.stream;
         let (a, b) = (stream.shell.config.count_pm1, stream.shell.config.count_pm2);
@@ -845,10 +909,15 @@ impl CandidateDecoder<'_> {
             .checked_mul(stream.shell.candidate_bits)
             .ok_or_else(|| AkitaError::Internal("sparse candidate offset overflow".into()))?;
         let rank_start = start + weight;
-        let rank = read_bits(self.message, rank_start, stream.shell.rank_bits)?;
-        if rank >= stream.shell.rank_space {
+        let word = read_bits(self.message, rank_start, stream.shell.rank_bits)?;
+        let Some(rank) = lemire_rank(
+            word,
+            stream.shell.rank_space,
+            stream.shell.rank_bits,
+            stream.shell.reject_below,
+        ) else {
             return Ok(None);
-        }
+        };
         // One `u128` division, skipped for a ±1-only family.
         let pm2_rank = if b == 0 {
             0
@@ -927,6 +996,39 @@ impl CandidateDecoder<'_> {
         }
         Ok(Some(SparseChallenge { positions, coeffs }))
     }
+}
+
+/// The Lemire map of an `m`-bit rank word `x` onto `[0, R)`: with
+/// `x R = hi 2^m + lo`, the rank `hi` when `lo >= t = 2^m mod R`, else `None`.
+/// Each rank has exactly `floor(2^m / R)` accepted words. Requires
+/// `1 <= m <= 128`, `x < 2^m` and `R <= 2^m`.
+fn lemire_rank(x: u128, rank_space: u128, m: u32, reject_below: u128) -> Option<u128> {
+    let (high, low) = widening_mul(x, rank_space);
+    let (hi, lo) = if m == u128::BITS {
+        (high, low)
+    } else {
+        (
+            (high << (u128::BITS - m)) | (low >> m),
+            low & ((1u128 << m) - 1),
+        )
+    };
+    (lo >= reject_below).then_some(hi)
+}
+
+/// The 256-bit product `x y` as its high and low `u128` halves.
+fn widening_mul(x: u128, y: u128) -> (u128, u128) {
+    const LOW: u128 = u64::MAX as u128;
+    let (x0, x1) = (x & LOW, x >> 64);
+    let (y0, y1) = (y & LOW, y >> 64);
+    let p00 = x0 * y0;
+    let p01 = x0 * y1;
+    let p10 = x1 * y0;
+    let p11 = x1 * y1;
+    // Each sum of three below fits: (2^64 - 1)^2 + 2 (2^64 - 1) < 2^128.
+    let middle = (p00 >> 64) + (p01 & LOW) + (p10 & LOW);
+    let low = (middle << 64) | (p00 & LOW);
+    let high = p11 + (p01 >> 64) + (p10 >> 64) + (middle >> 64);
+    (high, low)
 }
 
 /// Replace each increasing index in `slots` by the index-th position, in

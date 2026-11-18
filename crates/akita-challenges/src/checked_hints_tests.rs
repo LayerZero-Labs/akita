@@ -114,18 +114,33 @@ fn finishing_an_incomplete_hint_session_rejects_and_clears_it() {
 }
 const MESSAGE: &[u8] = include_bytes!("../testdata/checked_hint_message.bin");
 const HINTS: &[u8] = include_bytes!("../testdata/checked_hint_codes.bin");
+// The fixtures come from an independent decoder of the full-shell layout. The
+// message's rank words at candidates 0, 7 and 500 are zeroed, so the Lemire
+// map rejects them; the 1024 challenges are candidates 1 to 1026 except 7 and
+// 500.
 const EXPECTED: [[u128; 3]; 2] = [
     [
-        40544065902344454397037691921406379642u128,
-        148436690822564892961175858852520944655u128,
-        270681290819792749220569730658856053299u128,
+        65069501323127100063304307150146387392u128,
+        333249564293448083250872952008037950242u128,
+        14126045270606159117414980287073009508u128,
     ],
     [
-        91275897945596252000852350436102186229u128,
-        92391489860930062131740839803393956855u128,
-        161059714558888528037951495051275981897u128,
+        150998986301690708313529983386310848079u128,
+        244788876397327101880531401627392883484u128,
+        146555427356989994808852278600169433020u128,
     ],
 ];
+
+#[test]
+fn checked_quartets_reject_a_message_whose_pool_runs_out() {
+    let stream = family().stream(1024).unwrap();
+    // Every rank word is zero, so every candidate is rejected.
+    let message = vec![0u8; stream.message_len()];
+    assert!(stream.decode(&message).unwrap().is_none());
+    crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
+    assert!(stream.decode_checked_hints(&message).is_err());
+    crate::abort_checked_hints().unwrap();
+}
 
 #[test]
 fn checked_hints_match_for_aligned_and_unaligned_messages_and_tapes() {

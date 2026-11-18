@@ -170,7 +170,7 @@ For candidate `c`:
    expected sequence without changing the production sponge.
 4. Decode every group's challenges, compute the folded response, and accept
    only if all scheduled representation and norm bounds hold. A message whose
-   operator-norm pool runs out rejects the candidate.
+   candidate pool runs out rejects the candidate.
 
 Jolt's `verifier_message_oracle` evaluates only "absorb a candidate, then squeeze". A
 fold-response candidate is followed by a proof of work and several message
@@ -246,8 +246,9 @@ with `a` magnitude-one and `b` magnitude-two coefficients has cardinality
 |S| = binom(d, a) * binom(d-a, b) * 2^(a+b).
 ```
 
-Families without a norm filter decode `K = floor(log2 |S|)` bits per
-challenge and accept every value, so `|C| = 2^K` exactly:
+Families without a norm filter accept the whole shell, `|C| = |S|`
+([sparse-challenge-stream](sparse-challenge-stream.md#decoding-one-challenge)),
+and the plan prices them at `2^K <= |C|` with `K = floor(log2 |S|)`:
 
 | Dimension | `(a,b)` | `K` |
 |---|---|---|
