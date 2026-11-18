@@ -182,7 +182,8 @@ h   = 2,
 k h = 8,
 ```
 
-the A-ring coefficient index is `a + 8j`. For every fixed `j`, the partial
+the A-ring coefficient index is `u + 8j`, where `h` is the packing factor
+$\eta$ and `u` is the column index. For every fixed `j`, the partial
 contracts eight base-field coefficients into one element of the degree-four
 extension field. That value occupies four base-field coordinates:
 

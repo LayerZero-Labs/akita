@@ -98,6 +98,10 @@ $$
 \text{position}\longrightarrow\text{block}\longrightarrow\text{inner}.
 $$
 
+To **contract** an axis means to take the weighted sum over that index, using
+the public weights of that axis. The index then no longer appears. Evaluating
+one coordinate of $r$ contracts one axis.
+
 ## Reduce to a ring-valued evaluation
 
 ### Pack the inner axis into ring coefficients
@@ -463,6 +467,22 @@ The evaluation-trace partial $E_b(X)$ retains all $D$ inner coefficients.
 Subring coefficient packing shortens this partial by contracting one part of
 the inner axis before the opening digits are formed.
 
+The length of a partial matters because every partial is digit-decomposed and
+stored in the next committed witness, and the D commitment binds those digits.
+A shorter partial gives a shorter $\hat{\mathbf e}$ segment and a narrower D
+input. A packed partial has $D/\eta$ base-field coordinates instead of $D$,
+where $\eta$ is the packing factor defined below. Packing also binds an
+extension-valued opening directly, without EOR. The cost is a restriction on
+the fold challenge. The [next chapter](./akita-fold.md#subring-coefficient-packing-consistency)
+shows that the challenge must come from a smaller ring with only $s$
+coefficients. That ring needs its own sparse challenge family and can change
+the response bound.
+
+The word "pack" has two meanings on this page. Equations (2) and (6) pack
+values into ring coefficients. That is a lossless change of representation.
+Subring coefficient packing is a different operation. It contracts part of the
+inner axis, so several source coefficients become one value.
+
 Return now to the general case in which the opening point lies in a field $E$
 containing $F$; the interpolation weights $I$, $Q$, and $B$ are then
 $E$-valued. The case $E=F$ is included. Let
@@ -471,8 +491,9 @@ $$
 k=[E:F].
 $$
 
-Choose a retained-axis dimension $s$—later also the challenge-subring
-dimension—and write
+Choose the number $s$ of inner coefficients that each partial keeps. The fold
+challenge of the next chapter acts on exactly these $s$ retained coefficients,
+so $s$ is also the dimension of the challenge subring. Write
 
 $$
 D=k\eta s.
@@ -492,6 +513,17 @@ u\in[k\eta],
 j\in[s].
 \tag{23}
 $$
+
+The symbols of this section are:
+
+| Symbol | Meaning |
+|---|---|
+| $E$ | field of the opening point; not the evaluation-trace partial $E_b(X)$ |
+| $k$ | degree of $E$ over $F$ |
+| $s$ | number of retained coefficients; not the block digit vector $\mathbf s_b$ of the next chapter |
+| $\eta$ | packing factor, $D/(ks)$ |
+| $u$ | column index, contracted when the partial is formed |
+| $j$ | row index, retained in the partial |
 
 Split the inner opening point in the same order:
 
@@ -607,7 +639,8 @@ fixed by the canonical extension-field representation; they are not transcript
 challenges or schedule choices.
 
 The next witness stores balanced digits of these base-field coordinates. Use
-$d$ for the opening-digit index:
+$d$ for the opening-digit index. In this section $d$ is a digit index, not the
+value $\log_2D$ from the start of the page:
 
 $$
 e_{b,t,j}
