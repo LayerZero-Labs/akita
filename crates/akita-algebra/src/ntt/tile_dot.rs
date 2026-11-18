@@ -19,6 +19,9 @@
 //! Montgomery reduction; [`reduce`] turns a limb's sums into residues after
 //! at most [`max_passes`] passes.
 
+use akita_error::checked;
+
+use super::montgomery;
 use super::prime::{MontCoeff, NttPrime};
 use super::NttKernelPlan;
 
@@ -71,6 +74,32 @@ pub const fn is_vectorized(plan: NttKernelPlan) -> bool {
     {
         let _ = plan;
         false
+    }
+}
+
+/// The lengths [`accumulate`] and [`reduce`] index by for `limbs` limbs of
+/// degree `d`, each the exact product: [`key_len`], [`input_stride`],
+/// [`input_len`], [`sums_len`] and the words from one lane group's sums to
+/// the next.
+struct Shape {
+    key: usize,
+    input_stride: usize,
+    input: usize,
+    sums: usize,
+    sums_stride: usize,
+}
+
+impl Shape {
+    /// `None` if a length does not fit a `usize`.
+    fn new(limbs: usize, d: usize) -> Option<Self> {
+        let input_stride = checked::sum([d, INPUT_PAD])?;
+        Some(Self {
+            key: checked::product([d, limbs, SLOTS])?,
+            input_stride,
+            input: checked::product([input_stride, SLOTS])?,
+            sums: checked::product([d, limbs])?,
+            sums_stride: checked::product([limbs, LANES])?,
+        })
     }
 }
 
@@ -169,7 +198,8 @@ pub fn clear_input(input: &mut [i32], slot: usize, d: usize) {
 /// # Panics
 ///
 /// Panics if a length disagrees with `limbs`, `d` and the number of columns,
-/// or `d` is not whole lane groups.
+/// if one of those lengths does not fit a `usize`, or if `d` is not whole
+/// lane groups.
 pub fn accumulate(
     sums: &mut [&mut [i64]],
     key: &[i32],
@@ -180,43 +210,55 @@ pub fn accumulate(
     plan: NttKernelPlan,
 ) {
     assert!(d.is_multiple_of(LANES), "degree is not whole lane groups");
-    assert_eq!(key.len(), key_len(limbs, d), "key batch length");
-    assert_eq!(inputs.len(), sums.len() * input_len(d), "tile input length");
+    // Every length below is an exact product, so a slice of that length
+    // bounds each offset the loops and the kernel form from its factors.
+    let shape = Shape::new(limbs, d);
+    assert!(shape.is_some(), "tile dimensions overflow");
+    let Some(shape) = shape else { return };
+    assert_eq!(key.len(), shape.key, "key batch length");
+    assert_eq!(
+        Some(inputs.len()),
+        checked::product([sums.len(), shape.input]),
+        "tile input length"
+    );
     assert!(
-        sums.iter().all(|sums| sums.len() == sums_len(limbs, d)),
+        sums.iter().all(|sums| sums.len() == shape.sums),
         "column sums length"
     );
+    if sums.is_empty() || limbs == 0 || d == 0 {
+        // No sums to add to.
+        return;
+    }
     let weight = high_word_weight(prime);
 
     #[cfg(target_arch = "aarch64")]
     if plan.uses_neon() {
         // The kernel keeps a tile's pointers on the stack.
         const MAX_TILE: usize = 16;
-        for (sums, inputs) in sums
-            .chunks_mut(MAX_TILE)
-            .zip(inputs.chunks(MAX_TILE * input_len(d)))
-        {
+        // At most the whole of `inputs`, which the assertion above sized.
+        let tile_inputs = MAX_TILE.saturating_mul(shape.input);
+        for (sums, inputs) in sums.chunks_mut(MAX_TILE).zip(inputs.chunks(tile_inputs)) {
             let mut sum_pointers = [core::ptr::null_mut::<i64>(); MAX_TILE];
             let mut input_pointers = [core::ptr::null::<i32>(); MAX_TILE];
             for ((sum_pointer, input_pointer), (sums, input)) in sum_pointers
                 .iter_mut()
                 .zip(&mut input_pointers)
-                .zip(sums.iter_mut().zip(inputs.chunks_exact(input_len(d))))
+                .zip(sums.iter_mut().zip(inputs.chunks_exact(shape.input)))
             {
                 *sum_pointer = sums.as_mut_ptr();
                 *input_pointer = input.as_ptr();
             }
-            // SAFETY: the plan proves NEON support. The lengths asserted above
-            // give the key `d / LANES * limbs * SLOTS` vectors, every column
-            // `SLOTS` rings of `d / LANES` vectors `input_stride(d)` words
-            // apart and `d / LANES * limbs` sum vectors; the sums are distinct
-            // exclusive borrows.
+            // SAFETY: the plan proves NEON support. The lengths asserted above,
+            // none of which wrapped, give the key `d / LANES * limbs * SLOTS`
+            // vectors, every column `SLOTS` rings of `d / LANES` vectors
+            // `shape.input_stride` words apart and `d / LANES * limbs` sum
+            // vectors; the sums are distinct exclusive borrows.
             unsafe {
                 super::neon::tile_dot_acc_i32(
                     &sum_pointers[..sums.len()],
                     key.as_ptr(),
                     &input_pointers[..sums.len()],
-                    input_stride(d),
+                    shape.input_stride,
                     limbs,
                     d / LANES,
                     weight as i32,
@@ -227,10 +269,10 @@ pub fn accumulate(
     }
     let _ = plan;
 
-    for (sums, input) in sums.iter_mut().zip(inputs.chunks_exact(input_len(d))) {
+    for (sums, input) in sums.iter_mut().zip(inputs.chunks_exact(shape.input)) {
         for (group, (key, sums)) in key
-            .chunks_exact(limbs * SLOTS * LANES)
-            .zip(sums.chunks_exact_mut(limbs * LANES))
+            .chunks_exact(shape.sums_stride * SLOTS)
+            .zip(sums.chunks_exact_mut(shape.sums_stride))
             .enumerate()
         {
             for (key, sums) in key
@@ -241,7 +283,7 @@ pub fn accumulate(
                     let products: i64 = (0..SLOTS)
                         .map(|slot| {
                             i64::from(key[slot * LANES + lane])
-                                * i64::from(input[slot * input_stride(d) + group * LANES + lane])
+                                * i64::from(input[slot * shape.input_stride + group * LANES + lane])
                         })
                         .sum();
                     *sum += (products >> 32) * weight + i64::from(products as u32);
@@ -257,7 +299,8 @@ pub fn accumulate(
 ///
 /// # Panics
 ///
-/// Panics if `sums` is not [`sums_len`] words or `limb` is out of range.
+/// Panics if `sums` is not [`sums_len`] words, if that length does not fit a
+/// `usize`, or if `limb` is out of range.
 pub fn reduce<const D: usize>(
     sums: &[i64],
     limbs: usize,
@@ -267,17 +310,25 @@ pub fn reduce<const D: usize>(
     plan: NttKernelPlan,
 ) {
     assert!(D.is_multiple_of(LANES), "degree is not whole lane groups");
-    assert_eq!(sums.len(), sums_len(limbs, D), "column sums length");
+    let shape = Shape::new(limbs, D);
+    assert!(shape.is_some(), "tile dimensions overflow");
+    let Some(shape) = shape else { return };
+    assert_eq!(sums.len(), shape.sums, "column sums length");
     assert!(limb < limbs, "limb index");
+    if D == 0 {
+        // No coefficients to write.
+        return;
+    }
 
     #[cfg(target_arch = "aarch64")]
     if plan.uses_neon() {
         // SAFETY: the plan proves NEON support; `sums` holds `D / LANES`
-        // groups of `limbs` four-lane vectors and `out` holds `D` words.
+        // groups of `limbs` four-lane vectors, a length that did not wrap,
+        // with `limb < limbs`, and `out` holds `D` words.
         unsafe {
             super::neon::tile_dot_reduce_i32(
                 sums.as_ptr().add(limb * LANES),
-                limbs * LANES,
+                shape.sums_stride,
                 out.as_mut_ptr().cast::<i32>(),
                 D / LANES,
                 prime.p,
@@ -288,21 +339,16 @@ pub fn reduce<const D: usize>(
     }
     let _ = plan;
 
-    let one = MontCoeff::from_raw(1);
     for (out, sums) in out
         .as_chunks_mut::<LANES>()
         .0
         .iter_mut()
-        .zip(sums.chunks_exact(limbs * LANES))
+        .zip(sums.chunks_exact(shape.sums_stride))
     {
         for (out, &sum) in out.iter_mut().zip(&sums[limb * LANES..(limb + 1) * LANES]) {
-            // sum = high * 2^32 + low and low = signed_low + 2^32 * carry, so
-            // sum / 2^32 is high + carry + signed_low / 2^32 modulo p.
-            let low = sum as u32;
-            let residue = (sum >> 32)
-                + i64::from(low >> 31)
-                + i64::from(prime.mul(MontCoeff::from_raw(low as i32), one).raw());
-            *out = MontCoeff::from_raw((residue % i64::from(prime.p)) as i32);
+            // |sum| < 2^61 leaves the reduction below 2^30 in magnitude.
+            let residue = montgomery::reduce_i32(sum, prime.p, prime.pinv);
+            *out = MontCoeff::from_raw(residue % prime.p);
         }
     }
 }
@@ -413,6 +459,47 @@ mod tests {
                 check(plan, raw_prime, 64, true);
             }
         }
+    }
+
+    #[test]
+    fn empty_dimensions_add_and_write_nothing() {
+        let prime = NttPrime::new(Q128_RAW_PRIMES[0]);
+        for plan in [NttKernelPlan::SCALAR, NttKernelPlan::detect::<i32>()] {
+            // No columns.
+            let key = vec![0; key_len(LIMBS, D)];
+            accumulate(&mut [], &key, &[], LIMBS, D, prime, plan);
+            // No limbs, then no coefficients: a column has no sums.
+            for (limbs, d) in [(0, D), (LIMBS, 0)] {
+                let inputs = vec![1; 2 * input_len(d)];
+                let (mut first, mut second) = ([0i64; 0], [0i64; 0]);
+                let mut sums: [&mut [i64]; 2] = [&mut first, &mut second];
+                accumulate(&mut sums, &[], &inputs, limbs, d, prime, plan);
+            }
+            reduce::<0>(&[], LIMBS, 0, &mut [], prime, plan);
+        }
+    }
+
+    /// A limb count whose products with a degree of four wrap to zero, so
+    /// empty slices would pass length checks computed with wrapping products.
+    const WRAPPING_LIMBS: usize = usize::MAX / 4 + 1;
+
+    #[test]
+    #[should_panic(expected = "tile dimensions overflow")]
+    fn accumulate_rejects_dimensions_that_overflow() {
+        let prime = NttPrime::new(Q128_RAW_PRIMES[0]);
+        let inputs = vec![0; input_len(4)];
+        let mut sums: [&mut [i64]; 1] = [&mut []];
+        let plan = NttKernelPlan::detect::<i32>();
+        accumulate(&mut sums, &[], &inputs, WRAPPING_LIMBS, 4, prime, plan);
+    }
+
+    #[test]
+    #[should_panic(expected = "tile dimensions overflow")]
+    fn reduce_rejects_dimensions_that_overflow() {
+        let prime = NttPrime::new(Q128_RAW_PRIMES[0]);
+        let mut out = [MontCoeff::from_raw(0); 4];
+        let plan = NttKernelPlan::detect::<i32>();
+        reduce(&[], WRAPPING_LIMBS, 0, &mut out, prime, plan);
     }
 
     #[test]

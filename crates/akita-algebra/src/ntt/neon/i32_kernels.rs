@@ -759,6 +759,28 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
     }
 }
 
+/// Montgomery reduction of four `i64` sums, lanes 0..2 in `low_sum` and
+/// 2..4 in `high_sum`: `sum * 2^-32 mod p` in `(-p, p)`.
+///
+/// With `m = sum * pinv mod 2^32` read as signed, `sum - m * p` is a multiple
+/// of `2^32` below `|sum| + 2^31 p` in magnitude. For `|sum| < 2^61` and
+/// `p < 2^30` that fits `i64` and its high word is below `2^30` in
+/// magnitude, which the centered reduction accepts.
+#[inline(always)]
+unsafe fn mont_reduce_wide_4x_i32(
+    low_sum: int64x2_t,
+    high_sum: int64x2_t,
+    m: Modulus,
+    p_d: int32x2_t,
+    pinv_d: int32x2_t,
+) -> int32x4_t {
+    let low_correction = vmull_s32(vmul_s32(vmovn_s64(low_sum), pinv_d), p_d);
+    let high_correction = vmull_s32(vmul_s32(vmovn_s64(high_sum), pinv_d), p_d);
+    let low = vshrn_n_s64::<32>(vsubq_s64(low_sum, low_correction));
+    let high = vshrn_n_s64::<32>(vsubq_s64(high_sum, high_correction));
+    centered_reduce_4x_i32(vcombine_s32(low, high), m.p, m.reciprocal)
+}
+
 #[inline(always)]
 unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     acc: *mut i32,
@@ -775,11 +797,7 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     let pinv_d = vdup_n_s32(pinv);
     let mut i = 0usize;
     let finish = |i: usize, low_sum: int64x2_t, high_sum: int64x2_t| {
-        let low_correction = vmull_s32(vmul_s32(vmovn_s64(low_sum), pinv_d), p_d);
-        let high_correction = vmull_s32(vmul_s32(vmovn_s64(high_sum), pinv_d), p_d);
-        let low = vshrn_n_s64::<32>(vsubq_s64(low_sum, low_correction));
-        let high = vshrn_n_s64::<32>(vsubq_s64(high_sum, high_correction));
-        let batch = centered_reduce_4x_i32(vcombine_s32(low, high), m.p, m.reciprocal);
+        let batch = mont_reduce_wide_4x_i32(low_sum, high_sum, m, p_d, pinv_d);
         let accumulator = vld1q_s32(acc.add(i));
         vst1q_s32(
             acc.add(i),
@@ -955,22 +973,14 @@ pub(crate) unsafe fn tile_dot_reduce_i32(
     pinv: i32,
 ) {
     let m = Modulus::new(p);
-    let pinv_q = vdupq_n_s32(pinv);
-    let one = vdupq_n_s32(1);
+    let p_d = vdup_n_s32(p);
+    let pinv_d = vdup_n_s32(pinv);
     for group in 0..groups {
         let low_pair = vld1q_s64(sums.add(group * stride));
         let high_pair = vld1q_s64(sums.add(group * stride + 2));
-        let low = vcombine_s32(vmovn_s64(low_pair), vmovn_s64(high_pair));
-        let high = vcombine_s32(vshrn_n_s64::<32>(low_pair), vshrn_n_s64::<32>(high_pair));
-        // sum = high * 2^32 + low, and the unsigned low word is its signed
-        // reading plus 2^32 * carry: sum / 2^32 is high + carry plus the
-        // Montgomery reduction of the signed low word, below 2^31 in all.
-        let carry = vreinterpretq_s32_u32(vshrq_n_u32::<31>(vreinterpretq_u32_s32(low)));
-        let reduced_low = mont_mul_4x_i32(low, one, m.p, pinv_q);
-        let residue = vaddq_s32(vaddq_s32(high, carry), reduced_low);
         vst1q_s32(
             out.add(group * 4),
-            centered_reduce_4x_i32(residue, m.p, m.reciprocal),
+            mont_reduce_wide_4x_i32(low_pair, high_pair, m, p_d, pinv_d),
         );
     }
 }
