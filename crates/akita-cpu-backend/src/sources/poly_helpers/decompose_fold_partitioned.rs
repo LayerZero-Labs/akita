@@ -6,6 +6,9 @@ use super::narrow_accum::{
     sparse_mul_acc_terms as sparse_mul_acc_narrow_terms,
 };
 use super::rotated_accum::{accumulate_rotated_digit_plane, should_use_rotated_challenge};
+use super::shifted_accum::{
+    shifted_mul_acc, shifted_mul_acc_i16, shifts_windows, ShiftScratch, ShiftedChallenge,
+};
 use super::windowed_accum::{gathers_windows, windowed_mul_acc, I8DigitSpan, WindowedChallenge};
 use super::{
     fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1,
@@ -34,11 +37,20 @@ pub(crate) enum WidePlan<const D: usize> {
     Generic,
 }
 
+/// How one unchunked narrow pass multiplies a digit plane by its challenge.
+pub(crate) enum NarrowKernel {
+    /// Whole-window gathers for subring-embedded challenges.
+    Windowed(WindowedChallenge),
+    /// Register-blocked windows for `±1`/`±2` challenges at any positions.
+    Shifted(ShiftedChallenge),
+    /// One accumulator pass per challenge term.
+    Terms,
+}
+
 enum ChallengePlan<const D: usize> {
     Wide(WidePlan<D>),
-    /// One unchunked pass; the gather lists are present when the window
-    /// kernel serves the challenge.
-    NarrowFull(u64, Option<WindowedChallenge>),
+    /// One unchunked pass with the kernel that serves the challenge.
+    NarrowFull(u64, NarrowKernel),
     NarrowChunked(Vec<Range<usize>>),
 }
 
@@ -64,6 +76,7 @@ fn prepare_wide_plan<const D: usize>(challenge: &SparseChallenge) -> ChallengePl
 fn prepare_challenge<const D: usize>(
     digit_abs_bound: u64,
     window_span: Option<I8DigitSpan>,
+    shifts: bool,
     challenge: &SparseChallenge,
 ) -> ChallengePlan<D> {
     if should_use_rotated_challenge::<D>(challenge) {
@@ -72,7 +85,7 @@ fn prepare_challenge<const D: usize>(
         return ChallengePlan::Wide(WidePlan::Rotated(rotated));
     }
     if digit_abs_bound == 0 {
-        return ChallengePlan::NarrowFull(0, None);
+        return ChallengePlan::NarrowFull(0, NarrowKernel::Terms);
     }
 
     let max_chunk_mass = i16::MAX as u64 / digit_abs_bound;
@@ -92,8 +105,17 @@ fn prepare_challenge<const D: usize>(
         return prepare_wide_plan(challenge);
     };
     if contribution_bound <= i16::MAX as u64 {
-        let windowed = window_span.and_then(|span| WindowedChallenge::new::<D>(challenge, span));
-        return ChallengePlan::NarrowFull(contribution_bound, windowed);
+        let kernel = window_span
+            .and_then(|span| WindowedChallenge::new::<D>(challenge, span))
+            .map(NarrowKernel::Windowed)
+            .or_else(|| {
+                shifts
+                    .then(|| ShiftedChallenge::new::<D>(challenge, digit_abs_bound))
+                    .flatten()
+                    .map(NarrowKernel::Shifted)
+            })
+            .unwrap_or(NarrowKernel::Terms);
+        return ChallengePlan::NarrowFull(contribution_bound, kernel);
     }
 
     let mut chunk_mass = 0u64;
@@ -158,11 +180,13 @@ impl<const D: usize> DigitPlaneSet<D> for &[i8; D] {
         self,
         acc: &mut [[i16; D]],
         challenge: &SparseChallenge,
-        windowed: Option<&WindowedChallenge>,
+        kernel: &NarrowKernel,
+        shift: &mut ShiftScratch<D>,
     ) {
-        match windowed {
-            Some(windowed) => windowed_mul_acc(self, windowed, &mut acc[0]),
-            None => sparse_mul_acc_narrow(self, challenge, &mut acc[0]),
+        match kernel {
+            NarrowKernel::Windowed(windowed) => windowed_mul_acc(self, windowed, &mut acc[0]),
+            NarrowKernel::Shifted(shifted) => shifted_mul_acc(self, shifted, shift, &mut acc[0]),
+            NarrowKernel::Terms => sparse_mul_acc_narrow(self, challenge, &mut acc[0]),
         }
     }
 
@@ -228,22 +252,31 @@ impl<const D: usize> DigitPlaneSet<D> for DigitPlanes<'_, D> {
         self,
         acc: &mut [[i16; D]],
         challenge: &SparseChallenge,
-        windowed: Option<&WindowedChallenge>,
+        kernel: &NarrowKernel,
+        shift: &mut ShiftScratch<D>,
     ) {
-        match self {
-            Self::I8(planes) => match windowed {
-                Some(windowed) => {
-                    for (plane, dst) in planes.iter().zip(acc) {
-                        windowed_mul_acc(plane, windowed, dst);
-                    }
+        match (self, kernel) {
+            (Self::I8(planes), NarrowKernel::Windowed(windowed)) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    windowed_mul_acc(plane, windowed, dst);
                 }
-                None => {
-                    for (plane, dst) in planes.iter().zip(acc) {
-                        sparse_mul_acc_narrow(plane, challenge, dst);
-                    }
+            }
+            (Self::I8(planes), NarrowKernel::Shifted(shifted)) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    shifted_mul_acc(plane, shifted, shift, dst);
                 }
-            },
-            Self::I16(planes) => {
+            }
+            (Self::I8(planes), NarrowKernel::Terms) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    sparse_mul_acc_narrow(plane, challenge, dst);
+                }
+            }
+            (Self::I16(planes), NarrowKernel::Shifted(shifted)) => {
+                for (plane, dst) in planes.iter().zip(acc) {
+                    shifted_mul_acc_i16(plane, shifted, shift, dst);
+                }
+            }
+            (Self::I16(planes), NarrowKernel::Windowed(_) | NarrowKernel::Terms) => {
                 for (plane, dst) in planes.iter().zip(acc) {
                     sparse_mul_acc_i16_narrow(plane, challenge, dst);
                 }
@@ -298,6 +331,7 @@ enum FoldAccumulator<'a, const D: usize> {
         wide: &'a mut [[i32; D]],
         narrow: Vec<[i16; D]>,
         bound: u64,
+        shift: ShiftScratch<D>,
     },
 }
 
@@ -318,8 +352,9 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                     wide,
                     narrow,
                     bound,
+                    shift,
                 },
-                ChallengePlan::NarrowFull(contribution, windowed),
+                ChallengePlan::NarrowFull(contribution, kernel),
             ) => {
                 if *bound + contribution > i16::MAX as u64 {
                     flush_narrow_accumulator(narrow, wide);
@@ -331,7 +366,8 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                     planes.accumulate_narrow(
                         &mut narrow[base..base + num_digits],
                         challenge,
-                        windowed.as_ref(),
+                        kernel,
+                        shift,
                     );
                 }
                 *bound += contribution;
@@ -341,6 +377,7 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                     wide,
                     narrow,
                     bound,
+                    ..
                 },
                 ChallengePlan::NarrowChunked(ranges),
             ) => {
@@ -366,6 +403,7 @@ impl<const D: usize> FoldAccumulator<'_, D> {
                         wide,
                         narrow,
                         bound,
+                        ..
                     } => {
                         if *bound != 0 {
                             flush_narrow_accumulator(narrow, wide);
@@ -399,6 +437,7 @@ impl<const D: usize> FoldAccumulator<'_, D> {
             wide,
             mut narrow,
             bound,
+            ..
         } = self
         {
             if bound != 0 {
@@ -420,6 +459,7 @@ pub(crate) fn element_partitioned_decompose_fold<S: BlockDigits<D>, const D: usi
         .ok_or_else(|| AkitaError::InvalidInput("partitioned fold inner width overflow".into()))?;
     let digit_abs_bound = source.digit_abs_bound(shape);
     let window_span = source.i8_digit_span(shape).filter(|_| gathers_windows());
+    let shifts = shifts_windows();
     let position_tile = position_tile_len(num_positions_per_block);
     chunk_ranges
         .iter()
@@ -442,6 +482,7 @@ pub(crate) fn element_partitioned_decompose_fold<S: BlockDigits<D>, const D: usi
                     plan: prepare_challenge::<D>(
                         digit_abs_bound,
                         window_span,
+                        shifts,
                         challenge.challenge(),
                     ),
                     block_start: ring_start + block_idx * num_positions_per_block,
@@ -469,6 +510,7 @@ pub(crate) fn element_partitioned_decompose_fold<S: BlockDigits<D>, const D: usi
                             wide: acc,
                             narrow,
                             bound: 0,
+                            shift: ShiftScratch::new(),
                         }
                     } else {
                         FoldAccumulator::Wide(acc)

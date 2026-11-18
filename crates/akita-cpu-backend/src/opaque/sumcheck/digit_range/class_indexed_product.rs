@@ -728,7 +728,7 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
             .entered();
             let fold_context = E::precompute(challenge);
             table
-                .fold_in_place(|left, right| {
+                .fold(|left, right| {
                     std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
                 })
                 .expect("validated exact-prefix product state can fold");

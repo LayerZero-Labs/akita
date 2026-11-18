@@ -2,7 +2,7 @@
 
 use crate::sources::packed_digits::PackedSignedDigitView;
 use crate::sources::poly_helpers::{
-    I8DigitSpan, SignedDigitBasis, ValidatedSparseChallenge, WidePlan, WindowedChallenge,
+    I8DigitSpan, NarrowKernel, ShiftScratch, SignedDigitBasis, ValidatedSparseChallenge, WidePlan,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
@@ -514,7 +514,8 @@ pub(crate) trait DigitPlaneSet<const D: usize> {
         self,
         acc: &mut [[i16; D]],
         challenge: &SparseChallenge,
-        windowed: Option<&WindowedChallenge>,
+        kernel: &NarrowKernel,
+        shift: &mut ShiftScratch<D>,
     );
     fn accumulate_chunked_narrow(
         self,

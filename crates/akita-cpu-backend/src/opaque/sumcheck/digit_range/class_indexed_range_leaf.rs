@@ -511,7 +511,7 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
             .entered();
             let fold_context = E::precompute(challenge);
             table
-                .fold_in_place(|left, right| E::fold_one(&fold_context, left, right))
+                .fold(|left, right| E::fold_one(&fold_context, left, right))
                 .expect("validated exact-prefix range-image state can fold");
         }
         self.rounds_completed += 1;

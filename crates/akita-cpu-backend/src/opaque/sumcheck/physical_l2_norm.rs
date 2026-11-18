@@ -96,12 +96,12 @@ impl<E: Field + Fold> PhysicalNormTerm<E> {
         let context = E::precompute(challenge);
         let fold = |left, right| E::fold_one(&context, left, right);
         match self {
-            Self::Direct { response } => response.fold_in_place(fold),
+            Self::Direct { response } => response.fold(fold),
             Self::LimbGram {
                 limbs, selectors, ..
             } => {
                 for table in limbs.iter_mut().chain(selectors) {
-                    table.fold_in_place(fold)?;
+                    table.fold(fold)?;
                 }
                 Ok(())
             }

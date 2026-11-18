@@ -29,7 +29,7 @@ const GATHER: usize = 2 * WINDOW;
 const GATHER: usize = WINDOW;
 
 /// Source offsets packed into one table word, 16 bits each.
-const WORD_OFFSETS: usize = 4;
+pub(super) const WORD_OFFSETS: usize = 4;
 
 /// Value range of the `i8` digits a fold source hands to the gather kernel.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,21 +59,96 @@ struct SignedPlane<const D: usize> {
     zero: [i8; GATHER],
 }
 
-/// Per-window source lists for one challenge.
+/// Packed source lists of one challenge, one run of words per output window.
 ///
-/// Every run of [`GATHER`] output coefficients owns `words_per_window` table
-/// words: first `once_words` words listing the terms with coefficient
-/// magnitude one, then the words listing the terms with magnitude two. Each
-/// word packs [`WORD_OFFSETS`] [`SignedPlane`] offsets; unused slots point at
-/// the zeros. `corrections[window]` is the weighted number of complemented
-/// sources in that window's list.
-pub(crate) struct WindowedChallenge {
+/// Every output window owns `words_per_window` words: first `once_words`
+/// words listing the terms with coefficient magnitude one, then the words
+/// listing the terms with magnitude two. Each word packs [`WORD_OFFSETS`]
+/// 16-bit source offsets; unused slots hold the offset of a zero window.
+pub(super) struct WindowLists {
     words: Vec<u64>,
+    once_words: usize,
+    words_per_window: usize,
+}
+
+impl WindowLists {
+    /// Pack the lists of `num_windows` output windows, or `None` unless the
+    /// challenge has between one and `i16::MAX / 2` terms, each with
+    /// coefficient `±1` or `±2`. `offset(window, position, coefficient)` is
+    /// one term's source offset for one output window, and `zeros` the
+    /// offset of a zero window.
+    pub(super) fn new(
+        challenge: &SparseChallenge,
+        num_windows: usize,
+        zeros: u64,
+        mut offset: impl FnMut(usize, usize, i8) -> u64,
+    ) -> Option<Self> {
+        let num_terms = challenge.positions.len();
+        if num_terms == 0
+            || num_terms > i16::MAX as usize / 2
+            || num_terms != challenge.coeffs.len()
+            || challenge
+                .coeffs
+                .iter()
+                .any(|coefficient| !matches!(coefficient.unsigned_abs(), 1 | 2))
+        {
+            return None;
+        }
+        let num_once = challenge
+            .coeffs
+            .iter()
+            .filter(|coefficient| coefficient.unsigned_abs() == 1)
+            .count();
+        let once_words = num_once.div_ceil(WORD_OFFSETS);
+        let words_per_window = once_words + (num_terms - num_once).div_ceil(WORD_OFFSETS);
+        let mut words = Vec::with_capacity(num_windows * words_per_window);
+        let mut offsets = Vec::with_capacity(num_terms);
+        for window in 0..num_windows {
+            for magnitude in [1u8, 2] {
+                offsets.clear();
+                for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+                    if coefficient.unsigned_abs() == magnitude {
+                        offsets.push(offset(window, position as usize, coefficient));
+                    }
+                }
+                words.extend(offsets.chunks(WORD_OFFSETS).map(|group| {
+                    (0..WORD_OFFSETS).fold(0u64, |word, slot| {
+                        word | (group.get(slot).copied().unwrap_or(zeros) << (16 * slot))
+                    })
+                }));
+            }
+        }
+        Some(Self {
+            words,
+            once_words,
+            words_per_window,
+        })
+    }
+
+    /// Number of output windows the lists cover.
+    pub(super) fn num_windows(&self) -> usize {
+        self.words.len() / self.words_per_window
+    }
+
+    /// The `(once, twice)` lists of every output window, in order.
+    pub(super) fn windows(&self) -> impl Iterator<Item = (&[u64], &[u64])> {
+        self.words
+            .chunks_exact(self.words_per_window)
+            .map(|words| words.split_at(self.once_words))
+    }
+}
+
+/// Gather lists for one subring-embedded challenge.
+///
+/// Every run of [`GATHER`] output coefficients owns one window of
+/// [`WindowLists`], whose offsets address a [`SignedPlane`].
+/// `corrections[window]` is the weighted number of complemented sources in
+/// that window's lists.
+pub(crate) struct WindowedChallenge {
+    lists: WindowLists,
     // The x86 kernels read negated sources, which need no correction.
     #[cfg_attr(all(target_arch = "x86_64", target_feature = "avx2"), allow(dead_code))]
     corrections: Vec<i16>,
-    once_words: usize,
-    words_per_window: usize,
     // Read only by the NEON kernel.
     #[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
     span: I8DigitSpan,
@@ -87,80 +162,43 @@ impl WindowedChallenge {
         challenge: &SparseChallenge,
         span: I8DigitSpan,
     ) -> Option<Self> {
-        let num_terms = challenge.positions.len();
-        if !D.is_multiple_of(GATHER)
-            || 2 * D + WINDOW > usize::from(u16::MAX)
-            || num_terms == 0
-            || num_terms > i16::MAX as usize / 2
-            || num_terms != challenge.coeffs.len()
-        {
-            return None;
-        }
         let whole_windows = challenge
             .positions
             .iter()
             .all(|&position| (position as usize) < D && (position as usize).is_multiple_of(WINDOW));
-        let small_coefficients = challenge
-            .coeffs
-            .iter()
-            .all(|coefficient| matches!(coefficient.unsigned_abs(), 1 | 2));
-        if !whole_windows || !small_coefficients {
+        if !D.is_multiple_of(GATHER) || 2 * D + WINDOW > usize::from(u16::MAX) || !whole_windows {
             return None;
         }
-
-        let num_once = challenge
-            .coeffs
-            .iter()
-            .filter(|coefficient| coefficient.unsigned_abs() == 1)
-            .count();
-        let once_words = num_once.div_ceil(WORD_OFFSETS);
-        let words_per_window = once_words + (num_terms - num_once).div_ceil(WORD_OFFSETS);
         let num_windows = D / WINDOW;
-        let mut words = Vec::with_capacity(D / GATHER * words_per_window);
-        let mut corrections = Vec::with_capacity(D / GATHER);
-        let mut offsets = Vec::with_capacity(num_terms);
-        for window in (0..num_windows).step_by(GATHER / WINDOW) {
-            let mut correction = 0i16;
-            for magnitude in [1u8, 2] {
-                offsets.clear();
-                for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-                    if coefficient.unsigned_abs() != magnitude {
-                        continue;
-                    }
-                    let shift = position as usize / WINDOW;
-                    // X^position moves source window `window - shift` here;
-                    // the windows that wrap past X^D come back negated. A
-                    // two-window gather reads on into the next source
-                    // window, which `SignedPlane` keeps adjacent across the
-                    // wrap as well.
-                    let wrapped = window < shift;
-                    let source = if wrapped {
-                        window + num_windows - shift
-                    } else {
-                        window - shift
-                    };
-                    let mut offset = source * WINDOW;
-                    if (coefficient < 0) != wrapped {
-                        offset += D;
-                        correction += i16::from(magnitude);
-                    }
-                    offsets.push(offset as u64);
+        let mut corrections = vec![0i16; D / GATHER];
+        let lists = WindowLists::new(
+            challenge,
+            D / GATHER,
+            (2 * D + WINDOW) as u64,
+            |gather, position, coefficient| {
+                let window = gather * (GATHER / WINDOW);
+                let shift = position / WINDOW;
+                // X^position moves source window `window - shift` here; the
+                // windows that wrap past X^D come back negated. A two-window
+                // gather reads on into the next source window, which
+                // `SignedPlane` keeps adjacent across the wrap as well.
+                let wrapped = window < shift;
+                let source = if wrapped {
+                    window + num_windows - shift
+                } else {
+                    window - shift
+                };
+                let mut offset = source * WINDOW;
+                if (coefficient < 0) != wrapped {
+                    offset += D;
+                    corrections[gather] += i16::from(coefficient.unsigned_abs());
                 }
-                words.extend(offsets.chunks(WORD_OFFSETS).map(|group| {
-                    (0..WORD_OFFSETS).fold(0u64, |word, slot| {
-                        let zeros = (2 * D + WINDOW) as u64;
-                        let offset = group.get(slot).copied().unwrap_or(zeros);
-                        word | (offset << (16 * slot))
-                    })
-                }));
-            }
-            corrections.push(correction);
-        }
+                offset as u64
+            },
+        )?;
         Some(Self {
-            words,
+            lists,
             corrections,
-            once_words,
-            words_per_window,
             span,
         })
     }
@@ -200,13 +238,10 @@ pub(super) fn windowed_mul_acc<const D: usize>(
     acc: &mut [i16; D],
 ) {
     assert!(D.is_multiple_of(GATHER));
-    assert_eq!(
-        challenge.words.len(),
-        D / GATHER * challenge.words_per_window
-    );
+    assert_eq!(challenge.lists.num_windows(), D / GATHER);
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    // SAFETY: the length check above ties the table to this `D`, and the
-    // target features the kernel needs are enabled for this build.
+    // SAFETY: the window count checked above ties the lists to this `D`, and
+    // the target features the kernel needs are enabled for this build.
     unsafe {
         x86::accumulate(digit_plane, challenge, acc);
     }
@@ -223,14 +258,13 @@ pub(super) fn windowed_mul_acc<const D: usize>(
         }
         let windows = acc
             .chunks_exact_mut(WINDOW)
-            .zip(challenge.words.chunks_exact(challenge.words_per_window))
+            .zip(challenge.lists.windows())
             .zip(&challenge.corrections);
-        for ((acc_window, words), &correction) in windows {
-            let (once, twice) = words.split_at(challenge.once_words);
+        for ((acc_window, (once, twice)), &correction) in windows {
             #[cfg(target_arch = "aarch64")]
             // SAFETY: `WindowedChallenge::new::<D>` only packs offsets of
-            // whole windows inside a `SignedPlane<D>`, and the length check
-            // above ties the table to this `D`; `acc_window` is exactly one
+            // whole windows inside a `SignedPlane<D>`, and the window count
+            // checked above ties the lists to this `D`; `acc_window` is exactly one
             // window; NEON is baseline on aarch64.
             unsafe {
                 let digits = (&raw const signed).cast::<i8>();
@@ -271,7 +305,7 @@ pub(super) fn windowed_mul_acc<const D: usize>(
 }
 
 #[cfg(target_arch = "aarch64")]
-mod neon {
+pub(super) mod neon {
     use super::{WINDOW, WORD_OFFSETS};
     use std::arch::aarch64::*;
 
@@ -394,7 +428,7 @@ mod neon {
     /// Same contract as [`add_words`] for every word, and `acc_window` must
     /// address [`WINDOW`] valid i16 values.
     #[inline(always)]
-    pub(super) unsafe fn gather_window<const PAIRED: bool>(
+    pub(in super::super) unsafe fn gather_window<const PAIRED: bool>(
         digits: *const i8,
         once: &[u64],
         twice: &[u64],
@@ -525,11 +559,9 @@ mod x86 {
         }
         wide.head.copy_from_slice(&wide.plane[..WINDOW]);
         let sources = (&raw const wide).cast::<i16>();
-        let gathers = acc
-            .chunks_exact_mut(GATHER)
-            .zip(challenge.words.chunks_exact(challenge.words_per_window));
-        for (acc_lanes, words) in gathers {
-            let (once, twice) = words.split_at(challenge.once_words);
+        for (acc_lanes, (once, twice)) in
+            acc.chunks_exact_mut(GATHER).zip(challenge.lists.windows())
+        {
             let mut sum = sum_sources(sources, once);
             if !twice.is_empty() {
                 let twice = sum_sources(sources, twice);
