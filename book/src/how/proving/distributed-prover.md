@@ -6,6 +6,15 @@ single protocol change — keeping a *per-machine* folded response — that lets
 machines avoid shuffling large witnesses between each other. The machines can be
 separate GPUs, accelerators, or nodes; nothing below is specific to GPUs.
 
+> **Status.** The protocol change is implemented as the multi-chunk witness
+> layout: a chunk is a contiguous block range, and each chunk keeps its own
+> folded response. The prover in this repository computes all chunks in one
+> process. It contains no cross-machine transport or aggregation service. Read
+> "machine $P_j$" below as "the worker that owns chunk $j$", and read each
+> exchange between machines as a statement of which values that worker needs
+> from the others. [Multiple witness chunks](./advanced-relation-layouts.md#multiple-witness-chunks)
+> derives the same relations without the machine model.
+
 ## What "distributed-prover friendly" means
 
 We hold the design to three concrete criteria:
@@ -33,11 +42,16 @@ of live source ring elements, choose $M := 2^{r_{\mathsf{pos}}}$ positions per
 block, and set $B := \lceil N/M\rceil$. The block-index Boolean domain has size
 $B_{\mathsf{dom}} := 2^{r_{\mathsf{blk}}} = \operatorname{nextpow2}(B)$, but only
 the prefix $[B]$ is live. Reshape the coefficient table into $B$ blocks
-$\mathbf f_i \in R_q^M$, padding only the final block when $M \nmid N$. The opening
-point induces the inner evaluation vector $\mathbf a \in R_q^M$ and the live block
-vector $\mathbf b \in R_q^B$,
-and the evaluation is
-$F(\mathbf r) = \mathbf b^\top[\mathbf a^\top\mathbf f_1,\dots,\mathbf f_B]$.
+$\mathbf f_i \in R_q^M$, padding only the final block when $M \nmid N$.
+
+Every multi-chunk fold uses subring coefficient packing. For each block, the
+opening point defines the public linear packing map $L$ of
+[the fold page](./akita-fold.md#subring-coefficient-packing-consistency). It
+sends the digit vector $\mathbf s_i$ of block $i$ to a short packed partial
+$e_i := L(\mathbf s_i)$ in $E[U]/(U^s+1)$. The claimed evaluation
+$F(\mathbf r)$ is a public linear function of the partials $e_1,\dots,e_B$,
+given by the
+[direct packed opening relation](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials).
 
 We partition the block index set $[B]$ into contiguous ranges
 $[B] = \mathcal I_0 \sqcup \dots \sqcup \mathcal I_{\mathcal M-1}$, where
@@ -46,8 +60,10 @@ $\mathcal I_j := \{\, i \in [B] : \lfloor jB/\mathcal M\rfloor \le i <
 $P_j$. For $B=10$ and $\mathcal M=4$, these ranges are
 $[0,2),[2,5),[5,7),[7,10)$. This is the
 [canonical proportional partition](./opening-points-layout.md#chunks-and-fold-challenges)
-owned by `WitnessLayout`. Larger index spaces are always partitioned at the block
-level: for any $k \ge 1$ the block partition induces
+owned by `WitnessLayout`. It applies to root sources. A recursive level does
+not repartition: it inherits the block ranges of the chunk bodies that the
+previous level produced, so its ranges need not be balanced. Larger index
+spaces are always partitioned at the block level: for any $k \ge 1$ the block partition induces
 $[kB] = \mathcal I_0^{[k]} \sqcup \dots \sqcup \mathcal I_{\mathcal M-1}^{[k]}$.
 
 The public key is still the three uniformly random matrices
@@ -59,9 +75,7 @@ the same public columns locally** — no setup is broadcast. In the distributed
 setting we view them column-blocked,
 $\mathbf B = [\mathbf B_0 \mid \dots \mid \mathbf B_{\mathcal M-1}]$ and
 $\mathbf D = [\mathbf D_0 \mid \dots \mid \mathbf D_{\mathcal M-1}]$, where
-$\mathbf B_j,\mathbf D_j$ hold exactly the columns indexed by $P_j$'s blocks, and
-we restrict the block vector as
-$\mathbf b^\top = [\mathbf b_0^\top \mid \dots \mid \mathbf b_{\mathcal M-1}^\top]$.
+$\mathbf B_j,\mathbf D_j$ hold exactly the columns indexed by $P_j$'s blocks.
 
 ## Component-by-component locality
 
@@ -94,16 +108,18 @@ $p_F$ (criteria 1 and 2).
 ### The opening commitment $\mathbf v$ and the claim $y$
 
 The opening side is computed the same way. For every $i \in \mathcal I_j$, $P_j$
-computes the local block evaluation $e_i := \langle\mathbf a,\mathbf f_i\rangle$,
-digitises it to $\widehat{\mathbf e}_i := \mathbf G_{b,1}^{-1}(e_i) \in R_q^\delta$,
+computes the local packed partial $e_i := L(\mathbf s_i)$, digitises its
+base-field coordinates to $\widehat{\mathbf e}_i$, so that
+$e_i = \operatorname{Rec}_{\mathrm{open}}(\widehat{\mathbf e}_i)$,
 and — using only its column block $\mathbf D_j$ — forms the partial opening
 commitment $\mathbf v_j := \mathbf D_j\,\widehat{\mathbf e}^{(j)} \in R_q^{n_D}$,
 with $\widehat{\mathbf e}^{(j)} := (\widehat{\mathbf e}_i)_{i\in\mathcal I_j}$. The
 global opening relation image is $\mathbf v = \sum_j \mathbf v_j$. The aggregation
 machine compresses that sum through the two H maps and publishes only the
 256-byte payload $p_H$. Each machine also
-forms its partial claim $y_j := \sum_{i\in\mathcal I_j} b_i e_i$, and the claimed
-evaluation is $y = F(\mathbf r) = \sum_j y_j$.
+forms its partial claim $y_j$, the part of the linear opening function that
+reads the partials $e_i$ with $i\in\mathcal I_j$. The claimed evaluation is
+$y = F(\mathbf r) = \sum_j y_j$.
 
 So the raw $\mathbf u$, raw $\mathbf v$, and $y$ all follow the same pattern: each machine does
 the same inner/outer/opening computation as the single-machine prover, but only on
@@ -113,15 +129,17 @@ terminal payloads.
 
 ### The folded response $\mathbf z$ — the hard part
 
-After the verifier samples the folding challenges, the single-machine prover would
-form **one** global folded response
+The verifier samples one folding challenge $c_i$ per block from the challenge
+subring $S=F[U]/(U^s+1)$. The source fold uses its embedding
+$\iota(c_i)\in R_q$. The single-machine prover would form **one** global
+folded response
 
 $$
-  \mathbf z = \sum_{i=1}^{B} c_i\,\mathbf s_i \in R_q^{M\delta}.
+  \mathbf z = \sum_{i=1}^{B} \iota(c_i)\,\mathbf s_i \in R_q^{M\delta}.
 $$
 
 But each machine only holds the blocks in $\mathcal I_j$, so it can only compute a
-*partial* fold $\mathbf z_j := \sum_{i\in\mathcal I_j} c_i\,\mathbf s_i \in R_q^{M\delta}$
+*partial* fold $\mathbf z_j := \sum_{i\in\mathcal I_j} \iota(c_i)\,\mathbf s_i \in R_q^{M\delta}$
 from its partial challenges $\mathbf c^{(j)} = \{c_i\}_{i\in\mathcal I_j}$.
 Crucially, each $\mathbf z_j$ lives in the **full** ambient dimension $R_q^{M\delta}$
 — the same size as the entire folded witness. Summing the $\mathbf z_j$ into one
@@ -188,6 +206,13 @@ So the schedule fixes a constant number of distributed rounds. Those leading
 rounds retain one $\mathbf z_j$ per machine; the later rounds return to the
 single-response Akita protocol on one machine.
 
+The opening method follows the same boundary. Every distributed round uses
+subring coefficient packing. A later single-response round may use packing or
+`EvaluationTrace`, as the schedule selects; its relations are the single-chunk
+relations of [Semantic relations in an Akita fold](./akita-fold.md). The first
+single-response round inherits the per-machine witness bodies of the last
+distributed round and merges them into one owner.
+
 ## The next-round witness and the relation change
 
 After the distributed rounds, each machine $P_j$ holds its own
@@ -200,12 +225,12 @@ response. The rest of this chapter makes that change precise.
 ### The per-machine partial root relation
 
 Each machine holds its partial witness and the matching partial commitments, plus
-the fold of its own blocks. The folded-evaluation consistency row below is
-written in the evaluation-trace form because that form is the shortest. Admitted
-schedules require subring coefficient packing for every multi-chunk fold, so a
-real chunked fold uses the packed form of that row. The partition of blocks
-among machines does not depend on the opening method. Over $R_q$, machine
-$P_j$ satisfies:
+the fold of its own blocks. Write $\mathbf z^{(j)}$ for the partial fold
+$\mathbf z_j$ as a witness segment. The folded-evaluation consistency row is the
+packed relation, because every multi-chunk fold uses subring coefficient
+packing. It holds in $E[U]/(U^s+1)$ and uses the challenges $c_i\in S$. The
+other three rows hold over $R_q$, and the folded-commitment row uses the
+embedded challenges $\iota(c_i)$. Machine $P_j$ satisfies:
 
 $$
 \begin{aligned}
@@ -213,23 +238,28 @@ $$
     && \text{(partial outer-commitment)} \\
   \mathbf D_j\,\widehat{\mathbf e}^{(j)} &= \mathbf v_j
     && \text{(partial opening-commitment)} \\
-  (\mathbf c^{(j)\,\top}\otimes\mathbf G_{b,1})\,\widehat{\mathbf e}^{(j)}
-    &= \langle\mathbf a,\,\mathbf G_{b,|\mathcal I_j|}\mathbf z^{(j)}\rangle
+  \sum_{i\in\mathcal I_j} c_i\operatorname{Rec}_{\mathrm{open}}(\widehat{\mathbf e}_i)
+    &= L(\mathbf z^{(j)})
     && \text{(partial folded-evaluation consistency)} \\
-  (\mathbf c^{(j)\,\top}\otimes\mathbf G_{b,n_A})\,\widehat{\mathbf t}^{(j)}
+  \sum_{i\in\mathcal I_j} \iota(c_i)\,\mathbf G_{b,n_A}\widehat{\mathbf t}_i
     &= \mathbf A\,\mathbf z^{(j)}
     && \text{(partial folded-commitment consistency)}
 \end{aligned}
 $$
 
-Stacking these, $P_j$ has a local partial root relation
+The third row follows from $L(\iota(c_i)\mathbf s_i)=c_ie_i$ and the linearity
+of $L$. Write $\mathbf c^{(j)\,\top}\otimes\operatorname{Rec}_{\mathrm{open}}$
+for the map on its left side and
+$\iota(\mathbf c^{(j)})^\top\otimes\mathbf G_{b,n_A}$ for the map on the left
+side of the fourth row. Stacking the four rows, each in its own ring, $P_j$
+has a local partial root relation
 
 $$
 \begin{bmatrix}
   \mathbf D_j & 0 & 0 \\
   0 & \mathbf B_j & 0 \\
-  \mathbf c^{(j)\,\top}\otimes\mathbf G_{b,1} & 0 & -\mathbf a^\top\mathbf G_{b,M} \\
-  0 & \mathbf c^{(j)\,\top}\otimes\mathbf G_{b,n_A} & -\mathbf A
+  \mathbf c^{(j)\,\top}\otimes\operatorname{Rec}_{\mathrm{open}} & 0 & -L \\
+  0 & \iota(\mathbf c^{(j)})^\top\otimes\mathbf G_{b,n_A} & -\mathbf A
 \end{bmatrix}
 \begin{bmatrix}
   \widehat{\mathbf e}^{(j)} \\ \widehat{\mathbf t}^{(j)} \\ \mathbf z^{(j)}
@@ -284,6 +314,18 @@ partial commitments. The aggregated quotient is digit-decomposed as
 $\widehat{\mathbf r} := \mathbf G_{b,n}^{-1}(\mathbf r)$, recovering the same
 ring-switch witness shape as the single-machine protocol — except the root witness
 stays written as the concatenation of the per-machine witnesses.
+
+The display above shows the lift for rows over one ring $R_q$. The complete
+relation has more row kinds, and each is lifted in its own ring. The packed
+consistency row is lifted in $E[U]$ with modulus $U^s+1$; its quotient is the
+[packing quotient](./root-fold-ring-switch.md#the-packing-consistency-quotient)
+$Q_{\mathrm{pack}}$. A compressed payload adds the F and H rows with their own
+quotients, and mixed ring dimensions give each row its native modulus. Every
+multi-chunk fold uses quotient lifting; reduced evaluation is admitted only
+for single-chunk folds. In every case the quotient is a linear function of the
+witness once the challenges are fixed, so the global quotient is still the sum
+of the per-machine contributions and the witness holds one shared quotient
+range, not one per machine.
 
 Let $\mathbf w' := (\mathbf w \,\|\, \widehat{\mathbf r})$ be the extended witness.
 The lifted relation is $\mathbf M_{\mathrm{ext}}\mathbf w' = \mathbf h$ over
@@ -353,7 +395,7 @@ single-machine protocol.
 
 ## Recap against the three criteria
 
-- **Distributable witness.** The balanced block partition gives each machine a
+- **Distributable witness.** The block partition gives each machine a
   disjoint contiguous share, and every step — inner/outer/opening commit, the partial
   fold, the quotient lift, the next-level commit, and the sum-check — is computed
   per machine over its own blocks.
