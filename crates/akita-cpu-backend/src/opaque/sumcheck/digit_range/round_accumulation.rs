@@ -1,13 +1,25 @@
 use super::exact_prefix::SplitEqualitySuffixMass;
+use crate::opaque::sumcheck::par_fold_by_grain;
 use jolt_field::solinas::parallel::*;
 use jolt_field::Unreduced;
 use jolt_field::{Field, Zero};
+
+/// What one pair here weighs in the pairs [`par_fold_by_grain`] counts. Its
+/// grain of 2,048 pairs was set on the stage-2 kernels; a pair of this
+/// accumulation is several extension-field products per lane, and at that
+/// grain rounds of a few thousand pairs ran on one thread or a handful of
+/// tasks. With this weight a task holds at least 256 pairs.
+const PAIR_WEIGHT: usize = 8;
 
 /// Sum `N` products over the explicit pairs of a split-equality round.
 ///
 /// This is the only traversal of the split-equality blocks: exact-prefix
 /// reduction, canonical or delayed accumulation, outer weighting and the
-/// parallel reduction all live here.
+/// parallel reduction all live here. Blocks are grouped into tasks of at
+/// least a grain of pairs weighted by [`PAIR_WEIGHT`], and a round below two
+/// such tasks (512 pairs) stays on the caller: the last rounds of every level
+/// hold a handful of pairs, and waking the pool for them costs more than the
+/// round.
 ///
 /// `pair_terms(pair_index, inner_weight)` returns two factor arrays whose
 /// lane-wise products are the pair's terms, already scaled by its inner
@@ -24,8 +36,9 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
     debug_assert!(explicit_pair_count <= first.len() * second.len());
     let explicit_block_count = explicit_pair_count.div_ceil(first.len());
     if E::SUM_IS_EXACT {
-        cfg_fold_reduce!(
-            0..explicit_block_count,
+        par_fold_by_grain(
+            cfg_into_iter!(0..explicit_block_count),
+            first.len().saturating_mul(PAIR_WEIGHT),
             || [E::Product::zero(); N],
             |mut outer, second_index| {
                 let block_start = second_index * first.len();
@@ -51,12 +64,13 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
                     *left += right;
                 }
                 left
-            }
+            },
         )
         .map(E::reduce_product)
     } else {
-        cfg_fold_reduce!(
-            0..explicit_block_count,
+        par_fold_by_grain(
+            cfg_into_iter!(0..explicit_block_count),
+            first.len().saturating_mul(PAIR_WEIGHT),
             || [E::zero(); N],
             |mut outer, second_index| {
                 let block_start = second_index * first.len();
@@ -82,7 +96,7 @@ pub(super) fn accumulate_equality_weighted_pair_terms<E: Field + Unreduced, cons
                     *left += right;
                 }
                 left
-            }
+            },
         )
     }
 }
