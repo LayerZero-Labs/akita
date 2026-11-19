@@ -74,22 +74,21 @@ fn with_allocation_budget<T>(allowed: usize, f: impl FnOnce() -> T) -> (T, usize
     (result, ATTEMPTS.with(Cell::get))
 }
 
-#[repr(align(8))]
-struct Aligned([u8; 64]);
-
 #[test]
 fn oversize_and_occupied_sessions_reject_without_allocating() {
     assert!(!active());
-    let bytes = Aligned([7; 64]);
-    let (result, attempts) = with_allocation_budget(0, || install_checked_hints(&bytes.0, 63));
+    let bytes = frame(&[7; 64], &[], &[]);
+    let (result, attempts) =
+        with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len() - 1));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
     assert!(!active());
 
     // The exact trusted bound is accepted; a rejected second install must not
     // allocate, replace the tape, or change its consumption cursor.
-    install_checked_hints(&bytes.0, 64).unwrap();
-    let (result, attempts) = with_allocation_budget(0, || install_checked_hints(&bytes.0, 64));
+    install_checked_hints(&bytes, bytes.len()).unwrap();
+    let (result, attempts) =
+        with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len()));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
     take(HintTape::Quartets, 2, |words| {
@@ -103,7 +102,7 @@ fn oversize_and_occupied_sessions_reject_without_allocating() {
 #[test]
 fn malformed_position_section_rejects_before_copying_quartets() {
     assert!(!active());
-    let frame = [b"AKITAH02".as_slice(), &8u64.to_le_bytes(), &[0; 9]].concat();
+    let frame = frame(&[0; 8], &[], &[0; 1]);
     let (result, attempts) =
         with_allocation_budget(0, || install_checked_hints(&frame, frame.len()));
     assert!(result.is_err());
@@ -112,56 +111,12 @@ fn malformed_position_section_rejects_before_copying_quartets() {
 }
 
 #[test]
-fn tape_allocation_failures_reject_and_allow_retry() {
-    assert!(!active());
-    let mut frame = b"AKITAH02".to_vec();
-    frame.extend_from_slice(&32u64.to_le_bytes());
-    for word in 1..=5u64 {
-        frame.extend_from_slice(&word.to_le_bytes());
-    }
-    // The trusted budget includes the frame header, not just its two tapes.
-    let (result, attempts) =
-        with_allocation_budget(0, || install_checked_hints(&frame, frame.len() - 16));
-    assert!(result.is_err());
-    assert_eq!(attempts, 0);
-    let mut storage = Aligned([0; 64]);
-    for offset in [0, 1] {
-        storage.0[offset..offset + frame.len()].copy_from_slice(&frame);
-        let bytes = &storage.0[offset..offset + frame.len()];
-        assert_eq!(
-            bytes.as_ptr().align_offset(8),
-            if offset == 0 { 0 } else { 7 }
-        );
-        for allowed in [0, 1] {
-            let (result, attempts) =
-                with_allocation_budget(allowed, || install_checked_hints(bytes, frame.len()));
-            assert!(result.is_err());
-            assert_eq!(attempts, allowed + 1);
-            assert!(!active());
-            install_checked_hints(bytes, frame.len()).unwrap();
-            take(HintTape::Quartets, 1, |words| {
-                assert_eq!(words, &[1, 2, 3, 4]);
-                Ok(())
-            })
-            .unwrap();
-            take(HintTape::Positions, 1, |words| {
-                assert_eq!(words, &[5]);
-                Ok(())
-            })
-            .unwrap();
-            finish_checked_hints().unwrap();
-        }
-    }
-}
-
-#[test]
-fn ternary_frame_allocation_failures_leave_no_partial_session() {
+fn tape_allocation_failures_leave_no_partial_session() {
     #[repr(align(8))]
     struct Storage([u8; 104]);
-    let mut frame = b"AKITAH03".to_vec();
-    frame.extend_from_slice(&32u64.to_le_bytes());
-    frame.extend_from_slice(&32u64.to_le_bytes());
-    frame.extend((1..=9u64).flat_map(u64::to_le_bytes));
+    let words =
+        |range: std::ops::RangeInclusive<u64>| range.flat_map(u64::to_le_bytes).collect::<Vec<_>>();
+    let frame = frame(&words(1..=4), &words(5..=8), &words(9..=9));
     for offset in [0, 1] {
         let mut storage = Storage([0; 104]);
         storage.0[offset..offset + frame.len()].copy_from_slice(&frame);

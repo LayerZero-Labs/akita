@@ -1,4 +1,5 @@
 use super::*;
+use crate::checked_hint::frame;
 use crate::{
     FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, SparseChallenge, SparseChallengeConfig,
 };
@@ -59,17 +60,6 @@ fn pack(challenge: &SparseChallenge) -> [u64; 4] {
         words[i / 6] |= (code as u64) << (10 * (i % 6));
     }
     words
-}
-fn frame(q: &[u8], t: &[u8], p: &[u8]) -> Vec<u8> {
-    [
-        b"AKITAH03".as_slice(),
-        &(q.len() as u64).to_le_bytes(),
-        &(t.len() as u64).to_le_bytes(),
-        q,
-        t,
-        p,
-    ]
-    .concat()
 }
 
 #[test]
@@ -161,7 +151,7 @@ fn packed_advice_matches_transcript_and_sparse_evaluation_after_embedding() {
 }
 
 #[test]
-fn new_frame_rejects_missing_excess_and_reordered_advice() {
+fn frame_rejects_missing_excess_and_reordered_advice() {
     let f = family(128, 31, 0);
     let mut source = message(&f, 1024);
     let reference = source.draw_fold_challenges(&f, 1024, 1).unwrap().unwrap();
@@ -171,7 +161,7 @@ fn new_frame_rejects_missing_excess_and_reordered_advice() {
         .map(pack)
         .flat_map(|words| words.into_iter().flat_map(|w| w.to_le_bytes()))
         .collect::<Vec<_>>();
-    for length in 0..24 {
+    for length in 0..16 {
         let header = frame(&[], &tape, &[]);
         assert!(crate::install_checked_hints(&header[..length], header.len()).is_err());
     }
@@ -197,7 +187,7 @@ fn new_frame_rejects_missing_excess_and_reordered_advice() {
 }
 
 #[test]
-fn new_frame_keeps_three_interleaved_tapes_independent() {
+fn frame_keeps_three_interleaved_tapes_independent() {
     let f = family(128, 31, 0);
     let mut source = message(&f, 1024);
     let expected = source.draw_fold_challenges(&f, 1024, 1).unwrap().unwrap();

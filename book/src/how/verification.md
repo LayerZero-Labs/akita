@@ -279,8 +279,7 @@ Recursive verification can use untrusted advice for sparse challenge decoding.
 Install it with `akita_challenges::install_checked_hints(bytes, max_bytes)`.
 Choose `max_bytes` from trusted schedule configuration or an application memory
 budget, independently of the supplied advice's length or header. The bound
-covers the entire input, including its frame header. The previous one-argument
-installer is replaced by this explicit resource contract.
+covers the entire input, including its two tape lengths.
 
 Position advice includes a record for every in-range candidate examined, even
 when the operator-norm predicate rejects it. Its size therefore varies with the
@@ -289,12 +288,14 @@ schedule's full candidate pools and the
 [schedule-derived budget formula](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame).
 A smaller application budget can reject otherwise valid proofs.
 
-Unfiltered D128 draws with 31 unit-magnitude coefficients can use the packed
-ternary tape in an `AKITAH03` frame when the batch has at least 1024 challenges.
-The verifier authenticates each supplied support and sign against the original
+The advice frame holds two tape lengths, then separate quartet, ternary and
+position tapes. Unfiltered D64 draws with 31 unit and 10 double-magnitude
+coefficients use the quartet tape, and unfiltered D128 draws with 31
+unit-magnitude coefficients use the ternary tape, when the batch has at least
+1024 challenges. Every other draw uses the position tape. For ternary draws,
+the verifier authenticates each supplied support and sign against the original
 transcript stream, then evaluates six coefficients per lookup group. It keeps
-the same challenge distribution and proof format. Older advice frames retain
-their existing decoding paths.
+the same challenge distribution and proof format.
 
 An existing session, an oversized input, or malformed framing is rejected before
 any tape allocation. Tape storage uses fallible allocation; failures return

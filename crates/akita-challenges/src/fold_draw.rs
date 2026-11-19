@@ -138,7 +138,8 @@ pub trait FoldDraw {
             AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
         })?;
         let stream = family.stream(total)?;
-        if stream.uses_checked_quartets() && crate::checked_hint::active() {
+        let hinted = crate::checked_hint::active();
+        if hinted && stream.uses_checked_quartets() {
             return self.draw_message(stream.message_len(), |message| {
                 Ok(Some(Challenges::from_checked_quartets(
                     stream.decode_checked_hints(message)?,
@@ -147,7 +148,7 @@ pub trait FoldDraw {
                 )?))
             });
         }
-        if stream.uses_checked_ternary() && crate::checked_hint::ternary_active() {
+        if hinted && stream.uses_checked_ternary() {
             return self.draw_message(stream.message_len(), |message| {
                 Ok(Some(Challenges::from_checked_ternary(
                     stream.decode_ternary_hints(message)?,
@@ -156,9 +157,8 @@ pub trait FoldDraw {
                 )?))
             });
         }
-        let position_hints = crate::checked_hint::positions_active();
         let challenges = self.draw_message(stream.message_len(), |message| {
-            stream.decode_with(message, position_hints)
+            stream.decode_with(message, hinted)
         })?;
         challenges
             .map(|challenges| {

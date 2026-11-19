@@ -550,17 +550,16 @@ Ranked recommendation:
 `install_checked_hints(bytes, max_bytes)` accepts untrusted advice on the current
 thread within a trusted byte budget. `max_bytes` MUST come from trusted schedule
 configuration or an application memory budget, not from the untrusted frame or
-its length. It covers the entire input, including the versioned header.
+its length. It covers the entire input, including the 16-byte length header.
 The installer rejects an occupied session, oversized input and malformed framing
 before copying any tape. Tape storage is allocated fallibly; allocation failure
 returns `AkitaError::InvalidProof` and leaves the session unchanged. Decoders
 borrow checked word slices from the session without allocating shared owners.
-Callers of the previous one-argument installer MUST supply this trusted bound.
 
-For a versioned session, a conservative schedule-derived bound in bytes is:
+A conservative schedule-derived bound in bytes is:
 
 ```text
-max_bytes = header_bytes
+max_bytes = 16
           + sum over quartet draws of (32 * count)
           + sum over ternary draws of (32 * count)
           + sum over position draws of (8 * ceil(w / 4) * candidates)
@@ -569,12 +568,11 @@ max_bytes = header_bytes
 Sum over every fold draw covered by the installed session. For each draw,
 `count = num_live_blocks * num_claims`, `w = count_pm1 + count_pm2`, and
 `candidates = family.stream(count)?.candidates()`. Use the quartet term only
-for unfiltered D64/31/10 draws with `count >= 1024`. In an `AKITAH03` frame,
-use the ternary term for unfiltered D128/31/0 draws with `count >= 1024`;
-all remaining draws use the position term. `header_bytes` is 24 for `AKITAH03`,
-16 for `AKITAH02`, and zero for an unversioned quartet-only tape. Compute
-products, ceiling division and sums with
-checked arithmetic, rejecting configurations whose bound cannot be represented.
+for unfiltered D64/31/10 draws with `count >= 1024`, and the ternary term only
+for unfiltered D128/31/0 draws with `count >= 1024`; all remaining draws use the
+position term. The 16 bytes cover the two tape lengths. Compute products, ceiling
+division and sums with checked arithmetic, rejecting configurations whose bound
+cannot be represented.
 
 An unfiltered stream has `candidates == count`. An operator-norm stream has a
 larger candidate pool: every in-range candidate examined consumes a position
@@ -590,28 +588,18 @@ never reads or consumes that session. Position advice is consumed serially, even
 in a parallel build. Every used position, quartet or ternary group is authenticated against the
 squeezed message; advice does not replace transcript randomness or norm checks.
 
-The versioned frame is the concatenation of:
+The frame is the concatenation of:
 
 | Bytes | Meaning |
 | --- | --- |
-| 0..8 | ASCII `AKITAH02` |
-| 8..16 | Little-endian `u64` byte length of the quartet section |
-| Next indicated bytes | Quartet tape; length MUST be a multiple of 8 |
-| Remaining bytes | Position tape; length MUST be a multiple of 8 |
-
-`AKITAH03` adds a separate ternary tape:
-
-| Bytes | Meaning |
-| --- | --- |
-| 0..8 | ASCII `AKITAH03` |
-| 8..16 | Little-endian `u64` byte length of the quartet section |
-| 16..24 | Little-endian `u64` byte length of the ternary section |
-| Next quartet-section bytes | Existing quartet tape |
+| 0..8 | Little-endian `u64` byte length of the quartet section |
+| 8..16 | Little-endian `u64` byte length of the ternary section |
+| Next quartet-section bytes | Quartet tape |
 | Next ternary-section bytes | Ternary tape |
-| Remaining bytes | Existing position tape |
+| Remaining bytes | Position tape |
 
-Each section length MUST be a multiple of eight. An unversioned input remains
-a quartet-only tape. Any versioned tape section can be empty. After successful
+Each section length MUST be a multiple of eight, and any section can be empty. While a session is installed, every fold
+draw consumes advice from the tape its route selects. After successful
 verification, `finish_checked_hints` MUST succeed: it rejects unused words in every tape and
 clears the session. On verification failure, `abort_checked_hints` clears the
 session without authenticating the remaining advice.
@@ -629,7 +617,7 @@ follow draw order, then candidate index. Validation checks
 the magnitude counts, exact combined position rank, and all 41 transcript sign
 bits. These draws consume no position records.
 
-In `AKITAH03`, ternary advice is selected for unfiltered D128/31/0 batches of
+Ternary advice is selected for unfiltered D128/31/0 batches of
 at least 1024 challenges. Each challenge consumes four little-endian `u64`
 words. For group `g` in `0..22`, its ten-bit code is
 `sum over j in 0..6 of ((c[6*g+j] + 1) * 3^j)`, where coefficients beyond
@@ -641,7 +629,7 @@ their combined colex rank, and all 31 transcript sign bits against the unchanged
 129-bit candidate stream. These draws consume no position records. Scalar
 evaluation uses 22 tables of 729 entries, retaining any subring embedding stride.
 
-Other draws in a versioned session use position advice. Let
+Other draws in a session use position advice. Let
 `a = count_pm1`, `b = count_pm2`, and `w = a + b`. Each in-range candidate
 examined by the serial decoder consumes `ceil(w / 4)` little-endian `u64` words:
 

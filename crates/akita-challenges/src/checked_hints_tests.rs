@@ -1,3 +1,4 @@
+use crate::checked_hint::frame;
 use crate::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, SparseChallengeConfig};
 use akita_error::AkitaError;
 use jolt_field::{Prime128Offset6A23801F as F, Ring};
@@ -34,8 +35,8 @@ fn message() -> Message {
 #[test]
 fn checked_hints_match_frozen_field_values_with_unaligned_ingress() {
     let mut hints = vec![0];
-    hints.extend_from_slice(HINTS);
-    crate::install_checked_hints(&hints[1..], HINTS.len()).unwrap();
+    hints.extend(frame(HINTS, &[], &[]));
+    crate::install_checked_hints(&hints[1..], hints.len() - 1).unwrap();
     let sampled = message()
         .draw_fold_challenges(&family(), 1024, 1)
         .unwrap()
@@ -64,11 +65,12 @@ fn checked_hints_match_frozen_field_values_with_unaligned_ingress() {
 }
 #[test]
 fn checked_hints_reject_another_valid_challenge_at_the_wrong_transcript_slot() {
-    let mut hints = HINTS.to_vec();
-    let first = hints[..32].to_vec();
-    hints.copy_within(32..64, 0);
-    hints[32..64].copy_from_slice(&first);
-    crate::install_checked_hints(&hints, HINTS.len()).unwrap();
+    let mut tape = HINTS.to_vec();
+    let first = tape[..32].to_vec();
+    tape.copy_within(32..64, 0);
+    tape[32..64].copy_from_slice(&first);
+    let hints = frame(&tape, &[], &[]);
+    crate::install_checked_hints(&hints, hints.len()).unwrap();
     assert!(message().draw_fold_challenges(&family(), 1024, 1).is_err());
     crate::abort_checked_hints().unwrap();
 }
@@ -77,22 +79,24 @@ fn checked_hints_reject_another_valid_challenge_at_the_wrong_transcript_slot() {
 fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
     let family = family();
     let draw = || message().draw_fold_challenges(&family, 1024, 1);
+    let hints = frame(HINTS, &[], &[]);
     for _ in 0..2 {
-        crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
+        crate::install_checked_hints(&hints, hints.len()).unwrap();
         assert!(draw().unwrap().is_some());
         crate::finish_checked_hints().unwrap();
         assert!(!crate::checked_hint::active());
     }
 
     // A malformed draw must stay rejected; abort only releases its session.
-    let mut malformed = HINTS.to_vec();
-    malformed[..8].fill(0xff);
-    crate::install_checked_hints(&malformed, HINTS.len()).unwrap();
+    let mut tape = HINTS.to_vec();
+    tape[..8].fill(0xff);
+    let malformed = frame(&tape, &[], &[]);
+    crate::install_checked_hints(&malformed, malformed.len()).unwrap();
     assert!(draw().is_err());
     crate::abort_checked_hints().unwrap();
     assert!(!crate::checked_hint::active());
 
-    crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
+    crate::install_checked_hints(&hints, hints.len()).unwrap();
     assert!(draw().unwrap().is_some());
     crate::finish_checked_hints().unwrap();
     // Unhinted decoding must no longer select an exhausted hint tape.
@@ -101,10 +105,11 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
 
 #[test]
 fn finishing_an_incomplete_hint_session_rejects_and_clears_it() {
-    crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
+    let hints = frame(HINTS, &[], &[]);
+    crate::install_checked_hints(&hints, hints.len()).unwrap();
     assert!(crate::finish_checked_hints().is_err());
     assert!(!crate::checked_hint::active());
-    crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
+    crate::install_checked_hints(&hints, hints.len()).unwrap();
     assert!(message()
         .draw_fold_challenges(&family(), 1024, 1)
         .unwrap()
@@ -132,19 +137,21 @@ fn checked_hints_match_for_aligned_and_unaligned_messages_and_tapes() {
     #[repr(align(8))]
     struct Aligned<const N: usize>([u8; N]);
     let mut message = Aligned([0u8; MESSAGE.len() + 8]);
-    let mut hints = Aligned([0u8; HINTS.len() + 8]);
+    let mut hints = Aligned([0u8; HINTS.len() + 24]);
+    let framed = frame(HINTS, &[], &[]);
     let family = family();
     let stream = family.stream(1024).unwrap();
     let expected = stream.decode(MESSAGE).unwrap().unwrap();
     for offset in [0, 1] {
         message.0[offset..offset + MESSAGE.len()].copy_from_slice(MESSAGE);
-        hints.0[offset..offset + HINTS.len()].copy_from_slice(HINTS);
+        hints.0[offset..offset + framed.len()].copy_from_slice(&framed);
         let bytes = &message.0[offset..offset + MESSAGE.len()];
         assert_eq!(
             bytes.as_ptr().align_offset(8),
             if offset == 0 { 0 } else { 7 }
         );
-        crate::install_checked_hints(&hints.0[offset..offset + HINTS.len()], HINTS.len()).unwrap();
+        crate::install_checked_hints(&hints.0[offset..offset + framed.len()], framed.len())
+            .unwrap();
         let packed = stream.decode_checked_hints(bytes).unwrap();
         let actual = crate::Challenges::from_checked_quartets(packed, 1024, 1).unwrap();
         assert_eq!(actual.as_slice(), expected);
