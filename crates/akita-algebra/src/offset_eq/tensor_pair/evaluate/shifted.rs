@@ -8,7 +8,7 @@
 //! and the shared evaluation of families with matching stream geometry.
 
 use super::stream::{eval_tensor_seed_batch, EqPairSeed};
-use super::{charge_work, checked_axis_offset};
+use super::{basis_eval_at_index, charge_work, checked_axis_offset};
 use crate::Field;
 use akita_error::AkitaError;
 
@@ -36,35 +36,32 @@ pub(super) fn try_eval<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL
     {
         return Ok(None);
     }
-    charge_work(work, (1usize << lb) + (1usize << rb) + seeds.len())?;
     // Validate before shifting: normalization must not hide address overflow.
     for seed in seeds {
         checked_axis_offset(seed.left_offset, left_stride, len - 1, "left")?;
         checked_axis_offset(seed.right_offset, right_stride, len - 1, "right")?;
     }
-    // These bounded tables are the low-coordinate MLE contraction, independent
-    // of the length of the shared unit axis. No data survive this evaluation.
-    let low_table = |point: &[F], monomial: bool| {
-        let mut values = vec![F::one()];
-        for &r in point {
-            let n = values.len();
-            values.resize(n * 2, F::zero());
-            for i in 0..n {
-                let one = values[i] * r;
-                if !monomial {
-                    values[i] -= one;
-                }
-                values[n + i] = one;
-            }
-        }
-        values
-    };
-    let low_left = low_table(&left[..lb], LEFT_MONOMIAL);
-    let low_right = low_table(&right[..rb], RIGHT_MONOMIAL);
-    let mut seeds = seeds.to_vec();
+    let left_domain = 1usize << left.len();
+    let right_domain = 1usize << right.len();
+    let seeds = seeds
+        .iter()
+        .filter(|seed| seed.left_offset < left_domain && seed.right_offset < right_domain);
+    let seed_count = seeds.clone().count();
+    if seed_count == 0 {
+        return Ok(Some(F::zero()));
+    }
+    // Each seed needs only its fixed low coordinates, not a full 2^k table.
+    // Eligibility bounds this product by MAX_SEEDS * (2 * MAX_LOW_BITS + 1).
+    charge_work(work, seed_count * (lb + rb + 1))?;
+    let mut seeds = seeds.copied().collect::<Vec<_>>();
     for seed in &mut seeds {
-        seed.weight *= low_left[seed.left_offset & (low_left.len() - 1)]
-            * low_right[seed.right_offset & (low_right.len() - 1)];
+        seed.weight *= basis_eval_at_index::<F, LEFT_MONOMIAL>(
+            &left[..lb],
+            seed.left_offset & ((1usize << lb) - 1),
+        ) * basis_eval_at_index::<F, RIGHT_MONOMIAL>(
+            &right[..rb],
+            seed.right_offset & ((1usize << rb) - 1),
+        );
         seed.left_offset >>= lb;
         seed.right_offset >>= rb;
     }
@@ -339,6 +336,60 @@ mod tests {
         assert!(
             work < 10_000,
             "low coordinates must leave the carry state: {work}"
+        );
+    }
+
+    #[test]
+    fn fully_clipped_batches_do_not_build_low_tables() {
+        use super::super::eval_unfactored_tensor_families;
+        let point = [F::from_u64(2); 20];
+        let families = (128..32896)
+            .map(|len| {
+                EqPairTensorFamily::new(
+                    1 << 20,
+                    0,
+                    F::one(),
+                    vec![EqPairTensorAxis::unit(len, 12288, 4096)],
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut work = 0;
+        let actual = eval_unfactored_tensor_families::<F, false, false>(
+            &point, &point, &families, &mut work,
+        )
+        .unwrap();
+        assert_eq!(actual, F::zero());
+        assert!(
+            work < 100_000,
+            "clipped seeds must not build low tables: {work}"
+        );
+    }
+
+    #[test]
+    fn tiny_live_batches_do_not_pay_for_exponential_tables() {
+        use super::super::eval_unfactored_tensor_families;
+        let point = [F::zero(); 20];
+        let families = (128..32896)
+            .map(|len| {
+                EqPairTensorFamily::new(
+                    0,
+                    0,
+                    F::one(),
+                    vec![EqPairTensorAxis::unit(len, 12288, 4096)],
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut work = 0;
+        let actual = eval_unfactored_tensor_families::<F, false, false>(
+            &point, &point, &families, &mut work,
+        )
+        .unwrap();
+        assert_eq!(actual, F::from_u64(families.len() as u64));
+        assert!(
+            work < 4_000_000,
+            "low-bit work must scale with live seeds: {work}"
         );
     }
 }
