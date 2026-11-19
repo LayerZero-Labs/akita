@@ -759,6 +759,28 @@ pub(crate) unsafe fn pointwise_dot_acc_i32(
     }
 }
 
+/// Montgomery reduction of four `i64` sums, lanes 0..2 in `low_sum` and
+/// 2..4 in `high_sum`: `sum * 2^-32 mod p` in `(-p, p)`.
+///
+/// With `m = sum * pinv mod 2^32` read as signed, `sum - m * p` is a multiple
+/// of `2^32` below `|sum| + 2^31 p` in magnitude. For `|sum| < 2^61` and
+/// `p < 2^30` that fits `i64` and its high word is below `2^30` in
+/// magnitude, which the centered reduction accepts.
+#[inline(always)]
+unsafe fn mont_reduce_wide_4x_i32(
+    low_sum: int64x2_t,
+    high_sum: int64x2_t,
+    m: Modulus,
+    p_d: int32x2_t,
+    pinv_d: int32x2_t,
+) -> int32x4_t {
+    let low_correction = vmull_s32(vmul_s32(vmovn_s64(low_sum), pinv_d), p_d);
+    let high_correction = vmull_s32(vmul_s32(vmovn_s64(high_sum), pinv_d), p_d);
+    let low = vshrn_n_s64::<32>(vsubq_s64(low_sum, low_correction));
+    let high = vshrn_n_s64::<32>(vsubq_s64(high_sum, high_correction));
+    centered_reduce_4x_i32(vcombine_s32(low, high), m.p, m.reciprocal)
+}
+
 #[inline(always)]
 unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     acc: *mut i32,
@@ -775,11 +797,7 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     let pinv_d = vdup_n_s32(pinv);
     let mut i = 0usize;
     let finish = |i: usize, low_sum: int64x2_t, high_sum: int64x2_t| {
-        let low_correction = vmull_s32(vmul_s32(vmovn_s64(low_sum), pinv_d), p_d);
-        let high_correction = vmull_s32(vmul_s32(vmovn_s64(high_sum), pinv_d), p_d);
-        let low = vshrn_n_s64::<32>(vsubq_s64(low_sum, low_correction));
-        let high = vshrn_n_s64::<32>(vsubq_s64(high_sum, high_correction));
-        let batch = centered_reduce_4x_i32(vcombine_s32(low, high), m.p, m.reciprocal);
+        let batch = mont_reduce_wide_4x_i32(low_sum, high_sum, m, p_d, pinv_d);
         let accumulator = vld1q_s32(acc.add(i));
         vst1q_s32(
             acc.add(i),
@@ -832,6 +850,138 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
             *acc.add(i) = prime.reduce_range(sum).raw();
             i += 1;
         }
+    }
+}
+
+/// One pass of [`crate::ntt::tile_dot::accumulate`] over a tile of columns.
+///
+/// For every lane group, limb and column, the twelve products of the key
+/// vectors with the column's input vectors are summed in `i64` lanes; the
+/// sum's high word times `weight = 2^32 mod p` plus its low word, congruent
+/// to the sum, is added to the column's `i64` sums.
+///
+/// # Safety
+///
+/// `key` must be valid for `groups * limbs * 12` four-lane vectors, every
+/// pointer of `inputs` for twelve runs of `groups` vectors `input_stride`
+/// words apart, and the pointer of `sums` at the same index for
+/// `groups * limbs` exclusive four-lane `i64` vectors; the two slices must
+/// have one length. Key lanes must lie in `[-p/2, p/2]`
+/// and input lanes in `[-p, p]` for a prime `p < 2^30`, which keeps every
+/// sum of twelve products below `2^63`.
+pub(crate) unsafe fn tile_dot_acc_i32(
+    sums: &[*mut i64],
+    key: *const i32,
+    inputs: &[*const i32],
+    input_stride: usize,
+    limbs: usize,
+    groups: usize,
+    weight: i32,
+) {
+    tile_dot_acc_i32_passes(
+        sums,
+        key,
+        inputs,
+        input_stride,
+        limbs,
+        groups,
+        vdup_n_s32(weight),
+    );
+}
+
+// Out of line with the weight as a vector argument: inlined beside the
+// broadcast, the fold's widening multiply-add is rewritten as a 64-bit
+// multiply by a sign-extended scalar, which has no vector form and is done
+// lane by lane in general registers. Columns are reached through their own
+// pointers rather than a stride so no prefetch runs past the last column.
+//
+// A column's twelve input vectors of one lane group stay in registers while
+// the limbs' key vectors stream past them in memory order. The other way
+// round (the key in registers, every limb re-reading the inputs from twelve
+// rings) took a third more cycles per product on both core types. Each half
+// keeps two partial sums, which shortens the multiply-accumulate chains.
+#[inline(never)]
+unsafe fn tile_dot_acc_i32_passes(
+    sums: &[*mut i64],
+    key: *const i32,
+    inputs: &[*const i32],
+    input_stride: usize,
+    limbs: usize,
+    groups: usize,
+    weight: int32x2_t,
+) {
+    const SLOTS: usize = crate::ntt::tile_dot::SLOTS;
+    const _: () = assert!(SLOTS.is_multiple_of(2));
+    debug_assert_eq!(sums.len(), inputs.len());
+    for group in 0..groups {
+        let group_key = key.add(group * limbs * SLOTS * 4);
+        for (&sums, &input) in sums.iter().zip(inputs) {
+            let input = input.add(group * 4);
+            // Both operands as half vectors: with whole input vectors the
+            // high halves are hoisted out of the limb loop anyway, and every
+            // key vector then pays an extract to meet them.
+            let input_halves: [(int32x2_t, int32x2_t); SLOTS] = core::array::from_fn(|slot| {
+                let vector = vld1q_s32(input.add(slot * input_stride));
+                (vget_low_s32(vector), vget_high_s32(vector))
+            });
+            for limb in 0..limbs {
+                let key = group_key.add(limb * SLOTS * 4);
+                let mut low = [vdupq_n_s64(0); 2];
+                let mut high = [vdupq_n_s64(0); 2];
+                for pair in 0..SLOTS / 2 {
+                    for side in 0..2 {
+                        let slot = 2 * pair + side;
+                        let (input_low, input_high) = input_halves[slot];
+                        low[side] = vmlal_s32(low[side], vld1_s32(key.add(slot * 4)), input_low);
+                        high[side] =
+                            vmlal_s32(high[side], vld1_s32(key.add(slot * 4 + 2)), input_high);
+                    }
+                }
+                let low = vaddq_s64(low[0], low[1]);
+                let high = vaddq_s64(high[0], high[1]);
+                let sums = sums.add((group * limbs + limb) * 4);
+                let low_words = vmovl_u32(vmovn_u64(vreinterpretq_u64_s64(low)));
+                let high_words = vmovl_u32(vmovn_u64(vreinterpretq_u64_s64(high)));
+                let low_sums = vaddq_s64(vld1q_s64(sums), vreinterpretq_s64_u64(low_words));
+                let high_sums =
+                    vaddq_s64(vld1q_s64(sums.add(2)), vreinterpretq_s64_u64(high_words));
+                vst1q_s64(sums, vmlal_s32(low_sums, vshrn_n_s64::<32>(low), weight));
+                vst1q_s64(
+                    sums.add(2),
+                    vmlal_s32(high_sums, vshrn_n_s64::<32>(high), weight),
+                );
+            }
+        }
+    }
+}
+
+/// [`crate::ntt::tile_dot::reduce`] for one limb: `out[4g..4g + 4]` is the
+/// Montgomery residue, in `(-p, p)`, of the four `i64` sums at
+/// `sums + g * stride`.
+///
+/// # Safety
+///
+/// `sums` must be valid for four `i64` lanes at every `g * stride` with
+/// `g < groups`, each below `2^61` in magnitude, and `out` for `4 * groups`
+/// writable `i32` lanes. The modulus must satisfy `3 <= p < 2^30`.
+pub(crate) unsafe fn tile_dot_reduce_i32(
+    sums: *const i64,
+    stride: usize,
+    out: *mut i32,
+    groups: usize,
+    p: i32,
+    pinv: i32,
+) {
+    let m = Modulus::new(p);
+    let p_d = vdup_n_s32(p);
+    let pinv_d = vdup_n_s32(pinv);
+    for group in 0..groups {
+        let low_pair = vld1q_s64(sums.add(group * stride));
+        let high_pair = vld1q_s64(sums.add(group * stride + 2));
+        vst1q_s32(
+            out.add(group * 4),
+            mont_reduce_wide_4x_i32(low_pair, high_pair, m, p_d, pinv_d),
+        );
     }
 }
 
