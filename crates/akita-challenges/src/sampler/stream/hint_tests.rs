@@ -30,7 +30,7 @@ fn position_tape(
     )
     .unwrap();
     let decoder = CandidateDecoder {
-        position_hints: false,
+        advice: Advice::Off,
         stream,
         message,
         binomials: &binomials,

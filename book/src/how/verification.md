@@ -276,6 +276,8 @@ commitment, direct witness, or transcript input must be rejected with
 ### Checked challenge advice
 
 Recursive verification can use untrusted advice for sparse challenge decoding.
+A host produces it with `akita_challenges::record_checked_hints(verify)`, which
+runs native verification once and returns the frame its fold draws consume.
 Install it with `akita_challenges::install_checked_hints(bytes, max_bytes)`.
 Choose `max_bytes` from trusted schedule configuration or an application memory
 budget, independently of the supplied advice's length or header. The bound

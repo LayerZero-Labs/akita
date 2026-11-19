@@ -604,6 +604,15 @@ verification, `finish_checked_hints` MUST succeed: it rejects unused words in ev
 clears the session. On verification failure, `abort_checked_hints` clears the
 session without authenticating the remaining advice.
 
+`record_checked_hints(verify)` produces a frame by running native verification
+on the current thread. It records at the points where an installed session
+consumes advice: quartet and ternary codes after a packed draw is decoded, and
+one position record per in-range candidate the serial decoder examines. It
+returns `verify`'s result and the frame; the frame is meaningful only when that
+verification succeeds. The closure must run only verification, because every
+fold draw on the thread is recorded, and recording cannot start while another
+session is active.
+
 Quartet advice is selected for unfiltered D64 draws with 31 coefficients of
 magnitude 1, 10 of magnitude 2, and at least 1024 challenges. Each challenge
 consumes four little-endian `u64` words. Each word packs four 10-bit quartet

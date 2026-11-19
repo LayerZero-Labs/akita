@@ -1,3 +1,4 @@
+use crate::SparseChallenge;
 use akita_error::AkitaError;
 use std::{borrow::Cow, cell::RefCell};
 pub(crate) mod ternary;
@@ -7,6 +8,9 @@ mod table_tests;
 
 #[cfg(test)]
 mod allocation_tests;
+
+#[cfg(test)]
+mod record_tests;
 
 pub(crate) enum HintTape {
     Quartets,
@@ -52,8 +56,27 @@ struct Hints {
     ternary: Tape,
     positions: Tape,
 }
+/// Little-endian tape bytes recorded in the order verification consumes them.
+#[derive(Default)]
+struct Recording {
+    quartets: Vec<u8>,
+    ternary: Vec<u8>,
+    positions: Vec<u8>,
+}
+enum Session {
+    Verify(Hints),
+    Record(Recording),
+}
 thread_local! {
-    static HINTS: RefCell<Option<Hints>> = const { RefCell::new(None) };
+    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+}
+
+/// What fold drawing does with checked advice on the current thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Advice {
+    Off,
+    Verify,
+    Record,
 }
 
 /// Install untrusted hints within a trusted verifier resource budget.
@@ -83,7 +106,7 @@ thread_local! {
 /// length and framing checks precede all tape allocation; failed installation
 /// leaves the previous session unchanged.
 pub fn install_checked_hints(bytes: &[u8], max_bytes: usize) -> Result<(), AkitaError> {
-    HINTS.with(|state| {
+    SESSION.with(|state| {
         let mut state = state
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidProof)?;
@@ -112,24 +135,26 @@ pub fn install_checked_hints(bytes: &[u8], max_bytes: usize) -> Result<(), Akita
         {
             return Err(AkitaError::InvalidProof);
         }
-        *state = Some(Hints {
+        *state = Some(Session::Verify(Hints {
             quartets: Tape::new(quartets)?,
             ternary: Tape::new(ternary)?,
             positions: Tape::new(positions)?,
-        });
+        }));
         Ok(())
     })
 }
 /// Remove installed hints and reject unless every hint was consumed.
 /// An incomplete session is cleared even when this returns an error.
 pub fn finish_checked_hints() -> Result<(), AkitaError> {
-    HINTS.with(|state| {
-        let hints = state
+    SESSION.with(|state| {
+        let session = state
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidProof)?
             .take();
-        match hints {
-            Some(h) if h.quartets.finished() && h.ternary.finished() && h.positions.finished() => {
+        match session {
+            Some(Session::Verify(h))
+                if h.quartets.finished() && h.ternary.finished() && h.positions.finished() =>
+            {
                 Ok(())
             }
             _ => Err(AkitaError::InvalidProof),
@@ -139,7 +164,7 @@ pub fn finish_checked_hints() -> Result<(), AkitaError> {
 /// Discard hints after a failed verification. This does not authenticate the
 /// hints or make the failed proof valid; it only releases the thread's session.
 pub fn abort_checked_hints() -> Result<(), AkitaError> {
-    HINTS.with(|state| {
+    SESSION.with(|state| {
         state
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidProof)?
@@ -148,12 +173,103 @@ pub fn abort_checked_hints() -> Result<(), AkitaError> {
     })
 }
 
-pub(crate) fn active() -> bool {
-    HINTS.with(|s| s.borrow().is_some())
+/// Run native verification and record the checked advice its fold draws consume.
+///
+/// Returns `verify`'s result and a frame for [`install_checked_hints`] that
+/// replays the same draws in a verifier, typically a recursion guest. Every fold
+/// draw on the current thread inside `verify` is recorded in draw order, so run
+/// only verification there: prover draws would add records that verification
+/// never consumes. The frame is meaningful only when verification succeeds.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidInput`] if a checked-advice session is already
+/// active on this thread, or if `verify` ends the recording session.
+pub fn record_checked_hints<T>(verify: impl FnOnce() -> T) -> Result<(T, Vec<u8>), AkitaError> {
+    SESSION.with(|state| {
+        let mut state = state
+            .try_borrow_mut()
+            .map_err(|_| AkitaError::InvalidInput("checked advice session is busy".into()))?;
+        if state.is_some() {
+            return Err(AkitaError::InvalidInput(
+                "a checked advice session is already active".into(),
+            ));
+        }
+        *state = Some(Session::Record(Recording::default()));
+        Ok(())
+    })?;
+    // Release the session even if `verify` unwinds.
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = SESSION.try_with(|state| state.try_borrow_mut().map(|mut s| s.take()));
+        }
+    }
+    let _release = Release;
+    let value = verify();
+    let session = SESSION.with(|state| {
+        state
+            .try_borrow_mut()
+            .map(|mut s| s.take())
+            .map_err(|_| AkitaError::InvalidInput("checked advice session is busy".into()))
+    })?;
+    match session {
+        Some(Session::Record(r)) => Ok((value, frame(&r.quartets, &r.ternary, &r.positions))),
+        _ => Err(AkitaError::InvalidInput(
+            "the checked advice recording session ended early".into(),
+        )),
+    }
 }
 
-/// Encode a frame from raw tape bytes, as an external advice producer would.
-#[cfg(test)]
+pub(crate) fn mode() -> Advice {
+    SESSION.with(|s| match &*s.borrow() {
+        None => Advice::Off,
+        Some(Session::Verify(_)) => Advice::Verify,
+        Some(Session::Record(_)) => Advice::Record,
+    })
+}
+
+/// Append words to a recording session's tape as little-endian bytes.
+pub(crate) fn record(kind: HintTape, words: &[u64]) -> Result<(), AkitaError> {
+    SESSION.with(|state| {
+        let mut state = state
+            .try_borrow_mut()
+            .map_err(|_| AkitaError::Internal("checked advice session is busy".into()))?;
+        let Some(Session::Record(recording)) = state.as_mut() else {
+            return Err(AkitaError::Internal(
+                "no checked advice recording session".into(),
+            ));
+        };
+        let tape = match kind {
+            HintTape::Quartets => &mut recording.quartets,
+            HintTape::Ternary => &mut recording.ternary,
+            HintTape::Positions => &mut recording.positions,
+        };
+        tape.try_reserve(words.len().saturating_mul(8))
+            .map_err(|_| AkitaError::InvalidInput("checked advice allocation failed".into()))?;
+        tape.extend(words.iter().flat_map(|word| word.to_le_bytes()));
+        Ok(())
+    })
+}
+
+/// Pack a D64/31/10 challenge into the four quartet-code words [`validate`] checks.
+pub(crate) fn encode_quartets(challenge: &SparseChallenge) -> Result<[u64; 4], AkitaError> {
+    let mut digits = [2u64; 64];
+    for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+        *digits
+            .get_mut(position as usize)
+            .ok_or_else(|| AkitaError::Internal("quartet position out of range".into()))? =
+            (i64::from(coefficient) + 2) as u64;
+    }
+    let mut words = [0u64; 4];
+    for (quartet, digits) in digits.chunks_exact(4).enumerate() {
+        let code = digits.iter().rev().fold(0, |code, &digit| code * 5 + digit);
+        words[quartet / 4] |= code << (10 * (quartet % 4));
+    }
+    Ok(words)
+}
+
+/// Concatenate tape bytes into the frame [`install_checked_hints`] accepts.
 pub(crate) fn frame(quartets: &[u8], ternary: &[u8], positions: &[u8]) -> Vec<u8> {
     [
         &(quartets.len() as u64).to_le_bytes(),
@@ -172,11 +288,13 @@ pub(crate) fn take<T>(
     count: usize,
     decode: impl FnOnce(&[u64]) -> Result<T, AkitaError>,
 ) -> Result<T, AkitaError> {
-    HINTS.with(|state| {
+    SESSION.with(|state| {
         let mut state = state
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidProof)?;
-        let hints = state.as_mut().ok_or(AkitaError::InvalidProof)?;
+        let Some(Session::Verify(hints)) = state.as_mut() else {
+            return Err(AkitaError::InvalidProof);
+        };
         let (tape, words) = match kind {
             HintTape::Quartets => (
                 &mut hints.quartets,

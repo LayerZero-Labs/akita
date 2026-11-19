@@ -84,7 +84,7 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
         crate::install_checked_hints(&hints, hints.len()).unwrap();
         assert!(draw().unwrap().is_some());
         crate::finish_checked_hints().unwrap();
-        assert!(!crate::checked_hint::active());
+        assert!(crate::checked_hint::mode() == crate::checked_hint::Advice::Off);
     }
 
     // A malformed draw must stay rejected; abort only releases its session.
@@ -94,7 +94,7 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
     crate::install_checked_hints(&malformed, malformed.len()).unwrap();
     assert!(draw().is_err());
     crate::abort_checked_hints().unwrap();
-    assert!(!crate::checked_hint::active());
+    assert!(crate::checked_hint::mode() == crate::checked_hint::Advice::Off);
 
     crate::install_checked_hints(&hints, hints.len()).unwrap();
     assert!(draw().unwrap().is_some());
@@ -108,7 +108,7 @@ fn finishing_an_incomplete_hint_session_rejects_and_clears_it() {
     let hints = frame(HINTS, &[], &[]);
     crate::install_checked_hints(&hints, hints.len()).unwrap();
     assert!(crate::finish_checked_hints().is_err());
-    assert!(!crate::checked_hint::active());
+    assert!(crate::checked_hint::mode() == crate::checked_hint::Advice::Off);
     crate::install_checked_hints(&hints, hints.len()).unwrap();
     assert!(message()
         .draw_fold_challenges(&family(), 1024, 1)

@@ -76,13 +76,13 @@ fn with_allocation_budget<T>(allowed: usize, f: impl FnOnce() -> T) -> (T, usize
 
 #[test]
 fn oversize_and_occupied_sessions_reject_without_allocating() {
-    assert!(!active());
+    assert!(mode() == Advice::Off);
     let bytes = frame(&[7; 64], &[], &[]);
     let (result, attempts) =
         with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len() - 1));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
-    assert!(!active());
+    assert!(mode() == Advice::Off);
 
     // The exact trusted bound is accepted; a rejected second install must not
     // allocate, replace the tape, or change its consumption cursor.
@@ -101,13 +101,13 @@ fn oversize_and_occupied_sessions_reject_without_allocating() {
 
 #[test]
 fn malformed_position_section_rejects_before_copying_quartets() {
-    assert!(!active());
+    assert!(mode() == Advice::Off);
     let frame = frame(&[0; 8], &[], &[0; 1]);
     let (result, attempts) =
         with_allocation_budget(0, || install_checked_hints(&frame, frame.len()));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
-    assert!(!active());
+    assert!(mode() == Advice::Off);
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn tape_allocation_failures_leave_no_partial_session() {
                 with_allocation_budget(allowed, || install_checked_hints(bytes, bytes.len()));
             assert!(result.is_err());
             assert_eq!(attempts, allowed + 1);
-            assert!(!active());
+            assert!(mode() == Advice::Off);
             install_checked_hints(bytes, bytes.len()).unwrap();
             for (tape, expected) in [
                 (HintTape::Quartets, &[1, 2, 3, 4][..]),
