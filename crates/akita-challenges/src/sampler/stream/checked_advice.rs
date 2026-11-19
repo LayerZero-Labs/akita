@@ -4,7 +4,8 @@ use super::{read_bits, SparseChallengeStream};
 use akita_error::AkitaError;
 
 impl SparseChallengeStream {
-    /// Shared eligibility rule for quartet advice and host position-tape capture.
+    /// Eligibility rule for quartet advice. Capture emits no rank lines for
+    /// these draws, since they consume no position records.
     pub(crate) const fn uses_checked_quartets(&self) -> bool {
         self.count >= 1024
             && self.shell.ring_d == 64
@@ -51,6 +52,8 @@ impl SparseChallengeStream {
         )
     }
 
+    /// Eligibility rule for ternary advice. Capture emits no rank lines for
+    /// these draws, since they consume no position records.
     pub(crate) const fn uses_checked_ternary(&self) -> bool {
         self.count >= 1024
             && self.shell.ring_d == 128
