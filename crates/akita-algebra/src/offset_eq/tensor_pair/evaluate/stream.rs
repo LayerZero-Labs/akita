@@ -155,6 +155,18 @@ pub(super) fn eval_tensor_seed_batch<
         }
     }
 
+    if let Some(value) = super::shifted::try_eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+        left_challenges,
+        right_challenges,
+        left_stride,
+        right_stride,
+        len,
+        seeds,
+        work,
+    )? {
+        return Ok(value);
+    }
+
     let left_domain = 1usize << left_challenges.len();
     let right_domain = 1usize << right_challenges.len();
     let block_bucket_count = usize::BITS as usize - len.leading_zeros() as usize;

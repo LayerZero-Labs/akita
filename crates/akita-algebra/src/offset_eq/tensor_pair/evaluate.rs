@@ -70,15 +70,6 @@ pub(super) fn eval_unfactored_tensor_families<
             acc += value;
             continue;
         }
-        if let Some(value) = shifted::try_eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
-            left_challenges,
-            right_challenges,
-            family,
-            work,
-        )? {
-            acc += value;
-            continue;
-        }
         charge_work(work, family.axes.len())?;
         charge_work(work, 1)?;
         let recurrence_axes = family

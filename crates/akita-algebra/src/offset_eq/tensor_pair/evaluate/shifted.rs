@@ -4,80 +4,47 @@
 //! stay fixed along the shared axis:
 //! eq(r, offset + 2^k * s * i) = eq(r[..k], offset mod 2^k)
 //!                              * eq(r[k..], floor(offset / 2^k) + s * i).
-//! Eliminating these low coordinates avoids retaining a shifted copy of every
-//! shared index bit in the carry state. Residual axes keep their exact weights.
+//! Normalize only collected stream batches, preserving multi-axis recurrences
+//! and the shared evaluation of families with matching stream geometry.
 
-use super::stream::{collect_tensor_family_seeds, eval_tensor_seed_batch};
-use super::{charge_work, EqPairTensorFamily, EqPairTensorWeights};
+use super::stream::{eval_tensor_seed_batch, EqPairSeed};
+use super::{charge_work, checked_axis_offset};
 use crate::Field;
 use akita_error::AkitaError;
-use std::collections::BTreeMap;
 
-const MAX_RESIDUAL_TERMS: usize = 65536;
+const MAX_SEEDS: usize = 65536;
 const MAX_LOW_BITS: usize = 12;
 
 pub(super) fn try_eval<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left: &[F],
     right: &[F],
-    family: &EqPairTensorFamily<F>,
+    left_stride: usize,
+    right_stride: usize,
+    len: usize,
+    seeds: &[EqPairSeed<F>],
     work: &mut usize,
 ) -> Result<Option<F>, AkitaError> {
-    let candidate = family
-        .axes
-        .iter()
-        .enumerate()
-        .filter(|(index, axis)| {
-            if axis.len < 128
-                || !matches!(axis.weights, EqPairTensorWeights::Unit)
-                || axis.left_stride == 0
-                || axis.right_stride == 0
-            {
-                return false;
-            }
-            let lb = axis.left_stride.trailing_zeros() as usize;
-            let rb = axis.right_stride.trailing_zeros() as usize;
-            if (lb == 0 && rb == 0 && family.axes.len() == 1)
-                || lb > MAX_LOW_BITS
-                || rb > MAX_LOW_BITS
-                || lb > left.len()
-                || rb > right.len()
-            {
-                return false;
-            }
-            family
-                .axes
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| i != index)
-                .try_fold(1usize, |n, (_, axis)| n.checked_mul(axis.len))
-                .is_some_and(|n| n <= MAX_RESIDUAL_TERMS)
-        })
-        .max_by_key(|(_, axis)| axis.len);
-    let Some((index, axis)) = candidate else {
+    let lb = left_stride.trailing_zeros() as usize;
+    let rb = right_stride.trailing_zeros() as usize;
+    if len < 128
+        || seeds.len() > MAX_SEEDS
+        || (lb == 0 && rb == 0)
+        || lb > MAX_LOW_BITS
+        || rb > MAX_LOW_BITS
+        || lb > left.len()
+        || rb > right.len()
+    {
         return Ok(None);
-    };
-    let lb = axis.left_stride.trailing_zeros() as usize;
-    let rb = axis.right_stride.trailing_zeros() as usize;
-    let mut batches = BTreeMap::new();
-    let mut scalars = Vec::new();
-    collect_tensor_family_seeds(
-        family,
-        Some(index),
-        0,
-        family.left_offset,
-        family.right_offset,
-        family.scalar,
-        &mut batches,
-        &mut scalars,
-        work,
-    )?;
-    debug_assert!(scalars.is_empty());
-    let Some(mut seeds) = batches.remove(&(axis.left_stride, axis.right_stride, axis.len)) else {
-        return Ok(Some(F::zero()));
-    };
+    }
+    charge_work(work, (1usize << lb) + (1usize << rb) + seeds.len())?;
+    // Validate before shifting: normalization must not hide address overflow.
+    for seed in seeds {
+        checked_axis_offset(seed.left_offset, left_stride, len - 1, "left")?;
+        checked_axis_offset(seed.right_offset, right_stride, len - 1, "right")?;
+    }
     // These bounded tables are the low-coordinate MLE contraction, independent
     // of the length of the shared unit axis. No data survive this evaluation.
-    let low_table = |point: &[F], monomial: bool| -> Result<Vec<F>, AkitaError> {
+    let low_table = |point: &[F], monomial: bool| {
         let mut values = vec![F::one()];
         for &r in point {
             let n = values.len();
@@ -90,11 +57,11 @@ pub(super) fn try_eval<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL
                 values[n + i] = one;
             }
         }
-        Ok(values)
+        values
     };
-    charge_work(work, (1usize << lb) + (1usize << rb) + seeds.len())?;
-    let low_left = low_table(&left[..lb], LEFT_MONOMIAL)?;
-    let low_right = low_table(&right[..rb], RIGHT_MONOMIAL)?;
+    let low_left = low_table(&left[..lb], LEFT_MONOMIAL);
+    let low_right = low_table(&right[..rb], RIGHT_MONOMIAL);
+    let mut seeds = seeds.to_vec();
     for seed in &mut seeds {
         seed.weight *= low_left[seed.left_offset & (low_left.len() - 1)]
             * low_right[seed.right_offset & (low_right.len() - 1)];
@@ -108,9 +75,9 @@ pub(super) fn try_eval<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL
     >(
         &left[lb..],
         &right[rb..],
-        axis.left_stride >> lb,
-        axis.right_stride >> rb,
-        axis.len,
+        left_stride >> lb,
+        right_stride >> rb,
+        len,
         &seeds,
         work,
     )?))
@@ -118,10 +85,12 @@ pub(super) fn try_eval<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::EqPairTensorAxis;
+    use super::super::super::{EqPairTensorAxis, EqPairTensorFamily};
     use super::super::basis_eval_at_index;
+    use super::super::stream::collect_tensor_family_seeds;
     use super::*;
     use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
+    use std::collections::BTreeMap;
 
     fn compare<const LM: bool, const RM: bool>(boolean: bool) {
         let point = |n, offset| {
@@ -163,9 +132,23 @@ mod tests {
                     ],
                 )
                 .unwrap();
-                let actual = try_eval::<F, LM, RM>(&left, &right, &family, &mut 0)
-                    .unwrap()
-                    .expect("eligible shifted axis");
+                let mut batches = BTreeMap::new();
+                collect_tensor_family_seeds(
+                    &family,
+                    Some(1),
+                    0,
+                    lo,
+                    ro,
+                    family.scalar,
+                    &mut batches,
+                    &mut Vec::new(),
+                    &mut 0,
+                )
+                .unwrap();
+                let seeds = &batches[&(ls, rs, 128)];
+                let actual =
+                    eval_tensor_seed_batch::<F, LM, RM>(&left, &right, ls, rs, 128, seeds, &mut 0)
+                        .unwrap();
                 let mut expected = F::zero();
                 for a in 0..3 {
                     for b in 0..128 {
@@ -192,5 +175,170 @@ mod tests {
             compare::<true, false>(boolean);
             compare::<true, true>(boolean);
         }
+    }
+
+    #[test]
+    fn recurrence_capable_residuals_stay_compact() {
+        use super::super::eval_unfactored_tensor_families;
+        // At the Boolean origin, only the all-zero coordinate contributes.
+        let point = [F::zero(); 20];
+        for residual in [
+            EqPairTensorAxis::unit(65536, 10, 10),
+            EqPairTensorAxis::bit_product(10, 10, vec![[F::one(), F::from_u64(2)]; 16]).unwrap(),
+        ] {
+            let family = EqPairTensorFamily::new(
+                0,
+                0,
+                F::one(),
+                vec![EqPairTensorAxis::unit(65536, 6, 6), residual],
+            )
+            .unwrap();
+            let mut work = 0;
+            let actual = eval_unfactored_tensor_families::<F, false, false>(
+                &point,
+                &point,
+                &vec![family; 2048],
+                &mut work,
+            )
+            .unwrap();
+            assert_eq!(actual, F::from_u64(2048));
+            assert!(
+                work < 1_000_000,
+                "residual axes must not be expanded: {work}"
+            );
+        }
+    }
+
+    #[test]
+    fn matching_shifted_streams_share_the_recurrence() {
+        use super::super::eval_unfactored_tensor_families;
+        let point = [F::from_u64(2); 20];
+        let family =
+            EqPairTensorFamily::new(0, 0, F::one(), vec![EqPairTensorAxis::unit(65536, 6, 10)])
+                .unwrap();
+        let single = eval_unfactored_tensor_families::<F, false, false>(
+            &point,
+            &point,
+            std::slice::from_ref(&family),
+            &mut 0,
+        )
+        .unwrap();
+        let mut work = 0;
+        let actual = eval_unfactored_tensor_families::<F, false, false>(
+            &point,
+            &point,
+            &vec![family; 2048],
+            &mut work,
+        )
+        .unwrap();
+        assert_eq!(actual, single * F::from_u64(2048));
+        assert!(work < 100_000, "matching streams must stay batched: {work}");
+    }
+
+    #[test]
+    fn normalization_preserves_address_and_work_bounds() {
+        let point = [F::one(); 20];
+        for (left_offset, right_offset) in [(usize::MAX, 0), (0, usize::MAX)] {
+            let family = EqPairTensorFamily::new(
+                left_offset,
+                right_offset,
+                F::one(),
+                vec![EqPairTensorAxis::unit(128, 6, 10)],
+            )
+            .unwrap();
+            assert!(
+                crate::offset_eq::eval_boolean_pair_tensor_families::<F, false, true>(
+                    &point,
+                    &point,
+                    &[family],
+                )
+                .is_err()
+            );
+        }
+        let seed = EqPairSeed {
+            left_offset: 0,
+            right_offset: 0,
+            weight: F::one(),
+        };
+        let mut work = crate::offset_eq::MAX_COMPACT_STRIDE_TERMS;
+        assert!(eval_tensor_seed_batch::<F, false, false>(
+            &point,
+            &point,
+            6,
+            10,
+            128,
+            &[seed],
+            &mut work,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ineligible_batches_leave_the_work_budget_untouched() {
+        let point = [F::one(); 20];
+        let seed = EqPairSeed {
+            left_offset: 0,
+            right_offset: 0,
+            weight: F::one(),
+        };
+        for (ls, rs, len, count) in [
+            (6, 10, 127, 1),
+            (3, 5, 128, 1),
+            (1 << 13, 10, 128, 1),
+            (6, 1 << 13, 128, 1),
+            (6, 10, 128, MAX_SEEDS + 1),
+        ] {
+            let mut work = 0;
+            assert!(try_eval::<F, false, false>(
+                &point,
+                &point,
+                ls,
+                rs,
+                len,
+                &vec![seed; count],
+                &mut work,
+            )
+            .unwrap()
+            .is_none());
+            assert_eq!(work, 0);
+        }
+        for (left, right) in [(&point[..0], &point[..]), (&point[..], &point[..0])] {
+            let mut work = 0;
+            assert!(
+                try_eval::<F, false, false>(left, right, 6, 10, 128, &[seed], &mut work,)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(work, 0);
+        }
+    }
+
+    #[test]
+    fn large_shift_keeps_the_carry_recurrence_small() {
+        use super::super::eval_unfactored_tensor_families;
+        let left = [F::from_u64(2); 20];
+        let right = [F::from_u64(3); 28];
+        let family = EqPairTensorFamily::new(
+            3,
+            19,
+            F::one(),
+            vec![EqPairTensorAxis::unit(16384, 6, 4096)],
+        )
+        .unwrap();
+        let mut work = 0;
+        let actual =
+            eval_unfactored_tensor_families::<F, false, false>(&left, &right, &[family], &mut work)
+                .unwrap();
+        let expected: F = (0..16384)
+            .map(|i| {
+                basis_eval_at_index::<F, false>(&left, 3 + 6 * i)
+                    * basis_eval_at_index::<F, false>(&right, 19 + 4096 * i)
+            })
+            .sum();
+        assert_eq!(actual, expected);
+        assert!(
+            work < 10_000,
+            "low coordinates must leave the carry state: {work}"
+        );
     }
 }
