@@ -1,6 +1,7 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
 mod grouping;
+mod shifted;
 mod stream;
 mod unit_intervals;
 
@@ -61,6 +62,15 @@ pub(super) fn eval_unfactored_tensor_families<
             continue;
         }
         if let Some(value) = try_eval_aligned_family::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+            left_challenges,
+            right_challenges,
+            family,
+            work,
+        )? {
+            acc += value;
+            continue;
+        }
+        if let Some(value) = shifted::try_eval::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
             left_challenges,
             right_challenges,
             family,
