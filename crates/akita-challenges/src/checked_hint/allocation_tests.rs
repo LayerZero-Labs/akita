@@ -77,7 +77,7 @@ fn with_allocation_budget<T>(allowed: usize, f: impl FnOnce() -> T) -> (T, usize
 #[test]
 fn oversize_and_occupied_sessions_reject_without_allocating() {
     assert!(!active());
-    let bytes = frame(&[7; 64], &[], &[]);
+    let bytes = [7; 64];
     let (result, attempts) =
         with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len() - 1));
     assert!(result.is_err());
@@ -91,7 +91,7 @@ fn oversize_and_occupied_sessions_reject_without_allocating() {
         with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len()));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
-    take(HintTape::Quartets, 2, |words| {
+    take(8, |words| {
         assert_eq!(words, &[u64::from_le_bytes([7; 8]); 8]);
         Ok(())
     })
@@ -100,46 +100,40 @@ fn oversize_and_occupied_sessions_reject_without_allocating() {
 }
 
 #[test]
-fn malformed_position_section_rejects_before_copying_quartets() {
+fn partial_word_rejects_before_allocating() {
     assert!(!active());
-    let frame = frame(&[0; 8], &[], &[0; 1]);
+    let bytes = [0; 9];
     let (result, attempts) =
-        with_allocation_budget(0, || install_checked_hints(&frame, frame.len()));
+        with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len()));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
     assert!(!active());
 }
 
 #[test]
-fn tape_allocation_failures_leave_no_partial_session() {
+fn tape_uses_one_allocation_and_recovers_from_failure() {
     #[repr(align(8))]
-    struct Storage([u8; 104]);
-    let words =
-        |range: std::ops::RangeInclusive<u64>| range.flat_map(u64::to_le_bytes).collect::<Vec<_>>();
-    let frame = frame(&words(1..=4), &words(5..=8), &words(9..=9));
+    struct Storage([u8; 17]);
+    let contents = [1u64.to_le_bytes(), 2u64.to_le_bytes()].concat();
     for offset in [0, 1] {
-        let mut storage = Storage([0; 104]);
-        storage.0[offset..offset + frame.len()].copy_from_slice(&frame);
-        let bytes = &storage.0[offset..offset + frame.len()];
-        for allowed in 0..3 {
-            let (result, attempts) =
-                with_allocation_budget(allowed, || install_checked_hints(bytes, bytes.len()));
-            assert!(result.is_err());
-            assert_eq!(attempts, allowed + 1);
-            assert!(!active());
-            install_checked_hints(bytes, bytes.len()).unwrap();
-            for (tape, expected) in [
-                (HintTape::Quartets, &[1, 2, 3, 4][..]),
-                (HintTape::Ternary, &[5, 6, 7, 8][..]),
-                (HintTape::Positions, &[9][..]),
-            ] {
-                take(tape, 1, |words| {
-                    assert_eq!(words, expected);
-                    Ok(())
-                })
-                .unwrap();
-            }
-            finish_checked_hints().unwrap();
-        }
+        let mut storage = Storage([0; 17]);
+        let bytes = &mut storage.0[offset..offset + contents.len()];
+        bytes.copy_from_slice(&contents);
+        let (result, attempts) =
+            with_allocation_budget(0, || install_checked_hints(bytes, bytes.len()));
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+        assert!(!active());
+
+        let (result, attempts) =
+            with_allocation_budget(1, || install_checked_hints(bytes, bytes.len()));
+        result.unwrap();
+        assert_eq!(attempts, 1);
+        take(2, |words| {
+            assert_eq!(words, &[1, 2]);
+            Ok(())
+        })
+        .unwrap();
+        finish_checked_hints().unwrap();
     }
 }

@@ -23,8 +23,7 @@ impl SparseChallengeStream {
         }
         let message_words = crate::checked_hint::native_words(message)?;
         crate::checked_hint::take(
-            crate::checked_hint::HintTape::Quartets,
-            self.count,
+            self.count.checked_mul(4).ok_or(AkitaError::InvalidProof)?,
             |hints| {
                 let mut output = Vec::new();
                 output
@@ -67,8 +66,7 @@ impl SparseChallengeStream {
             return Err(AkitaError::InvalidProof);
         }
         crate::checked_hint::take(
-            crate::checked_hint::HintTape::Ternary,
-            self.count,
+            self.count.checked_mul(4).ok_or(AkitaError::InvalidProof)?,
             |hints| {
                 let mut output = Vec::new();
                 output

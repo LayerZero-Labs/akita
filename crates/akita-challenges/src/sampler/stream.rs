@@ -822,7 +822,7 @@ impl CandidateDecoder<'_> {
         let (pm1, pm2) = positions.split_at_mut(a);
         if self.position_hints {
             let width = weight.div_ceil(4);
-            crate::checked_hint::take(crate::checked_hint::HintTape::Positions, width, |words| {
+            crate::checked_hint::take(width, |words| {
                 if !weight.is_multiple_of(4)
                     && words.last().is_some_and(|&w| w >> (16 * (weight % 4)) != 0)
                 {
