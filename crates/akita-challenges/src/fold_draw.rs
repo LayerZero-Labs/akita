@@ -147,6 +147,15 @@ pub trait FoldDraw {
                 )?))
             });
         }
+        if stream.uses_checked_ternary() && crate::checked_hint::ternary_active() {
+            return self.draw_message(stream.message_len(), |message| {
+                Ok(Some(Challenges::from_checked_ternary(
+                    stream.decode_ternary_hints(message)?,
+                    num_live_blocks,
+                    num_claims,
+                )?))
+            });
+        }
         let position_hints = crate::checked_hint::positions_active();
         let challenges = self.draw_message(stream.message_len(), |message| {
             stream.decode_with(message, position_hints)

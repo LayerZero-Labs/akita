@@ -1,6 +1,7 @@
 //! Sampled sparse challenges for one folding round.
 
 use crate::{SparseChallenge, SparseChallengeConfig};
+mod ternary;
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use jolt_field::solinas::parallel::*;
@@ -24,6 +25,7 @@ enum ChallengeStorage {
     Sparse(Arc<[SparseChallenge]>),
     // Retain the decoded buffer rather than copying it into another allocation.
     Quartets(Arc<Vec<[u64; 4]>>),
+    Ternary(Arc<Vec<[u64; 4]>>),
 }
 
 /// Stage-1 fold challenges in claim-major block order.
@@ -49,6 +51,9 @@ impl PartialEq for Challenges {
                 && match (&self.storage, &other.storage) {
                     (ChallengeStorage::Sparse(a), ChallengeStorage::Sparse(b)) => Arc::ptr_eq(a, b),
                     (ChallengeStorage::Quartets(a), ChallengeStorage::Quartets(b)) => {
+                        Arc::ptr_eq(a, b)
+                    }
+                    (ChallengeStorage::Ternary(a), ChallengeStorage::Ternary(b)) => {
                         Arc::ptr_eq(a, b)
                     }
                     _ => false,
@@ -137,6 +142,10 @@ impl Challenges {
     #[must_use]
     pub fn as_slice(&self) -> &[SparseChallenge] {
         match &self.storage {
+            ChallengeStorage::Ternary(codes) => self
+                .materialized
+                .get_or_init(|| ternary::materialize(codes, self.embedding_stride))
+                .as_slice(),
             ChallengeStorage::Quartets(codes) => self
                 .materialized
                 .get_or_init(|| {
@@ -205,7 +214,7 @@ impl Challenges {
     pub fn len(&self) -> usize {
         match &self.storage {
             ChallengeStorage::Sparse(challenges) => challenges.len(),
-            ChallengeStorage::Quartets(codes) => codes.len(),
+            ChallengeStorage::Quartets(codes) | ChallengeStorage::Ternary(codes) => codes.len(),
         }
     }
 
@@ -262,6 +271,9 @@ impl Challenges {
         E: Field + ExtField<F>,
     {
         match (&self.storage, self.sampled_family) {
+            (ChallengeStorage::Ternary(codes), Some((d, _))) if d == alpha_pows.len() => {
+                return self.evaluate_ternary::<F, E>(codes, alpha_pows);
+            }
             (ChallengeStorage::Quartets(codes), Some((d, _))) if d == alpha_pows.len() => {
                 return self.evaluate_quartets::<F, E>(codes, alpha_pows);
             }

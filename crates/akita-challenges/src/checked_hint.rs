@@ -1,5 +1,6 @@
 use akita_error::AkitaError;
 use std::{borrow::Cow, cell::RefCell};
+pub(crate) mod ternary;
 
 #[cfg(test)]
 mod table_tests;
@@ -10,6 +11,7 @@ mod allocation_tests;
 pub(crate) enum HintTape {
     Quartets,
     Positions,
+    Ternary,
 }
 
 struct Tape {
@@ -48,6 +50,7 @@ impl Tape {
 struct Hints {
     quartets: Tape,
     positions: Option<Tape>,
+    ternary: Option<Tape>,
 }
 thread_local! {
     static HINTS: RefCell<Option<Hints>> = const { RefCell::new(None) };
@@ -57,8 +60,18 @@ thread_local! {
 ///
 /// `max_bytes` bounds the entire input, including the versioned frame header.
 /// Derive it from trusted schedule/configuration data or an application memory
-/// budget, never from the untrusted advice's declared length. Every used quartet
-/// or position rank is still authenticated against transcript bits.
+/// budget, never from the untrusted advice's declared length. Every used quartet,
+/// ternary group or position rank is still authenticated against transcript bits.
+///
+/// `AKITAH03` frames contain two little-endian `u64` byte lengths, followed by
+/// the quartet tape, ternary tape, and remaining position tape. All tape lengths
+/// must be multiples of eight. The ternary route handles unfiltered D128/31/0
+/// batches of at least 1024 challenges; other routes retain their existing format.
+/// Each ternary challenge occupies four little-endian `u64` words. Group `g`
+/// encodes six coefficients as base-three digits `coefficient + 1`, stored at
+/// bit `10 * (g % 6)` in word `g / 6`. There are 22 groups, with coefficients
+/// beyond position 127 and all unused word bits zero. Legacy raw quartet tapes
+/// and `AKITAH02` frames remain accepted.
 ///
 /// Call [`finish_checked_hints`] after successful verification to require complete
 /// consumption, or [`abort_checked_hints`] after a verification error. Both clear
@@ -78,29 +91,44 @@ pub fn install_checked_hints(bytes: &[u8], max_bytes: usize) -> Result<(), Akita
         if state.is_some() || bytes.is_empty() || bytes.len() > max_bytes {
             return Err(AkitaError::InvalidProof);
         }
-        let (quartets, positions) = if let Some(rest) = bytes.strip_prefix(b"AKITAH02") {
-            let size = rest
-                .get(..8)
+        let size = |bytes: Option<&[u8]>| {
+            bytes
                 .and_then(|b| b.try_into().ok())
                 .map(u64::from_le_bytes)
                 .and_then(|n| usize::try_from(n).ok())
+                .ok_or(AkitaError::InvalidProof)
+        };
+        let (quartets, ternary, positions) = if let Some(rest) = bytes.strip_prefix(b"AKITAH03") {
+            let qlen = size(rest.get(..8))?;
+            let tlen = size(rest.get(8..16))?;
+            let data = rest.get(16..).ok_or(AkitaError::InvalidProof)?;
+            let (q, data) = data
+                .split_at_checked(qlen)
                 .ok_or(AkitaError::InvalidProof)?;
-            let rest = rest.get(8..).ok_or(AkitaError::InvalidProof)?;
-            let (quartets, positions) = rest
-                .split_at_checked(size)
+            let (t, p) = data
+                .split_at_checked(tlen)
                 .ok_or(AkitaError::InvalidProof)?;
-            (quartets, Some(positions))
+            (q, Some(t), Some(p))
+        } else if let Some(rest) = bytes.strip_prefix(b"AKITAH02") {
+            let length = size(rest.get(..8))?;
+            let data = rest.get(8..).ok_or(AkitaError::InvalidProof)?;
+            let (q, p) = data
+                .split_at_checked(length)
+                .ok_or(AkitaError::InvalidProof)?;
+            (q, None, Some(p))
         } else {
-            (bytes, None)
+            (bytes, None, None)
         };
         if !quartets.len().is_multiple_of(8)
             || positions.is_some_and(|p| !p.len().is_multiple_of(8))
+            || ternary.is_some_and(|t| !t.len().is_multiple_of(8))
         {
             return Err(AkitaError::InvalidProof);
         }
         *state = Some(Hints {
             quartets: Tape::new(quartets)?,
             positions: positions.map(Tape::new).transpose()?,
+            ternary: ternary.map(Tape::new).transpose()?,
         });
         Ok(())
     })
@@ -114,7 +142,11 @@ pub fn finish_checked_hints() -> Result<(), AkitaError> {
             .map_err(|_| AkitaError::InvalidProof)?
             .take();
         match hints {
-            Some(h) if h.quartets.finished() && h.positions.as_ref().is_none_or(Tape::finished) => {
+            Some(h)
+                if h.quartets.finished()
+                    && h.positions.as_ref().is_none_or(Tape::finished)
+                    && h.ternary.as_ref().is_none_or(Tape::finished) =>
+            {
                 Ok(())
             }
             _ => Err(AkitaError::InvalidProof),
@@ -140,6 +172,10 @@ pub(crate) fn positions_active() -> bool {
     HINTS.with(|s| s.borrow().as_ref().is_some_and(|h| h.positions.is_some()))
 }
 
+pub(crate) fn ternary_active() -> bool {
+    HINTS.with(|s| s.borrow().as_ref().is_some_and(|h| h.ternary.is_some()))
+}
+
 /// Consume a bounded slice without allocating another owner or copying words.
 /// The decoder cannot retain a borrow after the thread-local session is released.
 pub(crate) fn take<T>(
@@ -155,6 +191,10 @@ pub(crate) fn take<T>(
         let (tape, words) = match kind {
             HintTape::Quartets => (
                 &mut hints.quartets,
+                count.checked_mul(4).ok_or(AkitaError::InvalidProof)?,
+            ),
+            HintTape::Ternary => (
+                hints.ternary.as_mut().ok_or(AkitaError::InvalidProof)?,
                 count.checked_mul(4).ok_or(AkitaError::InvalidProof)?,
             ),
             HintTape::Positions => (
