@@ -1,6 +1,7 @@
 //! Boolean paired-equality contractions over tensor-native address families.
 
 mod grouping;
+mod shifted;
 mod stream;
 mod unit_intervals;
 
