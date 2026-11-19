@@ -12,6 +12,8 @@ mod allocation_tests;
 #[cfg(test)]
 mod record_tests;
 
+/// The tape a fold draw's advice lives on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HintTape {
     Quartets,
     Positions,
@@ -250,6 +252,27 @@ pub(crate) fn record(kind: HintTape, words: &[u64]) -> Result<(), AkitaError> {
         tape.extend(words.iter().flat_map(|word| word.to_le_bytes()));
         Ok(())
     })
+}
+
+/// Record a decoded draw's quartet or ternary codes on `tape`.
+pub(crate) fn record_packed(
+    tape: HintTape,
+    challenges: &[SparseChallenge],
+) -> Result<(), AkitaError> {
+    let encode = match tape {
+        HintTape::Quartets => encode_quartets as fn(&SparseChallenge) -> _,
+        HintTape::Ternary => ternary::encode,
+        // The candidate decoder writes position records as it examines candidates.
+        HintTape::Positions => return Ok(()),
+    };
+    let mut words = Vec::new();
+    words
+        .try_reserve_exact(challenges.len().saturating_mul(4))
+        .map_err(|_| AkitaError::InvalidInput("checked advice allocation failed".into()))?;
+    for challenge in challenges {
+        words.extend(encode(challenge)?);
+    }
+    record(tape, &words)
 }
 
 /// Pack a D64/31/10 challenge into the four quartet-code words [`validate`] checks.

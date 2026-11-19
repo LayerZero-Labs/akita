@@ -5,7 +5,7 @@
 //! the family, and the group's position in the transcript fixes its index and
 //! counts, so the message continues the squeeze run before it.
 
-use crate::checked_hint::Advice;
+use crate::checked_hint::{Advice, HintTape};
 use crate::sampler::SparseChallengeShell;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig, SparseChallengeStream};
 use akita_error::AkitaError;
@@ -140,34 +140,39 @@ pub trait FoldDraw {
         })?;
         let stream = family.stream(total)?;
         let advice = crate::checked_hint::mode();
-        if advice == Advice::Verify && stream.uses_checked_quartets() {
-            return self.draw_message(stream.message_len(), |message| {
-                Ok(Some(Challenges::from_checked_quartets(
-                    stream.decode_checked_hints(message)?,
-                    num_live_blocks,
-                    num_claims,
-                )?))
-            });
-        }
-        if advice == Advice::Verify && stream.uses_checked_ternary() {
-            return self.draw_message(stream.message_len(), |message| {
-                Ok(Some(Challenges::from_checked_ternary(
-                    stream.decode_ternary_hints(message)?,
-                    num_live_blocks,
-                    num_claims,
-                )?))
-            });
-        }
-        // Quartet and ternary draws consume no position records: when recording,
-        // their codes are packed from the decoded challenges instead.
-        let packed = stream.uses_checked_quartets() || stream.uses_checked_ternary();
-        let challenges = self.draw_message(stream.message_len(), |message| {
-            stream.decode_with(message, if packed { Advice::Off } else { advice })
-        })?;
-        if advice == Advice::Record && packed {
-            if let Some(challenges) = &challenges {
-                stream.record_packed_advice(challenges)?;
+        let tape = stream.advice_tape();
+        match (advice, tape) {
+            (Advice::Verify, HintTape::Quartets) => {
+                return self.draw_message(stream.message_len(), |message| {
+                    Ok(Some(Challenges::from_checked_quartets(
+                        stream.decode_checked_hints(message)?,
+                        num_live_blocks,
+                        num_claims,
+                    )?))
+                });
             }
+            (Advice::Verify, HintTape::Ternary) => {
+                return self.draw_message(stream.message_len(), |message| {
+                    Ok(Some(Challenges::from_checked_ternary(
+                        stream.decode_ternary_hints(message)?,
+                        num_live_blocks,
+                        num_claims,
+                    )?))
+                });
+            }
+            _ => {}
+        }
+        // Only position draws consume or record advice while decoding.
+        let positions = if tape == HintTape::Positions {
+            advice
+        } else {
+            Advice::Off
+        };
+        let challenges = self.draw_message(stream.message_len(), |message| {
+            stream.decode_with(message, positions)
+        })?;
+        if let (Advice::Record, Some(challenges)) = (advice, &challenges) {
+            crate::checked_hint::record_packed(tape, challenges)?;
         }
         challenges
             .map(|challenges| {

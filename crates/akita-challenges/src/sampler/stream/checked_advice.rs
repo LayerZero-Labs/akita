@@ -2,12 +2,10 @@
 
 use super::{read_bits, SparseChallengeStream};
 use crate::checked_hint::HintTape;
-use crate::SparseChallenge;
 use akita_error::AkitaError;
 
 impl SparseChallengeStream {
-    /// Eligibility rule for quartet advice. Capture emits no rank lines for
-    /// these draws, since they consume no position records.
+    /// Eligibility rule for quartet advice.
     pub(crate) const fn uses_checked_quartets(&self) -> bool {
         self.count >= 1024
             && self.shell.ring_d == 64
@@ -54,8 +52,7 @@ impl SparseChallengeStream {
         )
     }
 
-    /// Eligibility rule for ternary advice. Capture emits no rank lines for
-    /// these draws, since they consume no position records.
+    /// Eligibility rule for ternary advice.
     pub(crate) const fn uses_checked_ternary(&self) -> bool {
         self.count >= 1024
             && self.shell.ring_d == 128
@@ -95,33 +92,14 @@ impl SparseChallengeStream {
         )
     }
 
-    /// Record the quartet or ternary advice for a packed draw's decoded challenges.
-    pub(crate) fn record_packed_advice(
-        &self,
-        challenges: &[SparseChallenge],
-    ) -> Result<(), AkitaError> {
-        let quartets = self.uses_checked_quartets();
-        if !quartets && !self.uses_checked_ternary() {
-            return Err(AkitaError::Internal(
-                "only quartet and ternary draws record packed advice".into(),
-            ));
-        }
-        let mut words = Vec::new();
-        words
-            .try_reserve_exact(challenges.len().saturating_mul(4))
-            .map_err(|_| AkitaError::InvalidInput("checked advice allocation failed".into()))?;
-        for challenge in challenges {
-            words.extend(if quartets {
-                crate::checked_hint::encode_quartets(challenge)?
-            } else {
-                crate::checked_hint::ternary::encode(challenge)?
-            });
-        }
-        let tape = if quartets {
+    /// The tape this draw consumes in a verifying session and fills when recording.
+    pub(crate) const fn advice_tape(&self) -> HintTape {
+        if self.uses_checked_quartets() {
             HintTape::Quartets
-        } else {
+        } else if self.uses_checked_ternary() {
             HintTape::Ternary
-        };
-        crate::checked_hint::record(tape, &words)
+        } else {
+            HintTape::Positions
+        }
     }
 }

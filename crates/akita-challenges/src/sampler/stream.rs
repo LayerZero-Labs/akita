@@ -814,7 +814,7 @@ impl CandidateDecoder<'_> {
         };
         let pm1_rank = rank - pm2_rank * stream.shell.pm1_rank_space;
         #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
-        if capture_enabled() && !stream.uses_checked_quartets() && !stream.uses_checked_ternary() {
+        if capture_enabled() && stream.advice_tape() == crate::checked_hint::HintTape::Positions {
             eprintln!(
                 "EXPERIMENT_RANK {} {} {} {} {}",
                 stream.shell.ring_d, a, b, pm1_rank, pm2_rank
