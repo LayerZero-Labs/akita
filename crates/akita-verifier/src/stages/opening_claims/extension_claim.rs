@@ -431,28 +431,41 @@ where
     if batched_final_claim != expected_batched_final {
         return Err(AkitaError::InvalidProof);
     }
+    let final_factors = eor_final_factors::<F, E>(group_points, shape.split_bits, &eta, &rho)?;
+    Ok(EorSumcheckReplay {
+        rho,
+        final_claims,
+        final_factors,
+    })
+}
+
+fn eor_final_factors<F: Field, E: ExtField<F>>(
+    group_points: &[&[E]],
+    split_bits: usize,
+    eta: &[E],
+    rho: &[E],
+) -> Result<Vec<E>, AkitaError> {
     let mut final_factors = Vec::with_capacity(group_points.len());
     for group_point in group_points {
         let tail_point = group_point
-            .get(shape.split_bits..)
+            .get(split_bits..)
             .ok_or(AkitaError::InvalidProof)?;
         let local_rho = rho
             .get(..tail_point.len())
             .ok_or(AkitaError::InvalidProof)?;
-        let mut factor = tensor_equality_factor_eval_at_point::<F, E>(tail_point, &eta, local_rho)?;
+        let mut factor = tensor_equality_factor_eval_at_point::<F, E>(tail_point, eta, local_rho)?;
         for &extra_challenge in rho
             .get(tail_point.len()..)
             .ok_or(AkitaError::InvalidProof)?
         {
             factor *= E::one() - extra_challenge;
         }
+        if factor == E::zero() {
+            return Err(AkitaError::InvalidProof);
+        }
         final_factors.push(factor);
     }
-    Ok(EorSumcheckReplay {
-        rho,
-        final_claims,
-        final_factors,
-    })
+    Ok(final_factors)
 }
 
 #[cfg(test)]
@@ -462,7 +475,7 @@ mod tests {
     use akita_params::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
     use akita_sumcheck::SumcheckInstanceProver;
     use akita_transcript::{new_prover_channel, new_verifier_channel};
-    use jolt_field::{FpExt4, Prime32Offset99, Zero};
+    use jolt_field::{FpExt4, One, Prime32Offset99, Zero};
     use jolt_poly::UnivariatePoly;
 
     type F = Prime32Offset99;
@@ -504,6 +517,42 @@ mod tests {
                 ])
             })
             .collect()
+    }
+
+    #[test]
+    fn eor_verifier_rejects_zero_extension_factor() {
+        let (split_bits, _) = tensor_opening_split::<F, E>().unwrap();
+        let eta = vec![E::zero(); split_bits];
+        let short = vec![E::zero(); split_bits + 1];
+        let mut long = short.clone();
+        long.push(E::one());
+        let two = E::one() + E::one();
+        let group_points = [long.as_slice(), short.as_slice()];
+
+        // eta = 0 selects the constant basis coordinate. At rho = (0, 1),
+        // the long group's equality factor is 1; the short group's factor
+        // is 1 * (1 - rho[1]) = 0.
+        assert!(matches!(
+            eor_final_factors::<F, E>(&group_points, split_bits, &eta, &[E::zero(), E::one()]),
+            Err(AkitaError::InvalidProof)
+        ));
+        assert_eq!(
+            eor_final_factors::<F, E>(&group_points, split_bits, &eta, &[E::zero(), two]).unwrap(),
+            vec![two, E::one() - two]
+        );
+
+        let mut point = vec![E::zero(); split_bits];
+        point.push(E::one());
+        // With eta = 0 and tail r = 1, A_eta(rho) = (1-r)(1-rho)+r*rho = rho.
+        // Thus rho = 0 zeros the equality factor itself, with no padding.
+        assert!(matches!(
+            eor_final_factors::<F, E>(&[&point], split_bits, &eta, &[E::zero()]),
+            Err(AkitaError::InvalidProof)
+        ));
+        assert_eq!(
+            eor_final_factors::<F, E>(&[&point], split_bits, &eta, &[two]).unwrap(),
+            vec![two]
+        );
     }
 
     #[test]
