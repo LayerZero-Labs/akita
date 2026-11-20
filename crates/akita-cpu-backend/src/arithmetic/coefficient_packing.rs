@@ -114,21 +114,8 @@ where
 
     let block_coordinates = cfg_into_iter!(0..num_blocks)
         .map(|block_index| {
-            let first_position = block_index
-                .checked_mul(point.num_positions_per_block())
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("coefficient-packing block offset overflow".into())
-                })?;
-            let live_in_block = point
-                .num_live_positions()
-                .checked_sub(first_position)
-                .ok_or_else(|| {
-                    AkitaError::Internal(
-                        "coefficient-packing block starts beyond the live positions".into(),
-                    )
-                })?
-                .min(point.num_positions_per_block())
-                .min(nonzero_positions.saturating_sub(first_position));
+            let (first_position, live_in_block) =
+                live_block_positions(point, block_index, nonzero_positions)?;
             let packed = if E::SUM_IS_EXACT {
                 let mut products = zero_vec::<<E as Unreduced>::Product>(s)?;
                 // Small strides expose more independent subring accumulators
@@ -233,27 +220,189 @@ where
                 reduced
             };
 
-            let mut output_coordinates = zero_vec::<F>(partial_width)?;
-            for (subring_index, coefficient) in packed.into_iter().enumerate() {
-                let coordinates = coefficient.ext_coords();
-                if coordinates.len() != geometry.extension_degree() {
-                    return Err(AkitaError::InvalidSetup(
-                        "coefficient-packing extension encoding width mismatch".into(),
-                    ));
-                }
-                for (extension_coordinate, &coordinate) in coordinates.iter().enumerate() {
-                    let local_index = geometry
-                        .partial_base_field_coordinate_index(extension_coordinate, subring_index)?;
-                    *output_coordinates.get_mut(local_index).ok_or_else(|| {
-                        AkitaError::Internal(
-                            "coefficient-packing output coordinate is outside its geometry".into(),
-                        )
-                    })? = coordinate;
-                }
-            }
-            Ok(output_coordinates)
+            block_partial_coordinates(geometry, packed)
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
+    concatenate_blocks(output_len, block_coordinates)
+}
+
+/// Largest digit magnitude [`coefficient_packing_partials_from_digit_source`]
+/// sums by value: every subring coefficient of a block keeps one sum per
+/// value, and those have to stay in cache.
+pub(crate) const MAX_SUMMED_DIGIT: u8 = 16;
+
+/// Canonical partials of a source whose coefficients are signed digits of
+/// magnitude at most `digit_abs_bound`.
+///
+/// A digit takes few values, so each subring coefficient of a block first
+/// sums its weights by digit value and then weighs the sums. An addition in
+/// `E` per digit replaces a product of `E` with a base-field element; the
+/// partials are the same field elements either way.
+///
+/// # Errors
+///
+/// Those of [`coefficient_packing_partials_from_position_source`], and a
+/// digit outside the stated bound.
+#[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
+pub(crate) fn coefficient_packing_partials_from_digit_source<F, E, P, const D: usize>(
+    fused_weights: &FusedPackingWeights<'_, E>,
+    source_num_vars: usize,
+    nonzero_positions: usize,
+    digit_abs_bound: u8,
+    position_at: impl Fn(usize) -> Result<P, AkitaError> + Sync,
+    digit: impl Fn(usize, usize, &P) -> i8 + Sync,
+) -> Result<Vec<F>, AkitaError>
+where
+    F: Field,
+    E: ExtField<F> + FpExtEncoding<F>,
+    P: Sync,
+{
+    let plan = SubringCoefficientPackingPlan {
+        tables: fused_weights.tables(),
+    };
+    plan.validate::<D>(source_num_vars)?;
+    let point = plan.tables.point();
+    let geometry = point.geometry();
+    if E::DEGREE != geometry.extension_degree() {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing field extension degree mismatch".into(),
+        ));
+    }
+    if nonzero_positions > point.num_live_positions() {
+        return Err(AkitaError::InvalidSize {
+            expected: point.num_live_positions(),
+            actual: nonzero_positions,
+        });
+    }
+    let num_blocks = point.num_live_blocks();
+    let output_len = num_blocks
+        .checked_mul(geometry.partial_base_field_width())
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("coefficient-packing output length overflow".into())
+        })?;
+    let s = geometry.challenge_subring_dimension();
+    let stride = geometry.subring_embedding_stride();
+    let fused_weights = fused_weights.values();
+    let bound = usize::from(digit_abs_bound);
+    // Sums of one subring coefficient, by digit value from `-bound` up.
+    let values = 2 * bound + 1;
+    let sums_len = s.checked_mul(values).ok_or_else(|| {
+        AkitaError::InvalidInput("coefficient-packing digit sum extent overflow".into())
+    })?;
+
+    let block_coordinates = cfg_into_iter!(0..num_blocks)
+        .map(|block_index| {
+            let (first_position, live_in_block) =
+                live_block_positions(point, block_index, nonzero_positions)?;
+            let mut sums = zero_vec::<E>(sums_len)?;
+            for (position_in_block, weights) in fused_weights
+                .chunks_exact(stride)
+                .take(live_in_block)
+                .enumerate()
+            {
+                let position = first_position
+                    .checked_add(position_in_block)
+                    .ok_or_else(|| {
+                        AkitaError::Internal("digit coefficient-packing position overflow".into())
+                    })?;
+                let source_position = position_at(position)?;
+                let mut coefficient_index = 0;
+                for subring_sums in sums.chunks_exact_mut(values) {
+                    for &weight in weights {
+                        let value = digit(position, coefficient_index, &source_position);
+                        *bound
+                            .checked_add_signed(isize::from(value))
+                            .and_then(|index| subring_sums.get_mut(index))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput(
+                                    "coefficient-packing digit exceeds its stated bound".into(),
+                                )
+                            })? += weight;
+                        coefficient_index += 1;
+                    }
+                }
+                debug_assert_eq!(coefficient_index, D);
+            }
+            // `sum over v of v * (plus[v] - minus[v])`, with the factor `v`
+            // spent as one addition of the running tail per value.
+            let packed = sums
+                .chunks_exact(values)
+                .map(|subring_sums| {
+                    let (negative, rest) = subring_sums.split_at(bound);
+                    let positive = rest.get(1..).unwrap_or_default();
+                    let mut tail = E::zero();
+                    let mut total = E::zero();
+                    for (&plus, &minus) in positive.iter().rev().zip(negative) {
+                        tail += plus - minus;
+                        total += tail;
+                    }
+                    total
+                })
+                .collect();
+            block_partial_coordinates(geometry, packed)
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    concatenate_blocks(output_len, block_coordinates)
+}
+
+/// A block's first position and how many of its positions hold a nonzero.
+fn live_block_positions<E: Field>(
+    point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    block_index: usize,
+    nonzero_positions: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let first_position = block_index
+        .checked_mul(point.num_positions_per_block())
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("coefficient-packing block offset overflow".into())
+        })?;
+    let live_in_block = point
+        .num_live_positions()
+        .checked_sub(first_position)
+        .ok_or_else(|| {
+            AkitaError::Internal(
+                "coefficient-packing block starts beyond the live positions".into(),
+            )
+        })?
+        .min(point.num_positions_per_block())
+        .min(nonzero_positions.saturating_sub(first_position));
+    Ok((first_position, live_in_block))
+}
+
+/// One block's packed subring coefficients as base-field coordinates.
+fn block_partial_coordinates<F, E>(
+    geometry: akita_params::SubringCoefficientPackingGeometry,
+    packed: Vec<E>,
+) -> Result<Vec<F>, AkitaError>
+where
+    F: Field,
+    E: ExtField<F> + FpExtEncoding<F>,
+{
+    let mut output_coordinates = zero_vec::<F>(geometry.partial_base_field_width())?;
+    for (subring_index, coefficient) in packed.into_iter().enumerate() {
+        let coordinates = coefficient.ext_coords();
+        if coordinates.len() != geometry.extension_degree() {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing extension encoding width mismatch".into(),
+            ));
+        }
+        for (extension_coordinate, &coordinate) in coordinates.iter().enumerate() {
+            let local_index = geometry
+                .partial_base_field_coordinate_index(extension_coordinate, subring_index)?;
+            *output_coordinates.get_mut(local_index).ok_or_else(|| {
+                AkitaError::Internal(
+                    "coefficient-packing output coordinate is outside its geometry".into(),
+                )
+            })? = coordinate;
+        }
+    }
+    Ok(output_coordinates)
+}
+
+fn concatenate_blocks<F: Field>(
+    output_len: usize,
+    block_coordinates: Vec<Vec<F>>,
+) -> Result<Vec<F>, AkitaError> {
     let mut output = Vec::new();
     output.try_reserve_exact(output_len).map_err(|_| {
         AkitaError::InvalidInput(format!(
