@@ -12,7 +12,8 @@ use akita_algebra::ntt::{
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use akita_params::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
-    prepare_ntt_cache, select_crt_ntt_params, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
+    crt_profile_selectable, prepare_ntt_cache, select_crt_ntt_params, CrtNttProfile, NttCacheMode,
+    PreparedNttCache, ProtocolCrtNttParams,
 };
 use jolt_field::{CanonicalEncoding, Field, Fp64, One, Prime128Offset275, Prime64Offset59, Ring};
 

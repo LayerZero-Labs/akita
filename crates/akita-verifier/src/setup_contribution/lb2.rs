@@ -89,9 +89,9 @@ impl<E: Field> PairSum<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
+    use jolt_field::{Prime128Offset6A23801F, Ring, Zero};
 
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
 
     /// Deterministic full-width elements (a 64-bit LCG, two draws per element).
     fn elements(seed: u64, n: usize) -> Vec<F> {

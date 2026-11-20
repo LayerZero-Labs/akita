@@ -1135,7 +1135,7 @@ fn checked_owned_block(unit: &WitnessUnitLayout, global_block: usize) -> Result<
     };
     let local = global_block
         .checked_sub(unit.global_block_start)
-        .ok_or_else(&ownership_error)?;
+        .ok_or_else(ownership_error)?;
     if local >= unit.num_live_blocks {
         return Err(ownership_error());
     }

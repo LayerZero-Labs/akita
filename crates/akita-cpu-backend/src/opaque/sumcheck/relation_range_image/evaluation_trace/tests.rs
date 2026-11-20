@@ -237,7 +237,7 @@ where
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
     let level_params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         D,
         3,
         2,

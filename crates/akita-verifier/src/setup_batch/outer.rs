@@ -194,7 +194,7 @@ mod tests {
         setup_claims::{SetupClaim, SetupQuery},
         AkitaSetupDescriptor,
     };
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+    use jolt_field::{One, Prime128Offset6A23801F as F, Zero};
 
     #[test]
     fn direct_batch_rejects_false_answers_that_cancel_without_weights() {

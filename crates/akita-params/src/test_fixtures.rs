@@ -129,7 +129,7 @@ pub fn retarget_group_role_dims_wide(
 
 pub fn sample_params_only() -> CommittedGroupParams {
     CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         3,
         2,
@@ -261,7 +261,7 @@ pub(crate) fn address_oracle_group_params(
     blocks: usize,
 ) -> CommittedGroupParams {
     let mut lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         d_a,
         3,
         3,
@@ -352,7 +352,7 @@ pub fn committed_params_with_geometry(
     num_live_ring_elements_per_claim: usize,
 ) -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         ring_dimension,
         3,
         2,
@@ -423,7 +423,7 @@ pub fn exact_test_a_bound(params: &CommittedGroupParams) -> u128 {
 
 pub fn test_lp() -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         3,
         2,

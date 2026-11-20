@@ -6,9 +6,9 @@ use akita_algebra::offset_eq::{
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_field::{One, Prime128OffsetA7F7, Ring, Zero};
+use jolt_field::{One, Prime128Offset6A23801F, Ring, Zero};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 fn bench_fill_interval(c: &mut Criterion) {
     let challenges = (0..24)

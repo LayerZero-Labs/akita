@@ -16,6 +16,23 @@ pub(crate) struct BarrettConstant<W: PrimeWidth> {
     pub(crate) quotient: W,
 }
 
+impl<W: PrimeWidth> BarrettConstant<W> {
+    /// The constant for `value` modulo `p`, given by any representative.
+    ///
+    /// With `p < 2^31`, a centered value shifted by `R_LOG <= 32` bits stays
+    /// below `2^62`.
+    pub(crate) fn new(value: i64, p: i64) -> Self {
+        let value = value.rem_euclid(p);
+        let value = if value > p / 2 { value - p } else { value };
+        // round(value * 2^(R_LOG - 1) / p) = floor((2 * value * 2^(R_LOG - 1) + p) / 2p).
+        let quotient = ((value << W::R_LOG) + p).div_euclid(2 * p);
+        Self {
+            value: W::from_i64(value),
+            quotient: W::from_i64(quotient),
+        }
+    }
+}
+
 /// `D` constant multipliers with their Barrett quotients, stored as two
 /// parallel arrays so four consecutive entries load as one vector each.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +40,23 @@ pub(crate) struct BarrettConstant<W: PrimeWidth> {
 pub(crate) struct BarrettTable<W: PrimeWidth, const D: usize> {
     pub(crate) values: [W; D],
     pub(crate) quotients: [W; D],
+}
+
+impl<W: PrimeWidth, const D: usize> BarrettTable<W, D> {
+    /// The table whose entry `i` is `entry(i)` modulo `p`, given by any
+    /// representative.
+    pub(crate) fn from_fn(p: i64, entry: impl Fn(usize) -> i64) -> Self {
+        let mut table = Self {
+            values: [W::default(); D],
+            quotients: [W::default(); D],
+        };
+        for i in 0..D {
+            let constant = BarrettConstant::new(entry(i), p);
+            table.values[i] = constant.value;
+            table.quotients[i] = constant.quotient;
+        }
+        table
+    }
 }
 
 /// Barrett-form tables consumed by the NEON transforms.
@@ -65,32 +99,11 @@ impl<W: PrimeWidth, const D: usize> BarrettTwiddles<W, D> {
         d_inv_psi_inv: &[MontCoeff<W>; D],
         d_inv: MontCoeff<W>,
     ) -> Self {
-        // With p < 2^31, a centered value shifted by R_LOG <= 32 bits and a
-        // product of two residues both stay below 2^62.
+        // With p < 2^31, a product of two residues stays below 2^62.
         let p = prime.p.to_i64();
         let plain = |value: MontCoeff<W>| prime.to_canonical(value).to_i64();
-        let constant = |value: i64| {
-            let value = value.rem_euclid(p);
-            let value = if value > p / 2 { value - p } else { value };
-            // round(value * 2^(R_LOG - 1) / p) = floor((2 * value * 2^(R_LOG - 1) + p) / 2p).
-            let quotient = ((value << W::R_LOG) + p).div_euclid(2 * p);
-            BarrettConstant {
-                value: W::from_i64(value),
-                quotient: W::from_i64(quotient),
-            }
-        };
-        let table = |entry: &dyn Fn(usize) -> i64| {
-            let mut table = BarrettTable {
-                values: [W::default(); D],
-                quotients: [W::default(); D],
-            };
-            for i in 0..D {
-                let constant = constant(entry(i));
-                table.values[i] = constant.value;
-                table.quotients[i] = constant.quotient;
-            }
-            table
-        };
+        let constant = |value: i64| BarrettConstant::new(value, p);
+        let table = |entry: &dyn Fn(usize) -> i64| BarrettTable::from_fn(p, entry);
 
         let half = D / 2;
         let r = (1i64 << W::R_LOG) % p;

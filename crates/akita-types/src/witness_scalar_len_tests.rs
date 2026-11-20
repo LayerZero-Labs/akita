@@ -10,7 +10,7 @@ mod tests {
 
     fn base_params(mixed_dimensions: bool) -> CommittedGroupParams {
         let profile = if mixed_dimensions {
-            SisModulusProfileId::Q128OffsetA7F7
+            SisModulusProfileId::Q128Offset6A23801F
         } else {
             SisModulusProfileId::Q32Offset99
         };
@@ -171,7 +171,7 @@ mod tests {
         payload_mode: akita_params::CommitmentPayloadMode,
     ) -> CommittedGroupParams {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             256,
             2,
             2,
@@ -264,11 +264,11 @@ mod tests {
                     .map(RelationRowGeometry::physical_coefficient_width)
                     .sum::<usize>()
             );
-            let v = crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
+            let v = crate::RingVec::<jolt_field::Prime128Offset6A23801F>::from_coeffs(vec![
                 Default::default();
                 params.open().matrix.output_rank() * 128
             ]);
-            let u = crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
+            let u = crate::RingVec::<jolt_field::Prime128Offset6A23801F>::from_coeffs(vec![
                 Default::default();
                 params.outer().matrix.output_rank() * 256
             ]);
@@ -538,7 +538,7 @@ mod tests {
     fn relation_geometry_distinguishes_equal_width_opening_methods() {
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("opening batch");
         let mut packing = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             128,
             2,
             2,
@@ -572,7 +572,7 @@ mod tests {
         assert_ne!(packing_geometry, trace_geometry);
 
         let mut overlap = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             128,
             2,
             2,
@@ -605,8 +605,7 @@ mod tests {
                 ..
             }
         ));
-        let v =
-            crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
+        let v = crate::RingVec::<jolt_field::Prime128Offset6A23801F>::from_coeffs(vec![
                 Default::default();
                 overlap
                     .open()
@@ -614,8 +613,7 @@ mod tests {
                     .output_rank()
                     * 128
             ]);
-        let u =
-            crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
+        let u = crate::RingVec::<jolt_field::Prime128Offset6A23801F>::from_coeffs(vec![
                 Default::default();
                 overlap
                     .outer()

@@ -8,7 +8,7 @@ use akita_params::{
     TerminalFoldParams, TerminalResponseShape,
 };
 use akita_types::RingView;
-use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::Prime128Offset6A23801F as F;
 use jolt_field::Zero;
 
 #[test]
@@ -33,7 +33,7 @@ fn role_dims_reject_b_larger_than_a() {
 
 fn params(ring_dimension: usize) -> CommittedGroupParams {
     CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         ring_dimension,
         3,
         1,

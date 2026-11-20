@@ -142,7 +142,7 @@ where
 mod tests {
     use super::*;
     use crate::opaque::RecursiveWitnessFlat;
-    use jolt_field::{Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_field::{Prime128Offset6A23801F as F, Ring, Zero};
 
     #[test]
     fn suffix_tensor_inputs_match_padded_base_table_reference() {

@@ -129,7 +129,7 @@ prefix slots.
   require distinct setup-prefix slot sets. The test is production-sized and
   ignored in default CI. Run it before a release that relies on one setup for
   two recursive families:
-  `cargo test --release -p akita-pcs --test recursive_setup_e2e --features profile-ci -- --ignored combined_recursive_setup_proves_both_onehot_families`
+  `cargo test --release -p akita-pcs --test integration --features profile-ci -- --ignored recursive_setup_e2e::combined_recursive_setup_proves_both_onehot_families`
 
 ### Testing Strategy
 

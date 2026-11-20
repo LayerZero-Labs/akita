@@ -1,4 +1,4 @@
-use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59};
 
 use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::*;
@@ -154,7 +154,7 @@ fn field_residues_match_centered_reduction() {
     }
     check::<Prime32Offset99>();
     check::<Prime64Offset59>();
-    check::<Prime128OffsetA7F7>();
+    check::<Prime128Offset6A23801F>();
 }
 
 #[test]

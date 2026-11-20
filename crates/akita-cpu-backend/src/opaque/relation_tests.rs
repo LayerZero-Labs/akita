@@ -30,7 +30,7 @@ use akita_types::{
     RingRelationInstance, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
 };
 use akita_verifier::{DirectScan, PreparedCoefficientFunctional};
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
+use jolt_field::{Prime128Offset6A23801F, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 
 type ReducedF = Prime64Offset59;
@@ -388,7 +388,7 @@ fn assert_reduced_compiler_matches_structured_verifier(
 
 #[test]
 fn centered_i32_decompose_matches_ring_decompose() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const D: usize = 128;
 
     let extremes = [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX];

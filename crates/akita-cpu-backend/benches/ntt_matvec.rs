@@ -12,9 +12,11 @@ use criterion::{
     criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, BenchmarkId, Criterion,
     Throughput,
 };
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{
+    CanonicalEncoding, Field, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59,
+};
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 
 const FIXED_WIDTH: usize = 128;
 const RANKS: [usize; 4] = [1, 2, 4, 8];

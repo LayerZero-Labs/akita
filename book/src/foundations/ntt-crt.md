@@ -231,14 +231,18 @@ it evaluates a polynomial at many points in the protocol field itself.
 The production `fp128` modulus
 
 \[
-q=2^{128}-2^{32}+22537
+q=2^{128}-1780711455
 \]
 
 was chosen in part because \(q-1\) contains the smooth factor
 
 \[
-17496=2^3\cdot 3^7.
+337500000=2^5\cdot 3^3\cdot 5^8.
 \]
+
+The configured `fp128` subgroup is this whole smooth factor. Its largest
+power-of-two subgroup has order only 32, so useful transform sizes mix the
+radices 2, 3, and 5.
 
 `primitive_nth_root::<F>(n)` checks that `n` is positive and divides the
 configured smooth subgroup order, then derives a root of order `n` from the
@@ -278,13 +282,14 @@ difference. Radix 3 uses \(1+\omega+\omega^2=0\) to reduce the number of
 field multiplications. Radix 5 and radix 7 use precomputed Winograd constants
 and fixed addition chains instead of a dense quadratic-size DFT.
 
-The configured `fp128` subgroup uses only radices 2 and 3. Radix-5 and radix-7
-kernels are implemented, but the current tests do not exercise them. Direct-DFT
-comparisons cover the selected sizes 2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162,
-243, 486, and 729. Separate tests check root orders at selected sizes through
-17496, forward/inverse round trips at 243, 1458, and 2187, and coset extension
-from 243 to 2187. These checks do not establish parity for every subgroup
-divisor.
+The configured `fp128` subgroup uses radices 2, 3, and 5. The radix-7 kernel
+is implemented, but 7 does not divide \(q-1\), so the current tests do not
+exercise it. Direct-DFT comparisons cover the selected sizes 2, 3, 4, 5, 6, 8,
+9, 10, 12, 15, 16, 20, 25, 27, 30, 32, 45, 50, 54, 75, 96, 125, 135, and 250.
+A separate test checks the root order at all 216 divisors of 337,500,000.
+Forward/inverse round trips run at 864, 3125, and 5400, and coset extension
+runs from 125 to 1000. These checks do not establish transform parity for every
+subgroup divisor.
 
 ### Coset extension
 

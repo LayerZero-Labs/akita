@@ -1,7 +1,7 @@
 use super::*;
-use jolt_field::{One, Prime128OffsetA7F7, Zero};
+use jolt_field::{One, Prime128Offset6A23801F, Zero};
 
-type TestField = Prime128OffsetA7F7;
+type TestField = Prime128Offset6A23801F;
 
 const BLOCK_LEN: usize = 32;
 const FIELD_LEN: usize = 256;

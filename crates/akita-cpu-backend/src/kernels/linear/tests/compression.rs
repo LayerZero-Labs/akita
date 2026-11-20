@@ -6,7 +6,7 @@ use akita_algebra::CyclotomicRing;
 use akita_params::layout::FlatMatrix;
 use akita_types::prepare_compression_ntt_cache;
 use jolt_field::{
-    CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring,
+    CanonicalEncoding, Field, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59, Ring,
 };
 
 fn assert_compression_batch<F: Field + CanonicalEncoding + Ring, const D: usize>() {
@@ -69,8 +69,8 @@ fn schoolbook_cyclic_digit_product<F: Field + Ring, const D: usize>(
 
 #[test]
 fn compression_batch_matches_schoolbook_across_the_rank_one_ladders() {
-    assert_compression_batch::<Prime128OffsetA7F7, 16>();
-    assert_compression_batch::<Prime128OffsetA7F7, 32>();
+    assert_compression_batch::<Prime128Offset6A23801F, 16>();
+    assert_compression_batch::<Prime128Offset6A23801F, 32>();
     assert_compression_batch::<Prime64Offset59, 32>();
     assert_compression_batch::<Prime64Offset59, 64>();
     assert_compression_batch::<Prime32Offset99, 64>();
@@ -79,7 +79,7 @@ fn compression_batch_matches_schoolbook_across_the_rank_one_ladders() {
 
 #[test]
 fn compression_batch_rejects_mixed_shapes_and_non_binary_digits() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     const D: usize = 16;
     let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::one(); 4]);
     let slot = prepare_compression_ntt_cache(flat.ring_view::<D>(1, 4).expect("matrix"))

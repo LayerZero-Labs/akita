@@ -3,7 +3,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_types::{
     derive_public_matrix_prefix, setup_claims::SetupClaim, AkitaExpandedSetup, AkitaSetupDescriptor,
 };
-use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::Prime128Offset6A23801F as F;
 
 fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>> {
     let seed = [23; 32].into();

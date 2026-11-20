@@ -158,7 +158,7 @@ impl<E: Field> SetupQuery<E> {
 mod tests {
     use super::*;
     use crate::{AkitaExpandedSetup, AkitaSetupDescriptor};
-    use jolt_field::{Prime128OffsetA7F7 as F, Ring};
+    use jolt_field::{Prime128Offset6A23801F as F, Ring};
 
     #[test]
     fn compilation_budget_rejects_large_index_tables_before_allocation() {

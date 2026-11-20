@@ -42,7 +42,7 @@ Modeling choices:
     - length_bound = sqrt(collision_l2_sq)  (complete-vector squared key)
 
 The runtime protocol prime may be a different 128-bit pseudo-Mersenne prime,
-for example p = 2^128 - 2^32 + 22537. That distinction is immaterial for
+for example p = 2^128 - 1780711455. That distinction is immaterial for
 these coarse SIS width estimates: lattice-estimator sees q through log(q), and
 all supported 128-bit protocol primes differ from 2^128 by a tiny additive
 offset. We therefore use one representative 128-bit q and state it explicitly.
@@ -98,8 +98,8 @@ FAMILIES: dict[str, tuple[int, str, list[int], list[int]]] = {
         SQUARED_BUCKETS,
     ),
     "q128": (
-        (1 << 128) - ((1 << 32) - 22537),
-        "2^128 - (2^32 - 22537)",
+        (1 << 128) - 1780711455,
+        "2^128 - 1780711455",
         RING_DIMS,
         SQUARED_BUCKETS,
     ),

@@ -509,12 +509,12 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_params::{CommitmentPayloadMode, CompressionMapPlan, RingRelationMode};
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
 
     #[test]
     fn reduced_compression_program_covers_every_map_without_quotient_events() {
         let mut params = akita_params::CommittedGroupParams::params_only(
-            akita_params::SisModulusProfileId::Q128OffsetA7F7,
+            akita_params::SisModulusProfileId::Q128Offset6A23801F,
             32,
             2,
             1,
@@ -647,9 +647,13 @@ mod tests {
 
     #[test]
     fn reduced_map_uses_canonical_geometry_at_unaligned_window() {
-        let map =
-            CompressionMapPlan::new(akita_params::SisModulusProfileId::Q128OffsetA7F7, 8, 16, 1)
-                .unwrap();
+        let map = CompressionMapPlan::new(
+            akita_params::SisModulusProfileId::Q128Offset6A23801F,
+            8,
+            16,
+            1,
+        )
+        .unwrap();
         let setup_coefficients = map.input_width() * map.ring_dimension();
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             crate::AkitaSetupDescriptor {

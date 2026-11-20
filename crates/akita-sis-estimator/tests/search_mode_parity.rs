@@ -39,7 +39,7 @@ const SMOKE_CASES: &[SmokeCase] = &[
         coeff_linf_bound: 15,
     },
     SmokeCase {
-        family: AkitaModulusProfileId::Q128OffsetA7F7,
+        family: AkitaModulusProfileId::Q128Offset6A23801F,
         d: 32,
         rank: 1,
         width: 8,
@@ -67,7 +67,7 @@ const SMOKE_CASES: &[SmokeCase] = &[
         coeff_linf_bound: 255,
     },
     SmokeCase {
-        family: AkitaModulusProfileId::Q128OffsetA7F7,
+        family: AkitaModulusProfileId::Q128Offset6A23801F,
         d: 32,
         rank: 1,
         width: 2,

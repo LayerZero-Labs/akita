@@ -192,10 +192,10 @@ pub fn akita_q64() -> BigUint {
 }
 
 /// Representative modulus for Akita q128 tables:
-/// `2^128 - (2^32 - 22537)`.
+/// `2^128 - 1780711455`.
 #[must_use]
 pub fn akita_q128() -> BigUint {
-    (BigUint::one() << 128usize) - ((BigUint::one() << 32usize) - BigUint::from(22_537u32))
+    (BigUint::one() << 128usize) - BigUint::from(1_780_711_455u32)
 }
 
 #[cfg(test)]
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(akita_q64(), BigUint::from(u64::MAX) - BigUint::from(58u32));
         assert_eq!(
             akita_q128().to_string(),
-            "340282366920938463463374607427473266697"
+            "340282366920938463463374607429987500001"
         );
     }
 }

@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type F = jolt_field::Prime128OffsetA7F7;
+        type F = jolt_field::Prime128Offset6A23801F;
         type E = F;
         const D: usize = 128;
         const NUM_VARIABLES: usize = 16;
@@ -652,7 +652,7 @@ mod tests {
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
         let level_params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             D,
             3,
             2,

@@ -29,8 +29,8 @@ pub use logging::{
 pub use proof_stream::finish_proof_ranges;
 pub use proof_stream::{
     bind_instance, exchange_extension_group, ext_challenge, ext_challenges, extension_slots,
-    new_prover_channel, new_verifier_channel, nonce_encoded_len, nonce_max_bytes, prover_context,
-    public_bytes, public_extensions, public_fields, receive_bounded_bytes, receive_byte_group,
+    new_verifier_channel, nonce_encoded_len, nonce_max_bytes, prover_context, public_bytes,
+    public_extensions, public_fields, receive_bounded_bytes, receive_byte_group,
     receive_field_group, receive_nonce, reject, send_bounded_bytes, send_byte_group,
     send_field_group, send_nonce, verifier_context, CommitmentDigest, ExtensionAtom, FieldAtom,
     NonceAtom, ProofChannel, ProtocolContextRecord, ProtocolMessageKind, ProtocolSiteId,
@@ -42,7 +42,7 @@ pub use proof_stream::{
 };
 pub use proof_stream::{field_digest, receive_field_digest, send_field_digest, FIELD_DIGEST_BYTES};
 #[cfg(feature = "prover")]
-pub use proof_stream::{FoldPreview, FoldWork};
+pub use proof_stream::{new_prover_channel, FoldPreview, FoldWork};
 
 /// Sponge backend selected by the active transcript feature.
 #[cfg(feature = "transcript-blake2b")]

@@ -124,6 +124,7 @@ paths; every other target keeps the portable path.
 | --- | --- |
 | `logging-transcript` | Records transcript schedule events and checks that wire values are absorbed before challenges |
 | `response-model-diagnostics` | Measures complete source and response energies for planner model calibration |
+| `experiment-capture` | Host-only capture of challenge messages and ranks for recursive checked advice; also requires `AKITA_CAPTURE_CHALLENGES` |
 | `compression-weights-crosscheck` | Checks every factored compression relation weight evaluation against the per-event evaluation and counts its evaluation tiers |
 
 `response-model-diagnostics` scans witness data that normal proving does not
@@ -136,6 +137,47 @@ grouped builder family with the per-event builder. A difference fails
 verification. Each evaluation emits one `tracing` event at `INFO` with its
 evaluation tiers and builder outcomes. It is for native diagnostic runs; it
 changes no proof, transcript or default build.
+
+`experiment-capture` is a feature of `akita-challenges`. On non-`riscv64`
+hosts, setting `AKITA_CAPTURE_CHALLENGES` (to any value) enables capture. The
+environment setting is cached on first use; set it before decoding and use a
+separate process to change modes. Capture forces serial decoding and emits
+these space-separated stderr lines:
+
+```text
+EXPERIMENT_MESSAGE d a b count filtered message_hex
+EXPERIMENT_RANK d a b rank_one rank_two
+```
+
+Here `d` is the ring dimension, `a` and `b` count coefficients of magnitude 1
+and 2, `count` is the requested number of challenges, and `filtered` is `0` for
+an unfiltered draw or `1` for an operator-norm draw. `message_hex` is the entire
+squeezed message in byte order, with two lowercase hex digits per byte and no
+prefix. Other fields are decimal integers. `rank_one` is the colexicographic
+rank of the ±1 positions; `rank_two` ranks the ±2 positions within their
+complement.
+
+To produce advice, capture from a process that only verifies. Prover draws,
+including previews, also emit capture lines; their output does not have the
+verifier's tape-consumption order.
+
+For a verification-only capture, a message line precedes its candidate rank
+lines. Ranks are emitted serially in the order position advice will be consumed:
+one per in-range candidate examined, including candidates later rejected by the
+operator-norm predicate.
+Out-of-range candidates emit no rank line, and decoding stops after the
+requested number of accepted challenges. Unfiltered D64/31/10 draws requesting
+at least 1024 challenges emit no rank lines because fold verification routes
+them to quartet advice. A capture consumer must preserve draw and candidate
+order when producing the two advice tapes. The
+[advice-frame contract](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame)
+defines their binary layout and authentication requirements.
+Installing captured advice requires a trusted byte budget; see
+[checked challenge advice](../how/verification.md#checked-challenge-advice).
+
+Capture is disabled on `riscv64` and in builds without the feature. It changes
+host execution and diagnostic output; challenge values and transcript bytes
+remain the same.
 
 The `transcript_schedule` example uses `logging-transcript`:
 

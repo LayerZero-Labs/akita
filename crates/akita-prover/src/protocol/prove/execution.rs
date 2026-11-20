@@ -338,7 +338,7 @@ where
         .ok_or_else(|| AkitaError::Internal("proof schedule has no fold levels".into()))?;
     let root_executor = registry.slot(root_id)?;
     let identity = NEXT_PROOF
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
         .map_err(|_| AkitaError::Internal("proof identity exhausted".into()))?;
     let request = ProofRequest {
         setup: expanded,

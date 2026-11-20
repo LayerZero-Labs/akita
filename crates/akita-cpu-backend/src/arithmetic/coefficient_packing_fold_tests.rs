@@ -3,7 +3,7 @@ use akita_challenges::{SparseChallenge, PRODUCTION_FOLD_CHALLENGE_RING_DIMS};
 use akita_params::{basis_weights, BasisMode};
 use akita_types::{PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingTables};
 use jolt_field::{
-    Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Zero,
+    Ext2, ExtField, FpExt4, One, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59, Zero,
 };
 
 fn field_value<T: Ring>(seed: usize) -> T {
@@ -120,7 +120,7 @@ where
 fn subring_embedding_and_linearity_cover_production_field_tiers() {
     for &s in PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
         for h in [1usize, 2, 4] {
-            assert_s_linearity::<Prime128OffsetA7F7, Prime128OffsetA7F7>(s, h);
+            assert_s_linearity::<Prime128Offset6A23801F, Prime128Offset6A23801F>(s, h);
         }
     }
     for h in [1usize, 2, 4] {
@@ -267,7 +267,7 @@ where
 
 #[test]
 fn direct_partials_and_scalar_opening_match_flat_factorization() {
-    assert_partial_and_scalar_factorization::<Prime128OffsetA7F7, Prime128OffsetA7F7>(1);
+    assert_partial_and_scalar_factorization::<Prime128Offset6A23801F, Prime128Offset6A23801F>(1);
     assert_partial_and_scalar_factorization::<Prime64Offset59, Ext2<Prime64Offset59>>(2);
     assert_partial_and_scalar_factorization::<Prime32Offset99, FpExt4<Prime32Offset99>>(2);
 }
@@ -331,7 +331,7 @@ fn prepared_point_matches_direct_opening_in_both_bases() {
 
 #[test]
 fn single_partial_block_preserves_the_full_position_domain() {
-    type F = Prime128OffsetA7F7;
+    type F = Prime128Offset6A23801F;
     let geometry = SubringCoefficientPackingGeometry::try_new(1, 64, 64).expect("geometry");
     let num_live_positions = 2;
     let num_positions_per_block = 4;
@@ -445,7 +445,7 @@ where
 
 #[test]
 fn folded_product_returns_reduction_and_positive_divisibility_quotient() {
-    assert_fold_product_and_divisibility::<Prime128OffsetA7F7, Prime128OffsetA7F7>();
+    assert_fold_product_and_divisibility::<Prime128Offset6A23801F, Prime128Offset6A23801F>();
     assert_fold_product_and_divisibility::<Prime64Offset59, Ext2<Prime64Offset59>>();
     assert_fold_product_and_divisibility::<Prime32Offset99, FpExt4<Prime32Offset99>>();
 }

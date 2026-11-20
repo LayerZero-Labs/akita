@@ -7,10 +7,10 @@ use akita_verifier::{
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_field::{One, Prime128OffsetA7F7};
+use jolt_field::{One, Prime128Offset6A23801F};
 use std::time::Duration;
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 const D: usize = 128;
 
 fn bench_relation_evaluator(c: &mut Criterion) {

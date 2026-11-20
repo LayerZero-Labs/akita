@@ -2,7 +2,7 @@ use super::*;
 
 fn response_geometry_params(opening_method: akita_params::OpeningMethod) -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
-        akita_params::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128Offset6A23801F,
         256,
         2,
         2,

@@ -98,6 +98,13 @@ where
         setup_policy: &mut SetupPolicy<'_, '_, Cfg::ExtField>,
     ) -> Result<PendingEof, AkitaError> {
         let result = (|| {
+            if self.setup_mode == crate::SetupMode::Defer
+                && matches!(setup_policy, SetupPolicy::Check(_))
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "deferred verifier material cannot close direct setup obligations".into(),
+                ));
+            }
             if let SetupPolicy::Check(Some(accumulator)) = setup_policy {
                 if !accumulator.pending.is_empty() || accumulator.advice.is_some() {
                     return Err(AkitaError::InvalidInput(

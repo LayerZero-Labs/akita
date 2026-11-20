@@ -1,7 +1,7 @@
 //! Reusable backend ownership, statement binding, and independent proof lifetimes.
 #![allow(missing_docs)]
 
-mod common;
+use crate::common;
 #[path = "backend_ownership/signed_block_poly.rs"]
 mod signed_block_poly;
 

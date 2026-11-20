@@ -594,7 +594,7 @@ mod tests {
     fn exact_response_diameter_uses_the_exact_collision_key() {
         let delta_fold = 6;
         for (d, profile, expected_collision) in [
-            (128, SisModulusProfileId::Q128OffsetA7F7, 32_505_732),
+            (128, SisModulusProfileId::Q128Offset6A23801F, 32_505_732),
             (1024, SisModulusProfileId::Q64Offset59, 16_777_152),
         ] {
             let challenge = SparseChallengeConfig::production_for_ring_dim(d).unwrap();
@@ -810,7 +810,7 @@ mod tests {
                 rounded_up_role_a_inf_norm(
                     DEFAULT_SIS_SECURITY_POLICY,
                     SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
+                    SisModulusProfileId::Q128Offset6A23801F,
                     d,
                     log_basis,
                     &challenge,
@@ -820,7 +820,7 @@ mod tests {
                 ceil_supported_linf_bound(
                     DEFAULT_SIS_SECURITY_POLICY,
                     SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
+                    SisModulusProfileId::Q128Offset6A23801F,
                     SisMatrixRole::Inner,
                     d as u32,
                     exact_collision,
@@ -830,7 +830,7 @@ mod tests {
         assert!(rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             d,
             log_basis,
             &challenge,
@@ -844,7 +844,7 @@ mod tests {
             assert!(rounded_up_role_a_inf_norm(
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
+                SisModulusProfileId::Q128Offset6A23801F,
                 d,
                 log_basis,
                 &challenge,

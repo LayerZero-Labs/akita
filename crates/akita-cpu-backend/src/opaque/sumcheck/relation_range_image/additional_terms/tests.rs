@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use jolt_field::One;
-use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::Prime128Offset6A23801F as F;
 use std::collections::BTreeMap;
 
 #[test]

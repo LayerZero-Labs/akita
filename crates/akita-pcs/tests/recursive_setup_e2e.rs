@@ -19,7 +19,7 @@
 #![cfg(feature = "profile-ci")]
 #![allow(missing_docs)]
 
-mod common;
+use crate::common;
 
 use akita_config::{RecursiveCommitmentConfig, SetupRequirements};
 use akita_cpu_backend::CpuBackend;

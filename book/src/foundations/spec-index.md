@@ -39,6 +39,7 @@ policy and the checker use the same live set in
 | [`grinding-nonce-encoding`](../../../specs/grinding-nonce-encoding.md) | active | Explains current inline-LEB128 nonces and compares them with the historical packed representation. |
 | [`jolt-transcript-adoption`](../../../specs/jolt-transcript-adoption.md) | active | Akita's adoption of `jolt-transcript`: the session, codec, poisoning and proof-of-work check of protocol v8. |
 | [`akita-embedded-transcript`](../../../specs/akita-embedded-transcript.md) | implemented | Running Akita inside a caller's transcript: the protocol tag, the embedded entries, and the caller contract. |
+| [`verifier-setup-scan`](../../../specs/verifier-setup-scan.md) | implemented | Cost model, exactness argument, and measured spans of the direct setup-contribution scan; records the rejected column-first contraction. |
 
 ## Archived records
 

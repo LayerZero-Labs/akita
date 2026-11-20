@@ -17,7 +17,7 @@ fn prepared_relation_address_clones_share_the_equality_window() {
 #[test]
 fn prepare_accepts_exact_non_pow2_fold_count() {
     let mut lp = CommittedGroupParams::params_only(
-        akita_params::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::SisModulusProfileId::Q128Offset6A23801F,
         64,
         3,
         1,
@@ -31,7 +31,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     lp.own_group_mut().profile.inner.matrix = akita_params::InnerCommitMatrixParams::new_unchecked(
         akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
         akita_params::sis::SisTableDigest::CURRENT,
-        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
         1,
         16,
         1,
@@ -40,7 +40,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     lp.own_group_mut().profile.outer.matrix = akita_params::OuterCommitMatrixParams::new_unchecked(
         akita_params::sis::DEFAULT_SIS_SECURITY_POLICY,
         akita_params::sis::SisTableDigest::CURRENT,
-        akita_params::sis::SisModulusProfileId::Q128OffsetA7F7,
+        akita_params::sis::SisModulusProfileId::Q128Offset6A23801F,
         1,
         18,
         1,

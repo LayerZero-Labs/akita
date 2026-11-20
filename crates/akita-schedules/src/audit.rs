@@ -641,7 +641,7 @@ mod tests {
                 log_commit_bound: 1,
                 log_open_bound: Some(128),
             },
-            sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            sis_modulus_profile: SisModulusProfileId::Q128Offset6A23801F,
             sis_security_policy: SisSecurityPolicyId::Quantum169BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
             sis_l2_table_digest: SisL2TableDigest::CURRENT,

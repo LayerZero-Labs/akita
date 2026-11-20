@@ -401,7 +401,7 @@ fn pre_psi_digit_conversion_is_charged_once_before_physical_a_sizing() {
     let expected_linf = 8 * challenge_l1 * physical_linf;
     let expected_l2_sq = 64 * challenge_l1 * challenge_l1 * physical_l2_sq;
     for profile in [
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         SisModulusProfileId::Q64Offset59,
         SisModulusProfileId::Q32Offset99,
     ] {

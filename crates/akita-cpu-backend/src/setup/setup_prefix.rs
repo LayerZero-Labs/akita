@@ -166,7 +166,7 @@ mod tests {
         OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId, SisTableKey,
     };
     use akita_serialization::AkitaSerialize;
-    use jolt_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128Offset6A23801F as F;
     use std::sync::Arc;
 
     type MissingExportExecutor<'a> = (
@@ -177,7 +177,7 @@ mod tests {
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
         let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             ring_dimension,
             3,
             2,

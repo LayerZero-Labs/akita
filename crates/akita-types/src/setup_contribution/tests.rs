@@ -1,11 +1,11 @@
 use super::*;
 use crate::{PreparedRelationAddress, SetupContributionPlan};
 use akita_params::{CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
-use jolt_field::{One, Prime128OffsetA7F7};
+use jolt_field::{One, Prime128Offset6A23801F};
 
 mod prepare;
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 const TEST_D: usize = 64;
 
 fn test_scalar(value: u128) -> F {

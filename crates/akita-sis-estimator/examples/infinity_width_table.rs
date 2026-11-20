@@ -411,7 +411,7 @@ fn write_rust_split(
     for modulus_profile in [
         AkitaModulusProfileId::Q32Offset99,
         AkitaModulusProfileId::Q64Offset59,
-        AkitaModulusProfileId::Q128OffsetA7F7,
+        AkitaModulusProfileId::Q128Offset6A23801F,
     ] {
         generated_files.push((
             format!("{}.rs", modulus_profile.label()),
@@ -447,7 +447,7 @@ fn rust_mod_source(
     base_digest: [u8; 32],
 ) -> String {
     format!(
-        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::{{SisModulusProfileId, SisSecurityPolicyId}};\n\n/// SHA3-256 identity of the generated table and provenance files.\npub(super) const SIS_TABLE_DIGEST: [u8; 32] = {};\n\n/// Generated SIS max-width table for the named security policy.\n///\n/// Runtime keys are `(d, coeff_linf_bound) -> widths[rank - 1]`, projected from\n/// scalar cutoffs as `width = cutoff_m(B, n = rank * d) / d`.\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    policy: SisSecurityPolicyId,\n    modulus_profile: SisModulusProfileId,\n    d: u32,\n    coeff_linf_bound: u128,\n) -> Option<&'static [u64]> {{\n    if policy != SisSecurityPolicyId::{} {{\n        return None;\n    }}\n    match modulus_profile {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, coeff_linf_bound),\n    }}\n}}\n",
+        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::{{SisModulusProfileId, SisSecurityPolicyId}};\n\n/// SHA3-256 identity of the generated table and provenance files.\npub(super) const SIS_TABLE_DIGEST: [u8; 32] = {};\n\n/// Generated SIS max-width table for the named security policy.\n///\n/// Runtime keys are `(d, coeff_linf_bound) -> widths[rank - 1]`, projected from\n/// scalar cutoffs as `width = cutoff_m(B, n = rank * d) / d`.\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    policy: SisSecurityPolicyId,\n    modulus_profile: SisModulusProfileId,\n    d: u32,\n    coeff_linf_bound: u128,\n) -> Option<&'static [u64]> {{\n    if policy != SisSecurityPolicyId::{} {{\n        return None;\n    }}\n    match modulus_profile {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q128Offset6A23801F => q128::sis_max_widths(d, coeff_linf_bound),\n    }}\n}}\n",
         table_header(policy, profile),
         rust_byte_array(base_digest),
         policy.label(),
@@ -511,7 +511,7 @@ policy={}\n\
 estimator_revision={}\n\
 optimizer_profile={}\n\
 certificate_domain={}\n\
-modulus_profiles=q32:2^32-99,q64:2^64-59,q128:2^128-(2^32-22537)\n\
+modulus_profiles=q32:2^32-99,q64:2^64-59,q128:2^128-1780711455\n\
 norm=coefficient-l-infinity\n\
 shape=LGSA\n\
 adps16_quantum_exponent=0.2650\n\

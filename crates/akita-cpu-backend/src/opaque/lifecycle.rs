@@ -272,7 +272,7 @@ pub(crate) struct BackendIdentity {
 impl BackendIdentity {
     pub(crate) fn new(setup_digest: [u8; 32]) -> Result<Arc<Self>, AkitaError> {
         let backend_id = NEXT_BACKEND_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map_err(|_| AkitaError::Internal("backend identity exhausted".into()))?;
         Ok(Arc::new(Self {
             backend_id,
@@ -324,7 +324,7 @@ impl BackendIdentity {
     ) -> Result<ScopeLease, AkitaError> {
         let sequence = self
             .next_scope
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map_err(|_| AkitaError::Internal("proof scope identity exhausted".into()))?;
         let scope =
             ProofScopeId::from_raw((u128::from(self.backend_id) << 64) | u128::from(sequence));
@@ -352,7 +352,7 @@ impl BackendIdentity {
     }
     pub(crate) fn next_operation_id(&self) -> Result<u128, AkitaError> {
         self.next_operation
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map(u128::from)
             .map_err(|_| AkitaError::Internal("operation identity exhausted".into()))
     }
@@ -365,12 +365,12 @@ mod tests {
     fn proof_session_drop_and_finish_require_the_owning_capability() {
         use akita_prover::backend::ProofScopeConsumer;
         let backend = crate::CpuBackend::<
-            jolt_field::Prime128OffsetA7F7,
-            jolt_field::Prime128OffsetA7F7,
+            jolt_field::Prime128Offset6A23801F,
+            jolt_field::Prime128Offset6A23801F,
         >::for_arithmetic_tests();
         let foreign = crate::CpuBackend::<
-            jolt_field::Prime128OffsetA7F7,
-            jolt_field::Prime128OffsetA7F7,
+            jolt_field::Prime128Offset6A23801F,
+            jolt_field::Prime128Offset6A23801F,
         >::for_arithmetic_tests();
         let a = backend.owner().begin_scope().unwrap();
         let b = backend.owner().begin_scope().unwrap();

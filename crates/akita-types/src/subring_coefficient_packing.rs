@@ -234,11 +234,11 @@ impl<E: Field> SubringCoefficientPackingTables<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset6A23801F;
 
     #[test]
     fn opening_point_uses_pack_tail_position_block_order() {
-        type F = Prime128OffsetA7F7;
+        type F = Prime128Offset6A23801F;
         let geometry = SubringCoefficientPackingGeometry::try_new(1, 128, 64).unwrap();
         // log(kh)=1, log(s)=6, log(M)=2, log(B-domain)=1.
         let point = (1..=10).map(F::from_u64).collect::<Vec<_>>();

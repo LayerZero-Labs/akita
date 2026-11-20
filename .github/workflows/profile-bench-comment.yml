@@ -21,7 +21,8 @@ jobs:
     # passing cases). Download below tolerates a missing artifact.
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion != 'cancelled'
+      github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
     steps:
       - name: Resolve PR number

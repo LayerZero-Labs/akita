@@ -38,11 +38,11 @@ struct RecordingDraw<'a> {
 }
 
 impl FoldDraw for RecordingDraw<'_> {
-    fn draw_message(
+    fn draw_message<T>(
         &mut self,
         len: usize,
-        decode: impl FnOnce(&[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError>,
-    ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
+        decode: impl FnOnce(&[u8]) -> Result<Option<T>, AkitaError>,
+    ) -> Result<Option<T>, AkitaError> {
         self.message_lens.push(len);
         let messages = &mut self.messages;
         self.inner.draw_message(len, |message| {

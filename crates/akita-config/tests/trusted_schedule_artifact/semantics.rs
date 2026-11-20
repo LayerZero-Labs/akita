@@ -16,6 +16,22 @@ fn edited_artifact<Cfg: CommitmentConfig>(edit: impl FnOnce(&mut serde_json::Val
 
 /// The first recursive fold's own ("final") group. It is the last entry: a
 /// setup prefix and precommitted groups precede it in canonical order.
+/// The only root group of the first row whose root has no precommitted group, so an edit to it is
+/// reported against the root final group regardless of catalog row order.
+fn single_group_root(value: &mut serde_json::Value) -> &mut serde_json::Value {
+    value["rows"]
+        .as_array_mut()
+        .expect("rows")
+        .iter_mut()
+        .find_map(|row| {
+            row["schedule"]["root"]["params"]["groups"]["entries"]
+                .as_array_mut()
+                .filter(|entries| entries.len() == 1)
+                .and_then(|entries| entries.first_mut())
+        })
+        .expect("a row whose root has a single final group")
+}
+
 fn first_recursive_group(value: &mut serde_json::Value) -> &mut serde_json::Value {
     value["rows"]
         .as_array_mut()
@@ -107,8 +123,7 @@ fn unsupported_fold_group_log_basis_is_rejected_not_panicking() {
 fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
     let edited = format!("digit depth {} ", u64::MAX);
     let root_fold = edited_artifact::<fp128::Dense>(|value| {
-        value["rows"][0]["schedule"]["root"]["params"]["groups"]["entries"][0]["opening"]
-            ["num_digits_fold"] = u64::MAX.into();
+        single_group_root(value)["opening"]["num_digits_fold"] = u64::MAX.into();
     });
     assert_digit_range_rejection::<fp128::Dense>(&root_fold, "root final group", "fold", &edited);
     let terminal_fold = edited_artifact::<fp128::Dense>(|value| {

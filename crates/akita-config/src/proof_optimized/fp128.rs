@@ -1,10 +1,10 @@
-//! Default fp128 protocol presets on `p = 2^128 - 2^32 + 22537`
-//! (`Prime128OffsetA7F7`).
+//! Default fp128 protocol presets on `p = 2^128 - 1780711455`
+//! (`Prime128Offset6A23801F`).
 
 use super::*;
 
 /// Base field for the default fp128 presets.
-pub type Field = Prime128OffsetA7F7;
+pub type Field = Prime128Offset6A23801F;
 
 /// Default dense preset with a dimension-free flat public matrix and
 /// planner-selected per-level A/B/D commitment dimensions.
@@ -127,7 +127,7 @@ impl_proof_optimized_preset!(
     Dense,
     Field,
     Field,
-    akita_params::SisModulusProfileId::Q128OffsetA7F7,
+    akita_params::SisModulusProfileId::Q128Offset6A23801F,
     128,
     128,
     source = balanced_digits,
@@ -144,7 +144,7 @@ impl_proof_optimized_preset!(
     DenseBounded,
     Field,
     Field,
-    akita_params::SisModulusProfileId::Q128OffsetA7F7,
+    akita_params::SisModulusProfileId::Q128Offset6A23801F,
     128,
     // One declaration, not two: the macro takes an expression, so the preset is
     // configured from the same constant callers read. A signed bit width of 65 is
@@ -164,7 +164,7 @@ impl_proof_optimized_preset!(
     OneHot,
     Field,
     Field,
-    akita_params::SisModulusProfileId::Q128OffsetA7F7,
+    akita_params::SisModulusProfileId::Q128Offset6A23801F,
     128,
     1,
     source = unit_one_hot,

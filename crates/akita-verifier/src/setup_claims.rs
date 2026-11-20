@@ -42,6 +42,7 @@ impl<'a, 'b, E: Field> SetupPolicy<'a, 'b, E> {
         }
     }
 }
+pub use akita_params::SetupMode;
 
 /// Input and output setup obligations for one proof verification.
 ///

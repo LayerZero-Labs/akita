@@ -13,7 +13,7 @@ use akita_types::{
     PreparedSubringCoefficientPackingPoint, RelationWeightEvent, SubringCoefficientPackingTables,
 };
 use jolt_field::{
-    Ext2, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero,
+    Ext2, FpExt4, One, Prime128Offset6A23801F, Prime32Offset99, Prime64Offset59, Ring, Zero,
 };
 use std::sync::Arc;
 
@@ -367,8 +367,8 @@ fn compact_factors_match_dense_oracles_at_genuine_extension_values() {
 
 #[test]
 fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
-    let overlap = coefficient_packing_fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
-        SisModulusProfileId::Q128OffsetA7F7,
+    let overlap = coefficient_packing_fixture::<Prime128Offset6A23801F, Prime128Offset6A23801F>(
+        SisModulusProfileId::Q128Offset6A23801F,
         64,
         64,
         64,
@@ -379,7 +379,7 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
         2,
     );
     let alphas = [0, 1, 19];
-    assert_compact_factors_match_dense(&overlap, alphas.map(Prime128OffsetA7F7::from_u64), 29);
+    assert_compact_factors_match_dense(&overlap, alphas.map(Prime128Offset6A23801F::from_u64), 29);
 
     for d_d in [64, 128] {
         type X = FpExt4<Prime32Offset99>;
@@ -402,8 +402,8 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
         assert_compact_factors_match_dense(&h4, alphas.map(X::from_u64), 29);
     }
     let recursive_role_subcolumns =
-        coefficient_packing_fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
-            SisModulusProfileId::Q128OffsetA7F7,
+        coefficient_packing_fixture::<Prime128Offset6A23801F, Prime128Offset6A23801F>(
+            SisModulusProfileId::Q128Offset6A23801F,
             512,
             64,
             512,
@@ -415,12 +415,12 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
         );
     assert_compact_factors_match_dense(
         &recursive_role_subcolumns,
-        alphas.map(Prime128OffsetA7F7::from_u64),
+        alphas.map(Prime128Offset6A23801F::from_u64),
         29,
     );
     let (compact, _) = prepare_compact_and_oracles(
         &recursive_role_subcolumns,
-        Prime128OffsetA7F7::from_u64(19),
+        Prime128Offset6A23801F::from_u64(19),
         29,
     );
     let role_stride = recursive_role_subcolumns.params.open().digits.num_digits * 64;
@@ -436,8 +436,8 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
 
 #[test]
 fn compact_factors_skip_empty_distributed_witness_units() {
-    let fixture = coefficient_packing_fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
-        SisModulusProfileId::Q128OffsetA7F7,
+    let fixture = coefficient_packing_fixture::<Prime128Offset6A23801F, Prime128Offset6A23801F>(
+        SisModulusProfileId::Q128Offset6A23801F,
         256,
         64,
         64,
@@ -453,7 +453,7 @@ fn compact_factors_skip_empty_distributed_witness_units() {
         .units_for_group(0)
         .unwrap()
         .any(|unit| unit.num_live_blocks() == 0));
-    let alphas = [0, 1, 19].map(Prime128OffsetA7F7::from_u64);
+    let alphas = [0, 1, 19].map(Prime128Offset6A23801F::from_u64);
     assert_compact_factors_match_dense(&fixture, alphas, 29);
 }
 
@@ -540,7 +540,7 @@ fn multi_group_compact_factors_follow_relation_group_order() {
 
 #[test]
 fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
-    type Extension = Prime128OffsetA7F7;
+    type Extension = Prime128Offset6A23801F;
 
     const K: usize = 1;
     const S: usize = 64;
@@ -626,7 +626,7 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
 
 #[test]
 fn affine_coefficient_length_is_checked_before_the_contraction_cache() {
-    type Extension = Prime128OffsetA7F7;
+    type Extension = Prime128Offset6A23801F;
 
     // 2 and 6 share `trailing_zeros() == 1`. Without the check before the
     // cache lookup, the length-6 family would reuse the length-2 contraction.

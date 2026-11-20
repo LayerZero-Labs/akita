@@ -15,10 +15,10 @@ use criterion::measurement::WallTime;
 use criterion::{
     criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion, SamplingMode,
 };
-use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7, Zero};
+use jolt_field::{CanonicalEncoding, Prime128Offset6A23801F, Zero};
 use std::time::Duration;
 
-type F = Prime128OffsetA7F7;
+type F = Prime128Offset6A23801F;
 const D: usize = 64;
 
 struct SetupIndexWeightBenchCase {
@@ -72,7 +72,7 @@ fn make_case_with_shape(
     let n_d = 2;
     let log_basis = 4;
     let mut level_params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q128Offset6A23801F,
         role_dims.d_a(),
         log_basis,
         n_a,

@@ -170,7 +170,7 @@ pub fn eval_boolean_pair_tensor_families<
 mod tests {
     use super::super::EqPairTensorAxis;
     use super::*;
-    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
+    use jolt_field::{One, Prime128Offset6A23801F as F, Ring, Zero};
     #[test]
     fn clipped_addresses_keep_boolean_selection_semantics() {
         let family = EqPairTensorFamily::new(

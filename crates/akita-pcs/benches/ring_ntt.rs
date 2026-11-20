@@ -14,12 +14,12 @@ use akita_types::{prepare_ntt_cache, NttCacheMode};
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use jolt_field::{CanonicalEncoding, Fp64, One, Prime128OffsetA7F7, Prime32Offset99, Ring};
+use jolt_field::{CanonicalEncoding, Fp64, One, Prime128Offset6A23801F, Prime32Offset99, Ring};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;
 type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
-type ProductionF128 = Prime128OffsetA7F7;
+type ProductionF128 = Prime128Offset6A23801F;
 type ProductionR128D64 = CyclotomicRing<ProductionF128, 64>;
 type ProductionN128D64 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
 type ProductionTailN128D64 = CyclotomicCrtNtt<i16, 1, 64>;
@@ -216,7 +216,7 @@ fn bench_digit_lut_i8_range_q128(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
+fn bench_production_crt_cached_matvec_d64_q128_6a23801f(c: &mut Criterion) {
     let wide_params: CrtNttParamSet<i32, Q128_NUM_PRIMES, 64> = CrtNttParamSet::new(q128_primes());
     let mixed_params =
         I16TailParams::new(wide_params.clone(), CrtNttParamSet::new([I16_TAIL_PRIME]));
@@ -258,7 +258,7 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
         .collect::<Vec<_>>();
 
     c.bench_function(
-        "ring_crt_ntt_cached_matvec_i8_rhs_d64_q128a7f7_8x128_k5",
+        "ring_crt_ntt_cached_matvec_i8_rhs_d64_q128_6a23801f_8x128_k5",
         |b| {
             b.iter(|| {
                 let out: Vec<ProductionR128D64> = wide_matrix
@@ -280,7 +280,7 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
         },
     );
     c.bench_function(
-        "ring_mixed_crt_ntt_cached_matvec_i16_rhs_d64_q128a7f7_8x128_k5_plus_i16",
+        "ring_mixed_crt_ntt_cached_matvec_i16_rhs_d64_q128_6a23801f_8x128_k5_plus_i16",
         |b| {
             b.iter(|| {
                 black_box(
@@ -298,7 +298,7 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
         },
     );
     c.bench_function(
-        "terminal_relation_legacy_radix64_i8_reference_d64_q128a7f7_8x128_k5",
+        "terminal_relation_legacy_radix64_i8_reference_d64_q128_6a23801f_8x128_k5",
         |b| {
             b.iter(|| {
                 black_box(legacy_radix64_i8_reference_matvec(
@@ -310,7 +310,7 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
         },
     );
     c.bench_function(
-        "terminal_relation_mixed_i16_d64_q128a7f7_8x128_k5_plus_i16",
+        "terminal_relation_mixed_i16_d64_q128_6a23801f_8x128_k5_plus_i16",
         |b| {
             b.iter(|| {
                 black_box(
@@ -329,12 +329,12 @@ fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
     );
 }
 
-fn bench_ntt_cache_construction_d64_q128a7f7(c: &mut Criterion) {
+fn bench_ntt_cache_construction_d64_q128_6a23801f(c: &mut Criterion) {
     let rings = (0..CACHE_MAT_ROWS * PRODUCTION_CACHE_MAT_COLS)
         .map(|index| sample_production_ring_q128_d64(23 + index as u64))
         .collect::<Vec<_>>();
     let flat = FlatMatrix::from_ring_slice(&rings);
-    let mut group = c.benchmark_group("ntt_cache_construction_d64_q128a7f7_1024_rings");
+    let mut group = c.benchmark_group("ntt_cache_construction_d64_q128_6a23801f_1024_rings");
     group.bench_function("both_transforms", |b| {
         b.iter(|| {
             let view = flat
@@ -388,7 +388,7 @@ criterion_group!(
     bench_fp32_decomposition,
     bench_crt_round_trip,
     bench_digit_lut_i8_range_q128,
-    bench_production_crt_cached_matvec_d64_q128a7f7,
-    bench_ntt_cache_construction_d64_q128a7f7
+    bench_production_crt_cached_matvec_d64_q128_6a23801f,
+    bench_ntt_cache_construction_d64_q128_6a23801f
 );
 criterion_main!(ring_ntt);

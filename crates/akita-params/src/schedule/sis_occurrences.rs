@@ -252,7 +252,7 @@ mod tests {
         let table_key = sis_l2_table_key_for_collision_sq(
             DEFAULT_SIS_SECURITY_POLICY,
             SisL2TableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
+            SisModulusProfileId::Q128Offset6A23801F,
             64,
             1u128 << 50,
         )
