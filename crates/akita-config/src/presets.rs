@@ -31,13 +31,6 @@ const fn inner_basis_range(profile: akita_params::SisModulusProfileId) -> (u32, 
     };
     (OPENING_LOG_BASIS_MIN, max)
 }
-/// Explicit sparse-binary chunk size used by standard one-hot presets.
-///
-/// This is an offline sizing-policy input, not runtime group geometry. Akita's
-/// built-in external schedule artifacts use K=16; downstream configurations
-/// may generate artifacts from another policy-owned chunk size.
-pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
-    akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
 
 /// Shared short ring-challenge policy for the built-in presets.
 ///
@@ -67,13 +60,10 @@ pub(crate) fn ring_challenge_config(
 /// and the SIS modulus profile. All presets share the ring-challenge policy
 /// and opening basis range.
 macro_rules! impl_preset {
-    (@ring_dimension_schedule $mode:expr) => {
-        const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule = $mode;
-    };
     (@committed_source_class unit_one_hot) => {
         fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
             akita_params::sis::CommittedSourceClass::UnitOneHot {
-                source_chunk_size: STANDARD_ONEHOT_CHUNK_SIZE,
+                source_chunk_size: akita_params::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
             }
         }
     };
@@ -82,20 +72,27 @@ macro_rules! impl_preset {
             akita_params::sis::CommittedSourceClass::BalancedSignedDigit
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedule_family = $family_name:literal, ring_dimension_schedule = $mode:expr) => {
-        impl_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $family_name, ring_dimension_schedule = $mode);
-    };
-    (@options ring_dimension_schedule = $mode:expr) => {
-        impl_preset!(@ring_dimension_schedule $mode);
-    };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, $family_name:literal, $($options:tt)*) => {
+    (
+        $cfg:ident,
+        $field:ty,
+        $ext_field:ty,
+        $family:expr,
+        $field_bits:expr,
+        $log_commit_bound:expr,
+        source = $source:ident,
+        schedule_family = $family_name:literal,
+        ring_dimension_schedule = $ring_dimension_schedule:expr
+    ) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
+
+            const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+                $ring_dimension_schedule;
+
             fn schedule_family_name() -> &'static str {
                 $family_name
             }
-            impl_preset!(@options $($options)*);
 
             fn decomposition() -> akita_params::DecompositionParams {
                 akita_params::DecompositionParams {
@@ -119,7 +116,6 @@ macro_rules! impl_preset {
                 $family
             }
 
-
             fn opening_basis_range() -> (u32, u32) {
                 (
                     $crate::presets::OPENING_LOG_BASIS_MIN,
@@ -128,15 +124,11 @@ macro_rules! impl_preset {
             }
 
             fn inner_basis_range() -> (u32, u32) {
-                $crate::presets::inner_basis_range(
-                    Self::sis_modulus_profile(),
-                )
+                $crate::presets::inner_basis_range(Self::sis_modulus_profile())
             }
 
             impl_preset!(@committed_source_class $source);
-
         }
-
     };
 }
 
