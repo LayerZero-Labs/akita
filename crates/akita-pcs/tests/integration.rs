@@ -10,6 +10,7 @@ mod akita_small_field_e2e;
 #[path = "algebra/mod.rs"]
 mod algebra;
 mod backend_ownership;
+mod checked_advice_e2e;
 mod distributed_setup_offload_e2e;
 mod dynamic_backends;
 mod embedded_transcript;

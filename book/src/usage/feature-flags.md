@@ -157,9 +157,10 @@ prefix. Other fields are decimal integers. `rank_one` is the colexicographic
 rank of the ±1 positions; `rank_two` ranks the ±2 positions within their
 complement.
 
-To produce advice, capture from a process that only verifies. Prover draws,
-including previews, also emit capture lines; their output does not have the
-verifier's tape-consumption order.
+`akita_challenges::record_checked_hints` is the supported advice producer; it
+needs no feature. Capture is for experiments that need the raw message and rank
+stream. To build advice from capture, use a process that only verifies. Prover draws, including previews, also emit capture lines; their
+output does not have the verifier's tape-consumption order.
 
 For a verification-only capture, a message line precedes its candidate rank
 lines. Ranks are emitted serially in the order position advice will be consumed:

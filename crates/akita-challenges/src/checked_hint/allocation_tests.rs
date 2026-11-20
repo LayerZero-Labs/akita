@@ -76,13 +76,13 @@ fn with_allocation_budget<T>(allowed: usize, f: impl FnOnce() -> T) -> (T, usize
 
 #[test]
 fn oversize_and_occupied_sessions_reject_without_allocating() {
-    assert!(!active());
+    assert_eq!(mode(), Advice::Off);
     let bytes = [7; 64];
     let (result, attempts) =
         with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len() - 1));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
-    assert!(!active());
+    assert_eq!(mode(), Advice::Off);
 
     // The exact trusted bound is accepted; a rejected second install must not
     // allocate, replace the tape, or change its consumption cursor.
@@ -101,13 +101,13 @@ fn oversize_and_occupied_sessions_reject_without_allocating() {
 
 #[test]
 fn partial_word_rejects_before_allocating() {
-    assert!(!active());
+    assert_eq!(mode(), Advice::Off);
     let bytes = [0; 9];
     let (result, attempts) =
         with_allocation_budget(0, || install_checked_hints(&bytes, bytes.len()));
     assert!(result.is_err());
     assert_eq!(attempts, 0);
-    assert!(!active());
+    assert_eq!(mode(), Advice::Off);
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn tape_uses_one_allocation_and_recovers_from_failure() {
             with_allocation_budget(0, || install_checked_hints(bytes, bytes.len()));
         assert!(result.is_err());
         assert_eq!(attempts, 1);
-        assert!(!active());
+        assert_eq!(mode(), Advice::Off);
 
         let (result, attempts) =
             with_allocation_budget(1, || install_checked_hints(bytes, bytes.len()));

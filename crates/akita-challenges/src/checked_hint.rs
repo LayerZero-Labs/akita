@@ -1,3 +1,4 @@
+use crate::SparseChallenge;
 use akita_error::AkitaError;
 use std::{borrow::Cow, cell::RefCell};
 pub(crate) mod ternary;
@@ -7,6 +8,9 @@ mod table_tests;
 
 #[cfg(test)]
 mod allocation_tests;
+
+#[cfg(test)]
+mod record_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AdviceEncoding {
@@ -48,8 +52,13 @@ impl Tape {
         self.used == self.words.len()
     }
 }
+enum Session {
+    Verify(Tape),
+    Record(Vec<u8>),
+}
+
 thread_local! {
-    static HINTS: RefCell<Option<Tape>> = const { RefCell::new(None) };
+    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
 }
 
 /// Install untrusted hints within a trusted verifier resource budget.
@@ -71,45 +80,150 @@ thread_local! {
 /// exceeds `max_bytes`, its length is not a multiple of eight, or tape allocation
 /// fails. Failed installation leaves the previous session unchanged.
 pub fn install_checked_hints(bytes: &[u8], max_bytes: usize) -> Result<(), AkitaError> {
-    HINTS.with(|state| {
+    SESSION.with(|state| {
         let mut state = state
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidProof)?;
         if state.is_some() || bytes.len() > max_bytes {
             return Err(AkitaError::InvalidProof);
         }
-        *state = Some(Tape::new(bytes)?);
+        *state = Some(Session::Verify(Tape::new(bytes)?));
         Ok(())
     })
 }
 /// Remove installed hints and reject unless every hint was consumed.
 /// An incomplete session is cleared even when this returns an error.
 pub fn finish_checked_hints() -> Result<(), AkitaError> {
-    HINTS.with(|state| {
-        let tape = state
+    SESSION.with(|state| {
+        let mut state = state
             .try_borrow_mut()
-            .map_err(|_| AkitaError::InvalidProof)?
-            .take();
-        match tape {
-            Some(tape) if tape.finished() => Ok(()),
+            .map_err(|_| AkitaError::InvalidProof)?;
+        if !matches!(*state, Some(Session::Verify(_))) {
+            return Err(AkitaError::InvalidProof);
+        }
+        match state.take() {
+            Some(Session::Verify(tape)) if tape.finished() => Ok(()),
             _ => Err(AkitaError::InvalidProof),
         }
     })
 }
-/// Discard hints after a failed verification. This does not authenticate the
-/// hints or make the failed proof valid; it only releases the thread's session.
+
+/// Discard installed hints after a failed verification.
+/// Returns an error if a recording session is active.
 pub fn abort_checked_hints() -> Result<(), AkitaError> {
-    HINTS.with(|state| {
-        state
+    SESSION.with(|state| {
+        let mut state = state
             .try_borrow_mut()
-            .map_err(|_| AkitaError::InvalidProof)?
-            .take();
+            .map_err(|_| AkitaError::InvalidProof)?;
+        if matches!(*state, Some(Session::Record(_))) {
+            return Err(AkitaError::InvalidProof);
+        }
+        state.take();
         Ok(())
     })
 }
 
-pub(crate) fn active() -> bool {
-    HINTS.with(|s| s.borrow().is_some())
+/// Run native verification and record its fold draws as a checked-advice tape.
+///
+/// On success, returns the verification result and a tape for
+/// [`install_checked_hints`]. The closure must run verification on the calling
+/// thread. All fold draws on that thread are recorded, including prover draws
+/// if the closure invokes the prover.
+///
+/// # Errors
+///
+/// Returns the verification error if the closure fails, or
+/// [`AkitaError::InvalidInput`] if an advice session is already active.
+pub fn record_checked_hints<T>(
+    verify: impl FnOnce() -> Result<T, AkitaError>,
+) -> Result<(T, Vec<u8>), AkitaError> {
+    SESSION.with(|state| {
+        let mut state = state
+            .try_borrow_mut()
+            .map_err(|_| AkitaError::InvalidInput("checked advice session is busy".into()))?;
+        if state.is_some() {
+            return Err(AkitaError::InvalidInput(
+                "a checked advice session is already active".into(),
+            ));
+        }
+        *state = Some(Session::Record(Vec::new()));
+        Ok(())
+    })?;
+
+    struct ResetRecording;
+    impl Drop for ResetRecording {
+        fn drop(&mut self) {
+            SESSION.with(|state| {
+                let mut state = state.borrow_mut();
+                if matches!(*state, Some(Session::Record(_))) {
+                    state.take();
+                }
+            });
+        }
+    }
+    let _reset = ResetRecording;
+    let value = verify()?;
+    SESSION.with(|state| match state.borrow_mut().take() {
+        Some(Session::Record(bytes)) => Ok((value, bytes)),
+        _ => Err(AkitaError::Internal(
+            "checked advice recording is missing".into(),
+        )),
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Advice {
+    Off,
+    Verify,
+    Record,
+}
+
+pub(crate) fn mode() -> Advice {
+    SESSION.with(|state| match &*state.borrow() {
+        None => Advice::Off,
+        Some(Session::Verify(_)) => Advice::Verify,
+        Some(Session::Record(_)) => Advice::Record,
+    })
+}
+
+/// Append words to the recording in verifier draw order.
+pub(crate) fn record(words: impl ExactSizeIterator<Item = u64>) -> Result<(), AkitaError> {
+    SESSION.with(|state| {
+        let mut state = state
+            .try_borrow_mut()
+            .map_err(|_| AkitaError::Internal("checked advice session is busy".into()))?;
+        let Some(Session::Record(bytes)) = state.as_mut() else {
+            return Err(AkitaError::Internal(
+                "no checked advice recording session".into(),
+            ));
+        };
+        let len = words
+            .len()
+            .checked_mul(size_of::<u64>())
+            .ok_or_else(|| AkitaError::InvalidInput("checked advice size overflow".into()))?;
+        bytes
+            .try_reserve(len)
+            .map_err(|_| AkitaError::InvalidInput("checked advice allocation failed".into()))?;
+        bytes.extend(words.flat_map(u64::to_le_bytes));
+        Ok(())
+    })
+}
+
+/// Pack a D64/31/10 challenge into the four quartet-code words [`validate`] checks.
+pub(crate) fn encode_quartets(challenge: &SparseChallenge) -> Result<[u64; 4], AkitaError> {
+    let mut digits = [2u64; 64];
+    for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+        *digits
+            .get_mut(position as usize)
+            .ok_or_else(|| AkitaError::Internal("quartet position out of range".into()))? =
+            (i64::from(coefficient) + 2) as u64;
+    }
+    let mut words = [0u64; 4];
+    for (quartet, digits) in digits.chunks_exact(4).enumerate() {
+        let code = digits.iter().rev().fold(0, |code, &digit| code * 5 + digit);
+        words[quartet / 4] |= code << (10 * (quartet % 4));
+    }
+    Ok(words)
 }
 
 /// Consume a bounded slice without allocating another owner or copying words.
@@ -118,11 +232,13 @@ pub(crate) fn take<T>(
     word_count: usize,
     decode: impl FnOnce(&[u64]) -> Result<T, AkitaError>,
 ) -> Result<T, AkitaError> {
-    HINTS.with(|state| {
+    SESSION.with(|state| {
         let mut state = state
             .try_borrow_mut()
             .map_err(|_| AkitaError::InvalidProof)?;
-        let tape = state.as_mut().ok_or(AkitaError::InvalidProof)?;
+        let Some(Session::Verify(tape)) = state.as_mut() else {
+            return Err(AkitaError::InvalidProof);
+        };
         decode(tape.take(word_count)?)
     })
 }

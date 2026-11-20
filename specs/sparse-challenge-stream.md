@@ -593,6 +593,14 @@ encoding and consumes words at the shared cursor. After successful verification,
 session. On verification failure, `abort_checked_hints` clears the session
 without authenticating the remaining advice.
 
+`record_checked_hints(verify)` runs native verification on the current thread.
+On success it returns the result and the advice tape. In draw order, it records
+quartet and ternary codes after each packed draw, or one position record per
+in-range candidate the serial decoder examines. The closure must run only
+verification because every fold draw on the thread is recorded. A verification
+error discards the tape. Recording requires that the thread has no active
+advice session.
+
 Quartet advice is selected for unfiltered D64 draws with 31 coefficients of
 magnitude 1, 10 of magnitude 2, and at least 1024 challenges. Each challenge
 consumes four little-endian `u64` words. Each word packs four 10-bit quartet
@@ -628,7 +636,7 @@ examined by the serial decoder consumes `ceil(w / 4)` little-endian `u64` words:
   those positions, in `0..(d - a)`. They are mapped to actual positions only
   after checking their rank.
 - Unused lanes in the last word MUST be zero. Signs come from the squeezed
-  message rather than the position tape.
+  message.
 
 Records follow draw order, then candidate order. An out-of-range candidate
 consumes no record. An in-range candidate consumes a record **before** the
