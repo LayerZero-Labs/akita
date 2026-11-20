@@ -59,9 +59,6 @@ macro_rules! impl_catalog_family {
 }
 
 pub mod presets;
-// The pinned jolt-akita uses this path in the recursion profile workspace.
-#[doc(hidden)]
-pub use presets as proof_optimized;
 pub mod recursive_commitment;
 #[cfg(test)]
 mod runtime_chunking_tests;
