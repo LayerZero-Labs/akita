@@ -279,9 +279,9 @@ mod tests {
 
         audit::<fp128::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
         audit::<fp128::DenseBounded>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-        audit::<fp128::DenseMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
+        audit::<fp128::DenseMultiChunkW8R2>(akita_params::MultiChunkProfileId::W8R2.cfg());
         audit::<fp128::OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-        audit::<fp128::OneHotMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
+        audit::<fp128::OneHotMultiChunkW8R2>(akita_params::MultiChunkProfileId::W8R2.cfg());
         audit::<fp128::OneHotMultiChunkW2R2>(akita_params::MultiChunkProfileId::W2R2.cfg());
         audit::<fp128::OneHotMultiChunkW4R2>(akita_params::MultiChunkProfileId::W4R2.cfg());
         audit::<fp128::OneHotMultiChunkW2R3>(akita_params::MultiChunkProfileId::W2R3.cfg());
@@ -304,7 +304,7 @@ mod tests {
         audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),
         );
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>(
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>>(
             akita_params::MultiChunkProfileId::W8R2.cfg(),
         );
     }

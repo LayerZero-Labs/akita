@@ -52,7 +52,7 @@
 //!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits,
 //!            committed under the base config's scalar row.
 //! OneHot mc rec: nv=32 is production-sized (ign).
-//!   direct = RecursiveCommitmentConfig<OneHotMultiChunk>.
+//!   direct = RecursiveCommitmentConfig<OneHotMultiChunkW8R2>.
 //!   pre    = same + two 16-variable user precommits, committed under the
 //!            base config's scalar row.
 //!
@@ -214,7 +214,7 @@ fn fp128_dense_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let catalog = akita_config::test_support::workspace_schedule_catalog::<
-            fp128::DenseMultiChunk,
+            fp128::DenseMultiChunkW8R2,
         >(MultiChunkProfileId::W8R2.cfg())
         .expect("dense multi-chunk catalog");
         let schedule = catalog
@@ -236,7 +236,7 @@ fn fp128_dense_mc() {
             first_fold.params.witness_chunk.num_chunks, 8,
             "W8R2 regression profile must retain eight witness chunks"
         );
-        prove_verify_dense_roundtrip::<fp128::DenseMultiChunk>(
+        prove_verify_dense_roundtrip::<fp128::DenseMultiChunkW8R2>(
             MultiChunkProfileId::W8R2.cfg(),
             &[16],
             b"completeness/fp128_dense_mc",
@@ -247,7 +247,7 @@ fn fp128_dense_mc() {
 // ----------------------------------------------------------------------------
 // Dense × multi-chunk × precommitted × non-recursive — NA
 // ----------------------------------------------------------------------------
-// The fp128::DenseMultiChunk catalog ships a single scalar size (nv=16), and
+// The fp128::DenseMultiChunkW8R2 catalog ships a single scalar size (nv=16), and
 // nv=16 has no multi-group schedule with the required two folds — the DP needs
 // final_nv >= 20. Backing this cell would mean adding a new production size to
 // the multi-chunk family purely for a test, so the cell is intentionally
@@ -276,16 +276,16 @@ matrix_test!(recursive_pre; fp128_onehot_rec_pre; fp128::OneHot; ChunkedWitnessC
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × direct × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig<OneHotMultiChunk>; uses fp128_onehot_recursive_multi_chunk_w8r2.rs.
+// RecursiveCommitmentConfig<OneHotMultiChunkW8R2>; uses fp128_onehot_recursive_multi_chunk_w8r2.rs.
 // ----------------------------------------------------------------------------
-matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunk; MultiChunkProfileId::W8R2.cfg());
+matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunkW8R2; MultiChunkProfileId::W8R2.cfg());
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × precommitted × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig<OneHotMultiChunk> + user precommit;
+// RecursiveCommitmentConfig<OneHotMultiChunkW8R2> + user precommit;
 // profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
-matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk; MultiChunkProfileId::W8R2.cfg());
+matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunkW8R2; MultiChunkProfileId::W8R2.cfg());
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × direct × non-recursive    [32]
@@ -296,11 +296,10 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk; Mu
 // keep the W8R2 feature graph wired to a real catalog row.
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
-    let catalog =
-        akita_config::test_support::workspace_schedule_catalog::<fp128::OneHotMultiChunk>(
-            MultiChunkProfileId::W8R2.cfg(),
-        )
-        .expect("one-hot multi-chunk catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<
+        fp128::OneHotMultiChunkW8R2,
+    >(MultiChunkProfileId::W8R2.cfg())
+    .expect("one-hot multi-chunk catalog");
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
     catalog
         .resolve_key(&akita_params::ScheduleLookupKey::single(
@@ -316,7 +315,7 @@ fn fp128_onehot_mc_catalog_resolves() {
 fn fp128_onehot_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        prove_verify_onehot_roundtrip::<fp128::OneHotMultiChunk>(
+        prove_verify_onehot_roundtrip::<fp128::OneHotMultiChunkW8R2>(
             MultiChunkProfileId::W8R2.cfg(),
             &[32],
             b"completeness/fp128_onehot_mc",

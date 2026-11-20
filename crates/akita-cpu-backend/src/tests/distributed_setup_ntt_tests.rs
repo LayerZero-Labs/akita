@@ -6,9 +6,9 @@ use akita_params::ScheduleLookupKey;
 use akita_params::{InnerCommitMatrixParams, PolynomialGroupLayout};
 use akita_types::{centered_quotient_requires_i16_tail, NttCacheKey, NttTransformDomain};
 
-type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>;
 fn w8r2_profiling_key(
-    base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunk>,
+    base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunkW8R2>,
 ) -> ScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
     let precommitted = base_catalog
@@ -26,7 +26,7 @@ fn w8r2_profiling_key(
 #[test]
 fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
     let base_catalog = akita_config::test_support::workspace_schedule_catalog::<
-        fp128::OneHotMultiChunk,
+        fp128::OneHotMultiChunkW8R2,
     >(akita_params::MultiChunkProfileId::W8R2.cfg())
     .expect("base W8R2 catalog");
     let catalog = akita_config::test_support::workspace_schedule_catalog::<W8R2Cfg>(

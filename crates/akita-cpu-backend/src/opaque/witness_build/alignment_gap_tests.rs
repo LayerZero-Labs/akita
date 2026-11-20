@@ -94,7 +94,7 @@ fn nonzero_alignment_gaps_preserve_the_proven_statement() {
         .stack_size(64 * 1024 * 1024)
         .spawn(|| {
             use crate::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
-            use akita_config::{presets::fp128::DenseMultiChunk as Cfg, CommitmentConfig};
+            use akita_config::{presets::fp128::DenseMultiChunkW8R2 as Cfg, CommitmentConfig};
             use akita_params::{BasisMode, PolynomialGroupLayout, ScheduleLookupKey};
             use akita_prover::SelectedProverOpeningData;
             use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};

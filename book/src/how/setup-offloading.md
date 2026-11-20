@@ -170,7 +170,7 @@ catalogs. The current build can expose recursive setup schedules for:
 - the fp32, fp64, and fp128 dense configurations;
 - the fp128 one hot configuration;
 - the fp128 one hot multi chunk configuration with eight chunks and two leading
-  distributed levels (`OneHotMultiChunk`); and
+  distributed levels (`OneHotMultiChunkW8R2`); and
 - the fp128 one hot multi chunk configurations with two, four, or eight chunks
   and three leading distributed levels (`OneHotMultiChunkW2R3`,
   `OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3`).

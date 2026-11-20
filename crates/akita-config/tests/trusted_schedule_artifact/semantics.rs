@@ -142,7 +142,7 @@ fn out_of_range_digit_depths_are_rejected_before_digit_formulas() {
 
 #[test]
 fn canonical_chunk_ownership_rejects_coverage_preserving_mutations() {
-    let catalog = checked_in_catalog::<fp128::OneHotMultiChunk>(
+    let catalog = checked_in_catalog::<fp128::OneHotMultiChunkW8R2>(
         akita_params::MultiChunkProfileId::W8R2.cfg(),
     );
     let key =

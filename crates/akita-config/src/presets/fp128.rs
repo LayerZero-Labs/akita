@@ -33,7 +33,7 @@ impl OneHot {
 
 /// Direct multi-chunk companion of [`OneHot`] using the W8R2 profile.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct OneHotMultiChunk;
+pub struct OneHotMultiChunkW8R2;
 
 /// Direct multi-chunk companion of [`OneHot`] using the W2R2 profile.
 #[derive(Clone, Copy, Debug, Default)]
@@ -45,7 +45,7 @@ pub struct OneHotMultiChunkW4R2;
 
 /// Direct multi-chunk companion of [`Dense`] using the W8R2 profile.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DenseMultiChunk;
+pub struct DenseMultiChunkW8R2;
 
 /// Direct multi-chunk companion of [`OneHot`] using the W2R3 profile.
 #[derive(Clone, Copy, Debug, Default)]
@@ -177,13 +177,13 @@ impl_preset!(
         potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
     }
 );
-impl_catalog_family!(OneHotMultiChunk, OneHot, "fp128_onehot_multi_chunk");
+impl_catalog_family!(OneHotMultiChunkW8R2, OneHot, "fp128_onehot_multi_chunk");
 
 impl crate::recursive_commitment::RecursiveScheduleConfig for OneHot {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive";
 }
 
-impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunk {
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunkW8R2 {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w8r2";
 }
 impl_catalog_family!(
@@ -196,7 +196,7 @@ impl_catalog_family!(
     OneHot,
     "fp128_onehot_multi_chunk_w4r2"
 );
-impl_catalog_family!(DenseMultiChunk, Dense, "fp128_dense_multi_chunk");
+impl_catalog_family!(DenseMultiChunkW8R2, Dense, "fp128_dense_multi_chunk");
 
 impl crate::recursive_commitment::RecursiveScheduleConfig for Dense {
     const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_dense_recursive";

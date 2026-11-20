@@ -520,7 +520,7 @@ fn prover_and_verifier_emit_identical_event_sequences_for_every_catalog_shape() 
             &mut covered,
             ChunkedWitnessCfg::default_non_chunked(),
         );
-        check_catalog::<fp128::DenseMultiChunk, DenseSource>(
+        check_catalog::<fp128::DenseMultiChunkW8R2, DenseSource>(
             &mut covered,
             MultiChunkProfileId::W8R2.cfg(),
         );
@@ -528,7 +528,7 @@ fn prover_and_verifier_emit_identical_event_sequences_for_every_catalog_shape() 
             &mut covered,
             ChunkedWitnessCfg::default_non_chunked(),
         );
-        check_catalog::<fp128::OneHotMultiChunk, OneHotSource>(
+        check_catalog::<fp128::OneHotMultiChunkW8R2, OneHotSource>(
             &mut covered,
             MultiChunkProfileId::W8R2.cfg(),
         );
