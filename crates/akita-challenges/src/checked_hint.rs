@@ -8,6 +8,13 @@ mod table_tests;
 #[cfg(test)]
 mod allocation_tests;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AdviceEncoding {
+    Quartets,
+    Ternary,
+    Positions,
+}
+
 struct Tape {
     words: Vec<u64>,
     used: usize,

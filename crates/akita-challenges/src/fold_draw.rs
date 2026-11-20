@@ -5,6 +5,7 @@
 //! the family, and the group's position in the transcript fixes its index and
 //! counts, so the message continues the squeeze run before it.
 
+use crate::checked_hint::AdviceEncoding;
 use crate::sampler::SparseChallengeShell;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig, SparseChallengeStream};
 use akita_error::AkitaError;
@@ -139,23 +140,28 @@ pub trait FoldDraw {
         })?;
         let stream = family.stream(total)?;
         let hinted = crate::checked_hint::active();
-        if hinted && stream.uses_checked_quartets() {
-            return self.draw_message(stream.message_len(), |message| {
-                Ok(Some(Challenges::from_checked_quartets(
-                    stream.decode_checked_hints(message)?,
-                    num_live_blocks,
-                    num_claims,
-                )?))
-            });
-        }
-        if hinted && stream.uses_checked_ternary() {
-            return self.draw_message(stream.message_len(), |message| {
-                Ok(Some(Challenges::from_checked_ternary(
-                    stream.decode_ternary_hints(message)?,
-                    num_live_blocks,
-                    num_claims,
-                )?))
-            });
+        if hinted {
+            match stream.advice_encoding() {
+                AdviceEncoding::Quartets => {
+                    return self.draw_message(stream.message_len(), |message| {
+                        Ok(Some(Challenges::from_checked_quartets(
+                            stream.decode_checked_hints(message)?,
+                            num_live_blocks,
+                            num_claims,
+                        )?))
+                    });
+                }
+                AdviceEncoding::Ternary => {
+                    return self.draw_message(stream.message_len(), |message| {
+                        Ok(Some(Challenges::from_checked_ternary(
+                            stream.decode_ternary_hints(message)?,
+                            num_live_blocks,
+                            num_claims,
+                        )?))
+                    });
+                }
+                AdviceEncoding::Positions => {}
+            }
         }
         let challenges = self.draw_message(stream.message_len(), |message| {
             stream.decode_with(message, hinted)

@@ -1,4 +1,5 @@
 use super::*;
+use crate::checked_hint::AdviceEncoding;
 use crate::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 
 struct Draw<'a>(&'a [u8]);
@@ -103,7 +104,7 @@ fn tape_round_trips_mixed_fold_routes() {
         )
         .unwrap();
         let stream = family.stream(count).unwrap();
-        assert!(!stream.uses_checked_quartets());
+        assert_ne!(stream.advice_encoding(), AdviceEncoding::Quartets);
         let message = rng.message(stream.message_len());
         let expected = stream.decode(&message).unwrap().unwrap();
         positions.extend(position_tape(&stream, &message, &expected));
@@ -131,7 +132,7 @@ fn tape_round_trips_mixed_fold_routes() {
     )
     .unwrap();
     let stream = family.stream(1024).unwrap();
-    assert!(stream.uses_checked_quartets());
+    assert_eq!(stream.advice_encoding(), AdviceEncoding::Quartets);
     let message = include_bytes!("../../../testdata/checked_hint_message.bin");
     let expected = stream.decode(message).unwrap().unwrap();
     let hinted = Draw(message)
@@ -239,7 +240,8 @@ fn quartet_eligibility_matches_the_family_and_threshold() {
         assert_eq!(
             layout(d, &config, rejection, count)
                 .unwrap()
-                .uses_checked_quartets(),
+                .advice_encoding()
+                == AdviceEncoding::Quartets,
             eligible
         );
     }
