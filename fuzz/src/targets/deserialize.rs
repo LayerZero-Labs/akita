@@ -8,7 +8,7 @@
 
 use crate::input::Reader;
 use crate::stats;
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_params::OpeningScheduleSelection;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::{

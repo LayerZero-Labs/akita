@@ -121,7 +121,7 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
 
 #[test]
 fn parent_observable_key_tracks_grinding_successor_geometry() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
@@ -291,7 +291,7 @@ fn guided_early_pruning_includes_recursive_prefixes() {
 
 #[test]
 fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
@@ -393,7 +393,7 @@ fn query_prefix_checks_cached_suffix_against_the_complete_root_path() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn restricted_search_recovers_pruned_query_tradeoff() {
-    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp32::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     // A singleton adaptive domain keeps the split frontier needed to expose
@@ -602,7 +602,7 @@ fn restricted_search_recovers_pruned_query_tradeoff() {
 
 #[test]
 fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp128::OneHot>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let crate::RingDimensionSchedule {
@@ -637,7 +637,7 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
 
 #[test]
 fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp32::OneHot>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp32::OneHot>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let crate::RingDimensionSchedule {

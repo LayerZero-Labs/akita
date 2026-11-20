@@ -126,16 +126,16 @@ fn main() {
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
     tracing::info!(
         max_cached_ring_switch_elements = CpuBackend::<
-            akita_config::proof_optimized::fp128::Field,
-            akita_config::proof_optimized::fp128::Field,
+            akita_config::presets::fp128::Field,
+            akita_config::presets::fp128::Field,
         >::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
         "CPU resource policy"
     );
     eprintln!(
         "[profile] cpu_policy: max_cached_ring_switch_elements={}",
         CpuBackend::<
-            akita_config::proof_optimized::fp128::Field,
-            akita_config::proof_optimized::fp128::Field,
+            akita_config::presets::fp128::Field,
+            akita_config::presets::fp128::Field,
         >::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS,
     );
     modes::log_active_fp128_prime_probe();

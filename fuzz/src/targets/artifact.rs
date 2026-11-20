@@ -6,7 +6,7 @@
 
 use crate::input::Reader;
 use crate::stats;
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId};
 

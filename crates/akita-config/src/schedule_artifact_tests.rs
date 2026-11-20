@@ -1,7 +1,7 @@
 use akita_error::AkitaError;
 use akita_params::{FoldSchedule, GroupOpenPhaseParams};
 
-use crate::proof_optimized::fp128;
+use crate::presets::fp128;
 use crate::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 
 pub(crate) fn mutated_row_admission_error<Cfg: CommitmentConfig>(
@@ -72,7 +72,7 @@ fn row_admission_audits_recursive_setup_prefix_policy() {
 
 #[test]
 fn dense_recursive_artifacts_cover_benchmark_sizes_and_offload_setup() {
-    use crate::proof_optimized::{fp32, fp64};
+    use crate::presets::{fp32, fp64};
     use crate::recursive_commitment::RecursiveScheduleConfig;
     use akita_params::PolynomialGroupLayout;
     use akita_params::ScheduleLookupKey;

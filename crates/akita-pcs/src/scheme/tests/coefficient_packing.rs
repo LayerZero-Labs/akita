@@ -1,6 +1,6 @@
 use super::*;
 
-use akita_config::proof_optimized::fp32;
+use akita_config::presets::fp32;
 use akita_params::ScheduleLookupKey;
 use akita_params::{basis_weights, OpeningMethod, PolynomialGroupLayout};
 use jolt_field::ExtField;

@@ -160,7 +160,7 @@ fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
-    use akita_config::{policy_of, proof_optimized::fp32::OneHot};
+    use akita_config::{policy_of, presets::fp32::OneHot};
     use akita_params::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());

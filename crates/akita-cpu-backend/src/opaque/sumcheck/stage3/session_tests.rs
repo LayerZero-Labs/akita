@@ -118,7 +118,7 @@ fn stage3_retains_setup_across_cache_eviction() {
     use crate::opaque::ComputeBackendSetup;
     type Base = jolt_field::Prime64Offset59;
     type Extension =
-        <akita_config::proof_optimized::fp64::OneHot as akita_config::CommitmentConfig>::ExtField;
+        <akita_config::presets::fp64::OneHot as akita_config::CommitmentConfig>::ExtField;
     let setup = crate::AkitaProverSetup::<Base>::generate_with_capacity(
         2,
         1,

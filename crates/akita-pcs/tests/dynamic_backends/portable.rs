@@ -1,6 +1,6 @@
 //! Portable extension-field imports and executor-local setup-prefix ownership.
 use super::common;
-use akita_config::{proof_optimized::fp32, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{presets::fp32, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_cpu_backend::{
     CpuBackend, CpuImportPacket, CpuSource, DensePoly, GroupContext, OneHotPoly, SuccessorSection,
 };

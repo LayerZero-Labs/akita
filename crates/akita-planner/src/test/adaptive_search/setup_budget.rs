@@ -78,7 +78,7 @@ fn assert_budgeted_search_matches_unbounded_pass<C: akita_config::CommitmentConf
 
 #[test]
 fn padded_setup_budget_passes_match_one_unbounded_pass() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, RecursiveCommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, RecursiveCommitmentConfig};
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
 
@@ -146,7 +146,7 @@ fn padded_setup_budget_passes_match_one_unbounded_pass() {
 fn padded_setup_budget_matches_one_unbounded_pass_on_catalog_rows() {
     use akita_config::{
         policy_of,
-        proof_optimized::{fp128, fp32},
+        presets::{fp128, fp32},
         RecursiveCommitmentConfig,
     };
 

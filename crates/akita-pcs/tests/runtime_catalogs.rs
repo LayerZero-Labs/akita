@@ -1,6 +1,6 @@
 //! Independent runtime catalogs must coexist without type-global geometry.
 
-use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 use akita_cpu_backend::{CpuBackend, GroupContext, OneHotPoly};
 use akita_params::{
     lagrange_weights, BasisMode, CommittedGroupBatchProfile, GroupCommitPhaseParams,

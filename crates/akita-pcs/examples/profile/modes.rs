@@ -9,7 +9,7 @@ use crate::workload::{
     run_onehot, run_recursive_multi_group_onehot,
 };
 use crate::workspace_schedules::load_workspace_scheme;
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupParams, MultiChunkProfileId, PolynomialGroupLayout,

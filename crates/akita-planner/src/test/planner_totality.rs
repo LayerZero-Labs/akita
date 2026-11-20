@@ -2,7 +2,7 @@ use super::*;
 
 use akita_config::{
     policy_of,
-    proof_optimized::{fp128::DenseMultiChunk, fp64::Dense},
+    presets::{fp128::DenseMultiChunk, fp64::Dense},
     CommitmentConfig,
 };
 

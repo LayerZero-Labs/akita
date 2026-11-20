@@ -1,6 +1,6 @@
 use super::support::checked_in_catalog;
 use akita_config::{
-    proof_optimized::fp128, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
+    presets::fp128, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
     ValidatedScheduleCatalog,
 };
 use akita_serialization::AkitaSerialize;

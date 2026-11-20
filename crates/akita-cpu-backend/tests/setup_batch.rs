@@ -108,7 +108,7 @@ where
 
 #[test]
 fn retained_and_regenerated_batches_cover_base_and_extension_fields() {
-    use akita_config::proof_optimized::fp64;
+    use akita_config::presets::fp64;
     assert_eq!(
         batch::<fp64::Field, fp64::ExtensionField>(SetupBatchMemory::Retain),
         batch::<fp64::Field, fp64::ExtensionField>(SetupBatchMemory::Regenerate)

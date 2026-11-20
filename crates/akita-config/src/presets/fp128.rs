@@ -123,7 +123,7 @@ const _: () = assert!(
     "fp128::DenseBounded must declare a bound containing every u64"
 );
 
-impl_proof_optimized_preset!(
+impl_preset!(
     Dense,
     Field,
     Field,
@@ -140,7 +140,7 @@ impl_proof_optimized_preset!(
         potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
     }
 );
-impl_proof_optimized_preset!(
+impl_preset!(
     DenseBounded,
     Field,
     Field,
@@ -160,7 +160,7 @@ impl_proof_optimized_preset!(
         potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
     }
 );
-impl_proof_optimized_preset!(
+impl_preset!(
     OneHot,
     Field,
     Field,

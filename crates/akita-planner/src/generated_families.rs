@@ -22,7 +22,7 @@ use akita_params::sis::CommittedSourceContract;
 use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId, ScheduleLookupKey};
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 
 struct ScalarPreplan {

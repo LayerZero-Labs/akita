@@ -20,7 +20,7 @@
 
 use crate::common;
 
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::ScheduleLookupKey;
 use akita_params::{

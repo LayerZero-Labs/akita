@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_challenges::SparseChallengeConfig;
-use akita_config::proof_optimized::fp128::OneHotMultiChunk;
+use akita_config::presets::fp128::OneHotMultiChunk;
 use akita_config::{
     policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
 };

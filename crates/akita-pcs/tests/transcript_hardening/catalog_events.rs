@@ -30,7 +30,7 @@
 //! reason: every recursive row is production-sized.
 
 use crate::common::{dense_opening_lagrange, load_workspace_scheme, onehot_opening_lagrange};
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};
 use akita_params::{

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_params::PolynomialGroupLayout;
 use akita_params::ScheduleLookupKey;

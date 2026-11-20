@@ -271,7 +271,7 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::proof_optimized::fp128::OneHot;
+    use akita_config::presets::fp128::OneHot;
     use akita_params::{FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey};
     use akita_types::{
         prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaSetupDescriptor,

@@ -10,7 +10,7 @@
 //! the workload this preset exists for.
 
 #![allow(missing_docs)]
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_params::PolynomialGroupLayout;
 use akita_params::ScheduleLookupKey;

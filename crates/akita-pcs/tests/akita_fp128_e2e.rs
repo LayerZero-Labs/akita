@@ -92,7 +92,7 @@ mod heterogeneous;
 #[path = "matrix_drivers/mod.rs"]
 mod matrix_drivers;
 
-use akita_config::{proof_optimized::fp128, CommitmentConfig};
+use akita_config::{presets::fp128, CommitmentConfig};
 use akita_cpu_backend::CpuBackend;
 use akita_params::{BasisMode, ChunkedWitnessCfg, MultiChunkProfileId, OpeningClaimsLayout};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};

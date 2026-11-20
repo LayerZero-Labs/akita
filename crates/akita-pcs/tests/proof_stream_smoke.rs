@@ -1,5 +1,5 @@
 use akita_config::{
-    proof_optimized::{fp128, fp32},
+    presets::{fp128, fp32},
     CommitmentConfig,
 };
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext, OneHotPoly};

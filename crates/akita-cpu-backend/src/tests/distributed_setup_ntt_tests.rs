@@ -1,6 +1,6 @@
 //! Production distributed setup-offload NTT requirement regression.
 use crate::opaque::{NttExecutionRequirements, NttOperationCluster};
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::RecursiveCommitmentConfig;
 use akita_params::ScheduleLookupKey;
 use akita_params::{InnerCommitMatrixParams, PolynomialGroupLayout};

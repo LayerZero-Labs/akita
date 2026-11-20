@@ -1,5 +1,5 @@
 use akita_config::{
-    policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_params::{GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_planner::find_schedule;

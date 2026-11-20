@@ -58,7 +58,10 @@ macro_rules! impl_catalog_family {
     };
 }
 
-pub mod proof_optimized;
+pub mod presets;
+// The pinned jolt-akita uses this path in the recursion profile workspace.
+#[doc(hidden)]
+pub use presets as proof_optimized;
 pub mod recursive_commitment;
 #[cfg(test)]
 mod runtime_chunking_tests;
@@ -67,7 +70,10 @@ mod schedule_artifact_tests;
 mod setup_prefix_slots;
 mod setup_requirements;
 pub use setup_prefix_slots::required_setup_prefix_slot_ids_for_schedule;
-pub use setup_requirements::{validate_setup_capacity_metadata, SetupRequirements};
+pub use setup_requirements::{
+    ensure_prover_schedule_fits_setup, validate_setup_capacity_metadata,
+    verifier_schedule_fits_setup, SetupRequirements,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 mod transcript_binding;
@@ -78,7 +84,6 @@ pub use akita_schedules::{
     ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
     MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
-pub use proof_optimized::{ensure_prover_schedule_fits_setup, verifier_schedule_fits_setup};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use transcript_binding::transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
@@ -553,8 +558,8 @@ mod tests {
     }
 
     impl CommitmentConfig for WrongDeclaredExtensionDegree {
-        type Field = crate::proof_optimized::fp32::Field;
-        type ExtField = crate::proof_optimized::fp32::ExtensionField;
+        type Field = crate::presets::fp32::Field;
+        type ExtField = crate::presets::fp32::ExtensionField;
 
         fn schedule_family_name() -> &'static str {
             "test_wrong_declared_extension_degree"
@@ -685,7 +690,7 @@ mod sis_schedule_width_audit {
 
 #[cfg(test)]
 mod fp128_policy_tests {
-    use super::proof_optimized::fp128;
+    use super::presets::fp128;
     use super::schedule_artifact_tests::mutated_row_admission_error;
     use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
     use super::*;
@@ -971,7 +976,7 @@ mod fp128_policy_tests {
 
 #[cfg(test)]
 mod independent_commitment_tests {
-    use super::proof_optimized::fp128;
+    use super::presets::fp128;
     use super::*;
 
     #[test]

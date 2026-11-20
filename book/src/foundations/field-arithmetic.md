@@ -222,7 +222,7 @@ The field code is supplied by Akita's pinned `jolt-field` dependency.
 | 128-bit two-limb arithmetic and fused multiply-add | [`solinas/fp128.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/fp128.rs) |
 | Unreduced products and accumulators | [`solinas/unreduced.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/unreduced.rs) |
 | Extension arithmetic | [`solinas/ext.rs`](https://github.com/a16z/jolt/blob/25d87ba68bde9f4a85ac986f5487b2e7b7db2699/crates/jolt-algebra/src/solinas/ext.rs) |
-| Production field selection | `crates/akita-config/src/proof_optimized/` |
+| Production field selection | `crates/akita-config/src/presets/` |
 
 A field change must preserve canonical encoding, exact sampling, centered
 conversion, extension-coordinate order, and the bounds assumed by every

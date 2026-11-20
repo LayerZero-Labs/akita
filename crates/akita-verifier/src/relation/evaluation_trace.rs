@@ -513,7 +513,7 @@ mod tests {
     use super::*;
     use crate::benchmark_support::evaluation_trace_benchmark_case;
     use akita_algebra::CyclotomicRing;
-    use akita_config::proof_optimized::fp128;
+    use akita_config::presets::fp128;
     use akita_params::{
         basis_weights_prefix, ring_opening_point_from_field, BasisMode, CommittedGroupParams,
         DigitRangePlan, OpeningClaimsLayout, RelationAddressGeometry, SisModulusProfileId,

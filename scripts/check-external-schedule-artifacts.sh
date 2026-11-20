@@ -54,7 +54,7 @@ report_matches \
         -- specs/setup-offloading-planner.md book/src/how/setup-offloading.md \
         book/src/usage/profiling.md book/src/introduction/reviewing-akita.md \
         book/src/introduction/built-for-production.md \
-        crates/akita-config/src/proof_optimized.rs crates/akita-config/src/lib.rs
+        crates/akita-config/src/presets.rs crates/akita-config/src/lib.rs
 
 if [ "$failures" -ne 0 ]; then
     exit 1

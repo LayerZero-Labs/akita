@@ -182,7 +182,7 @@ impl<Cfg: CommitmentConfig> AkitaVerifier<Cfg> {
 mod tests {
     use super::*;
     use crate::build_riscv64_terminal_ntt_cache;
-    use akita_config::proof_optimized::fp128::OneHot;
+    use akita_config::presets::fp128::OneHot;
     use akita_params::{
         verifier_setup_matrix_capacity_for_schedule, FlatMatrix, FoldSchedule,
         PolynomialGroupLayout, ScheduleLookupKey,

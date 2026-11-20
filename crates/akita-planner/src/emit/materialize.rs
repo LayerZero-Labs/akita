@@ -290,7 +290,7 @@ fn materialized_entry(
 mod tests {
     use super::*;
     use akita_config::{
-        proof_optimized::fp128::{Dense, DenseBounded},
+        presets::fp128::{Dense, DenseBounded},
         CommitmentConfig,
     };
 
@@ -329,7 +329,7 @@ mod tests {
     }
     #[test]
     fn emitter_plans_with_the_selected_runtime_geometry() {
-        use akita_config::proof_optimized::fp128::OneHot;
+        use akita_config::presets::fp128::OneHot;
         use akita_params::ChunkedWitnessCfg;
         let family = crate::generated_families::ALL_GENERATED_FAMILIES
             .iter()
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn emitter_rejects_preplanned_rows_after_runtime_geometry_changes() {
-        use akita_config::proof_optimized::fp128::OneHot;
+        use akita_config::presets::fp128::OneHot;
         use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId};
         let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>(
             ChunkedWitnessCfg::default_non_chunked(),

@@ -1,8 +1,6 @@
 use super::*;
 use crate::{AkitaProverSetup, DensePoly, GroupContext};
-use akita_config::{
-    proof_optimized::fp128, test_support::workspace_schedule_catalog, SetupRequirements,
-};
+use akita_config::{presets::fp128, test_support::workspace_schedule_catalog, SetupRequirements};
 use akita_params::{BasisMode, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_prover::{
     BackendRegistry, FixedFoldRoute, SelectedProverOpeningData, SetupPrefixProverRegistry,

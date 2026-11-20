@@ -218,7 +218,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::proof_optimized::{fp128, fp32, fp64};
+    use akita_config::presets::{fp128, fp32, fp64};
     use jolt_field::{One, PseudoMersenne, Ring, Zero};
 
     const TEST_D: usize = 256;

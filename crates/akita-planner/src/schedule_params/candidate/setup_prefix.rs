@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn guided_setup_prefix_survives_pareto_pruning() {
         use akita_config::{
-            policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+            policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
         };
 
         type Recursive = RecursiveCommitmentConfig<OneHot>;

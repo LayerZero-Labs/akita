@@ -1,5 +1,5 @@
 use super::*;
-use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
+use akita_config::{policy_of, presets::fp64::Dense, CommitmentConfig};
 
 struct RootRankingFixture {
     policy: PlannerPolicy,
