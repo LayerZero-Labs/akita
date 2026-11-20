@@ -1,4 +1,5 @@
 use super::*;
+use crate::checked_hint::AdviceEncoding;
 use crate::{FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw};
 
 struct Draw<'a>(&'a [u8]);
@@ -70,7 +71,7 @@ fn position_tape(
 }
 
 #[test]
-fn frame_round_trips_mixed_fold_routes() {
+fn tape_round_trips_mixed_fold_routes() {
     let mut rng = SplitMix(91);
     let cases = [
         (
@@ -103,15 +104,15 @@ fn frame_round_trips_mixed_fold_routes() {
         )
         .unwrap();
         let stream = family.stream(count).unwrap();
-        assert!(!stream.uses_checked_quartets());
+        assert_ne!(stream.advice_encoding(), AdviceEncoding::Quartets);
         let message = rng.message(stream.message_len());
         let expected = stream.decode(&message).unwrap().unwrap();
         positions.extend(position_tape(&stream, &message, &expected));
         draws.push((family, stream, message, expected));
     }
     let quartets = include_bytes!("../../../testdata/checked_hint_codes.bin");
-    let frame = crate::checked_hint::frame(quartets, &[], &positions);
-    crate::install_checked_hints(&frame, frame.len()).unwrap();
+    let tape = [positions.as_slice(), quartets.as_slice()].concat();
+    crate::install_checked_hints(&tape, tape.len()).unwrap();
     for (family, stream, message, expected) in draws {
         // Ordinary decode ignores the installed tape, even above the parallel threshold.
         assert_eq!(stream.decode(&message).unwrap().unwrap(), expected);
@@ -131,7 +132,7 @@ fn frame_round_trips_mixed_fold_routes() {
     )
     .unwrap();
     let stream = family.stream(1024).unwrap();
-    assert!(stream.uses_checked_quartets());
+    assert_eq!(stream.advice_encoding(), AdviceEncoding::Quartets);
     let message = include_bytes!("../../../testdata/checked_hint_message.bin");
     let expected = stream.decode(message).unwrap().unwrap();
     let hinted = Draw(message)
@@ -158,14 +159,12 @@ fn malformed_position_records_reject_through_fold_drawing() {
     padding[31 * 2] = 1;
     let truncated = positions[..positions.len() - 8].to_vec();
     for invalid in [changed_position, padding, truncated] {
-        let frame = crate::checked_hint::frame(&[], &[], &invalid);
-        crate::install_checked_hints(&frame, frame.len()).unwrap();
+        crate::install_checked_hints(&invalid, invalid.len()).unwrap();
         assert!(Draw(&message).draw_fold_challenges(&family, 3, 1).is_err());
         crate::abort_checked_hints().unwrap();
     }
     positions.extend_from_slice(&0u64.to_le_bytes());
-    let frame = crate::checked_hint::frame(&[], &[], &positions);
-    crate::install_checked_hints(&frame, frame.len()).unwrap();
+    crate::install_checked_hints(&positions, positions.len()).unwrap();
     assert!(Draw(&message)
         .draw_fold_challenges(&family, 3, 1)
         .unwrap()
@@ -241,7 +240,8 @@ fn quartet_eligibility_matches_the_family_and_threshold() {
         assert_eq!(
             layout(d, &config, rejection, count)
                 .unwrap()
-                .uses_checked_quartets(),
+                .advice_encoding()
+                == AdviceEncoding::Quartets,
             eligible
         );
     }

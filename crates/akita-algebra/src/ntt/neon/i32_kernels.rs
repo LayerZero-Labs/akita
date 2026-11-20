@@ -835,6 +835,115 @@ unsafe fn pointwise_dot_acc_i32_count<const COUNT: usize>(
     }
 }
 
+/// Unit-twiddle butterfly `(u + v, u - v)` for inputs in `[0, 2p)`, with both
+/// outputs in `[0, 2p)`.
+#[inline(always)]
+unsafe fn unit_butterfly(u: int32x4_t, v: int32x4_t, m: Modulus) -> (int32x4_t, int32x4_t) {
+    (
+        fold_4x_i32(vaddq_s32(u, v), m.neg_two_p),
+        fold_4x_i32(vsubq_s32(u, v), m.two_p),
+    )
+}
+
+/// Sixteen-point decimation-in-frequency transform across blocks of lanes:
+/// output lane `l` of block `i` is congruent to the sum over `v` of
+/// `w^(rev(i) * v)` times lane `l` of point `v`, where `rev` reverses the
+/// four bits of `i` and entry `j` of `twiddles` is `w^j`. Each group of four
+/// lanes keeps its sixteen points in registers through all four stages.
+///
+/// # Safety
+///
+/// `points` and `out` must be valid for `16 * lanes` words, with `lanes` a
+/// multiple of four. Inputs must lie in `[0, 2p)` for a prime `p < 2^30`;
+/// outputs lie in `[-p, p)`.
+// Out of line and written as straight-line code: as loops over an array of
+// points the butterflies are not unrolled, and every one becomes a call that
+// passes its vectors through memory.
+#[inline(never)]
+pub(crate) unsafe fn lane_dif16_i32(
+    points: *const i32,
+    out: *mut i32,
+    lanes: usize,
+    p: i32,
+    twiddles: &BarrettTable<i32, 8>,
+) {
+    let m = Modulus::new(p);
+    macro_rules! twiddle {
+        ($j:expr) => {
+            Multiplier::broadcast(twiddles, $j)
+        };
+    }
+    let (w1, w2, w3, w4) = (twiddle!(1), twiddle!(2), twiddle!(3), twiddle!(4));
+    let (w5, w6, w7) = (twiddle!(5), twiddle!(6), twiddle!(7));
+    macro_rules! unit {
+        ($a:ident, $b:ident) => {
+            let ($a, $b) = unit_butterfly($a, $b, m);
+        };
+    }
+    macro_rules! twisted {
+        ($a:ident, $b:ident, $w:ident) => {
+            let ($a, $b) = dif_butterfly($a, $b, $w, m, m.neg_two_p);
+        };
+    }
+    macro_rules! last {
+        ($a:ident, $b:ident, $block:expr, $column:ident) => {
+            let (sum, difference) = unit_butterfly($a, $b, m);
+            vst1q_s32(out.add($block * lanes + $column), vaddq_s32(sum, m.neg_p));
+            vst1q_s32(
+                out.add(($block + 1) * lanes + $column),
+                vaddq_s32(difference, m.neg_p),
+            );
+        };
+    }
+    for column in (0..lanes).step_by(4) {
+        macro_rules! point {
+            ($v:expr) => {
+                vld1q_s32(points.add($v * lanes + column))
+            };
+        }
+        let (x0, x1, x2, x3) = (point!(0), point!(1), point!(2), point!(3));
+        let (x4, x5, x6, x7) = (point!(4), point!(5), point!(6), point!(7));
+        let (x8, x9, x10, x11) = (point!(8), point!(9), point!(10), point!(11));
+        let (x12, x13, x14, x15) = (point!(12), point!(13), point!(14), point!(15));
+
+        unit!(x0, x8);
+        twisted!(x1, x9, w1);
+        twisted!(x2, x10, w2);
+        twisted!(x3, x11, w3);
+        twisted!(x4, x12, w4);
+        twisted!(x5, x13, w5);
+        twisted!(x6, x14, w6);
+        twisted!(x7, x15, w7);
+
+        unit!(x0, x4);
+        twisted!(x1, x5, w2);
+        twisted!(x2, x6, w4);
+        twisted!(x3, x7, w6);
+        unit!(x8, x12);
+        twisted!(x9, x13, w2);
+        twisted!(x10, x14, w4);
+        twisted!(x11, x15, w6);
+
+        unit!(x0, x2);
+        twisted!(x1, x3, w4);
+        unit!(x4, x6);
+        twisted!(x5, x7, w4);
+        unit!(x8, x10);
+        twisted!(x9, x11, w4);
+        unit!(x12, x14);
+        twisted!(x13, x15, w4);
+
+        last!(x0, x1, 0, column);
+        last!(x2, x3, 2, column);
+        last!(x4, x5, 4, column);
+        last!(x6, x7, 6, column);
+        last!(x8, x9, 8, column);
+        last!(x10, x11, 10, column);
+        last!(x12, x13, 12, column);
+        last!(x14, x15, 14, column);
+    }
+}
+
 /// Convert signed i8 coefficients directly into an i32 Montgomery limb.
 ///
 /// # Safety

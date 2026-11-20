@@ -159,8 +159,7 @@ complement.
 
 `akita_challenges::record_checked_hints` is the supported advice producer; it
 needs no feature. Capture is for experiments that need the raw message and rank
-stream. To build advice from capture, capture from a process that only
-verifies. Prover draws, including previews, also emit capture lines; their
+stream. To build advice from capture, use a process that only verifies. Prover draws, including previews, also emit capture lines; their
 output does not have the verifier's tape-consumption order.
 
 For a verification-only capture, a message line precedes its candidate rank
@@ -172,9 +171,9 @@ requested number of accepted challenges. Unfiltered D64/31/10 and D128/31/0
 draws requesting at least 1024 challenges emit no rank lines because fold
 verification routes them to quartet and ternary advice; a producer packs those
 records from the captured message. A capture consumer must preserve draw and
-candidate order when producing the three advice tapes. The
-[advice-frame contract](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame)
-defines their binary layout and authentication requirements.
+candidate order when appending words to the tape. The
+[advice tape specification](../../../specs/sparse-challenge-stream.md#checked-rank-advice-tape)
+defines the binary layout and authentication requirements.
 Installing captured advice requires a trusted byte budget; see
 [checked challenge advice](../how/verification.md#checked-challenge-advice).
 

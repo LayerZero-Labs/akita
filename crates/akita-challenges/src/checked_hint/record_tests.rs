@@ -33,11 +33,10 @@ fn family(
 #[test]
 fn recorded_advice_replays_every_route_in_draw_order() {
     let production = |d| SparseChallengeConfig::production_for_ring_dim(d).unwrap();
-    // Quartet, ternary, unfiltered position and operator-norm position routes.
     let draws = [
+        (family(128, production(128), None), 600),
         (family(64, production(64), None), 1024),
         (family(128, production(128), None), 1024),
-        (family(128, production(128), None), 600),
         (
             family(
                 64,
@@ -75,17 +74,43 @@ fn recorded_advice_replays_every_route_in_draw_order() {
     };
     let unadvised = draw_all();
 
-    let (recorded, frame) = record_checked_hints(draw_all).unwrap();
+    let (recorded, tape) = record_checked_hints(|| Ok(draw_all())).unwrap();
     assert_eq!(recorded, unadvised);
     assert_eq!(mode(), Advice::Off);
-    let tape_len =
-        |offset: usize| u64::from_le_bytes(frame[offset..offset + 8].try_into().unwrap());
-    assert_eq!(tape_len(0), 1024 * 32);
-    assert_eq!(tape_len(8), 1024 * 32);
-    assert!(frame.len() > 16 + 2 * 1024 * 32);
+    // The first draw has 600 position records of eight words each.
+    let start = 600 * 8 * size_of::<u64>();
+    let quartet_bytes = 1024 * 4 * size_of::<u64>();
+    let mut draw = Message(messages[1].clone());
+    install_checked_hints(&tape[start..start + quartet_bytes], quartet_bytes).unwrap();
+    assert_eq!(
+        draw.draw_fold_challenges(&draws[1].0, 1024, 1).unwrap(),
+        Some(unadvised[1].clone())
+    );
+    finish_checked_hints().unwrap();
 
-    install_checked_hints(&frame, frame.len()).unwrap();
-    assert!(record_checked_hints(|| ()).is_err());
+    install_checked_hints(&tape, tape.len()).unwrap();
+    assert!(record_checked_hints(|| Ok(())).is_err());
     assert_eq!(draw_all(), unadvised);
     finish_checked_hints().unwrap();
+}
+
+#[test]
+fn recording_is_scoped_to_the_verification_call() {
+    let cause = AkitaError::InvalidProof;
+    let result = record_checked_hints::<()>(|| {
+        assert!(install_checked_hints(&[], 0).is_err());
+        assert!(finish_checked_hints().is_err());
+        assert!(abort_checked_hints().is_err());
+        assert!(record_checked_hints(|| Ok(())).is_err());
+        record([1].into_iter())?;
+        Err(cause.clone())
+    });
+    assert_eq!(result.unwrap_err(), cause);
+    assert_eq!(mode(), Advice::Off);
+
+    let panicked =
+        std::panic::catch_unwind(|| record_checked_hints::<()>(|| panic!("test unwind")));
+    assert!(panicked.is_err());
+    let ((), tape) = record_checked_hints(|| Ok(())).unwrap();
+    assert!(tape.is_empty());
 }

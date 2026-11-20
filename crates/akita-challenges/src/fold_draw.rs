@@ -5,7 +5,7 @@
 //! the family, and the group's position in the transcript fixes its index and
 //! counts, so the message continues the squeeze run before it.
 
-use crate::checked_hint::{Advice, HintTape};
+use crate::checked_hint::{Advice, AdviceEncoding};
 use crate::sampler::SparseChallengeShell;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig, SparseChallengeStream};
 use akita_error::AkitaError;
@@ -140,9 +140,9 @@ pub trait FoldDraw {
         })?;
         let stream = family.stream(total)?;
         let advice = crate::checked_hint::mode();
-        let tape = stream.advice_tape();
-        match (advice, tape) {
-            (Advice::Verify, HintTape::Quartets) => {
+        let encoding = stream.advice_encoding();
+        match (advice, encoding) {
+            (Advice::Verify, AdviceEncoding::Quartets) => {
                 return self.draw_message(stream.message_len(), |message| {
                     Ok(Some(Challenges::from_checked_quartets(
                         stream.decode_checked_hints(message)?,
@@ -151,7 +151,7 @@ pub trait FoldDraw {
                     )?))
                 });
             }
-            (Advice::Verify, HintTape::Ternary) => {
+            (Advice::Verify, AdviceEncoding::Ternary) => {
                 return self.draw_message(stream.message_len(), |message| {
                     Ok(Some(Challenges::from_checked_ternary(
                         stream.decode_ternary_hints(message)?,
@@ -163,7 +163,7 @@ pub trait FoldDraw {
             _ => {}
         }
         // Only position draws consume or record advice while decoding.
-        let positions = if tape == HintTape::Positions {
+        let positions = if encoding == AdviceEncoding::Positions {
             advice
         } else {
             Advice::Off
@@ -172,7 +172,14 @@ pub trait FoldDraw {
             stream.decode_with(message, positions)
         })?;
         if let (Advice::Record, Some(challenges)) = (advice, &challenges) {
-            crate::checked_hint::record_packed(tape, challenges)?;
+            for challenge in challenges {
+                let words = match encoding {
+                    AdviceEncoding::Quartets => crate::checked_hint::encode_quartets(challenge),
+                    AdviceEncoding::Ternary => crate::checked_hint::ternary::encode(challenge),
+                    AdviceEncoding::Positions => break,
+                }?;
+                crate::checked_hint::record(words.into_iter())?;
+            }
         }
         challenges
             .map(|challenges| {

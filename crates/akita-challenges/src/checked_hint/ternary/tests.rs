@@ -1,5 +1,4 @@
 use super::*;
-use crate::checked_hint::frame;
 use crate::{
     FoldChallengeDrawDomain, FoldChallengeFamily, FoldDraw, SparseChallenge, SparseChallengeConfig,
 };
@@ -97,9 +96,8 @@ fn packed_advice_matches_transcript_and_sparse_evaluation_after_embedding() {
         .iter()
         .flat_map(|words| words.iter().flat_map(|w| w.to_le_bytes()))
         .collect::<Vec<_>>();
-    let bytes = frame(&[], &tape, &[]);
-    let unaligned = [vec![0], bytes.clone()].concat();
-    crate::install_checked_hints(&unaligned[1..], bytes.len()).unwrap();
+    let unaligned = [&[0], tape.as_slice()].concat();
+    crate::install_checked_hints(&unaligned[1..], tape.len()).unwrap();
     let actual = source
         .draw_fold_challenges(&family, 1024, 1)
         .unwrap()
@@ -151,7 +149,7 @@ fn packed_advice_matches_transcript_and_sparse_evaluation_after_embedding() {
 }
 
 #[test]
-fn frame_rejects_missing_excess_and_reordered_advice() {
+fn tape_rejects_missing_excess_and_reordered_advice() {
     let f = family(128, 31, 0);
     let mut source = message(&f, 1024);
     let reference = source.draw_fold_challenges(&f, 1024, 1).unwrap().unwrap();
@@ -161,33 +159,27 @@ fn frame_rejects_missing_excess_and_reordered_advice() {
         .map(pack)
         .flat_map(|words| words.into_iter().flat_map(|w| w.to_le_bytes()))
         .collect::<Vec<_>>();
-    for length in 0..16 {
-        let header = frame(&[], &tape, &[]);
-        assert!(crate::install_checked_hints(&header[..length], header.len()).is_err());
-    }
     let first = tape[..32].to_vec();
     tape.copy_within(32..64, 0);
     tape[32..64].copy_from_slice(&first);
-    let reordered = frame(&[], &tape, &[]);
-    crate::install_checked_hints(&reordered, reordered.len()).unwrap();
+    crate::install_checked_hints(&tape, tape.len()).unwrap();
     assert!(source.draw_fold_challenges(&f, 1024, 1).is_err());
     crate::abort_checked_hints().unwrap();
     tape.copy_within(0..32, 32);
     tape[..32].copy_from_slice(&first);
-    let missing = frame(&[], &tape[..tape.len() - 8], &[]);
-    crate::install_checked_hints(&missing, missing.len()).unwrap();
+    let missing = &tape[..tape.len() - 8];
+    crate::install_checked_hints(missing, missing.len()).unwrap();
     assert!(source.draw_fold_challenges(&f, 1024, 1).is_err());
     crate::abort_checked_hints().unwrap();
     tape.extend([0; 32]);
-    let excess = frame(&[], &tape, &[]);
-    crate::install_checked_hints(&excess, excess.len()).unwrap();
+    crate::install_checked_hints(&tape, tape.len()).unwrap();
     source.draw_fold_challenges(&f, 1024, 1).unwrap().unwrap();
     assert!(crate::finish_checked_hints().is_err());
-    assert!(crate::install_checked_hints(&excess, excess.len() - 1).is_err());
+    assert!(crate::install_checked_hints(&tape, tape.len() - 1).is_err());
 }
 
 #[test]
-fn frame_keeps_three_interleaved_tapes_independent() {
+fn tape_reads_all_three_record_types_in_draw_order() {
     let f = family(128, 31, 0);
     let mut source = message(&f, 1024);
     let expected = source.draw_fold_challenges(&f, 1024, 1).unwrap().unwrap();
@@ -207,9 +199,15 @@ fn frame_keeps_three_interleaved_tapes_independent() {
         }
         positions.extend(words.into_iter().flat_map(u64::to_le_bytes));
     }
-    let q = include_bytes!("../../../testdata/checked_hint_codes.bin");
-    let frame = frame(q, &ternary, &positions);
-    crate::install_checked_hints(&frame, frame.len()).unwrap();
+    let quartets = include_bytes!("../../../testdata/checked_hint_codes.bin");
+    let tape = [
+        positions.as_slice(),
+        ternary.as_slice(),
+        quartets.as_slice(),
+        positions.as_slice(),
+    ]
+    .concat();
+    crate::install_checked_hints(&tape, tape.len()).unwrap();
     assert_eq!(
         small
             .draw_fold_challenges(&f, 2, 1)
@@ -233,5 +231,13 @@ fn frame_keeps_three_interleaved_tapes_independent() {
         .draw_fold_challenges(&quartet_family, 1024, 1)
         .unwrap()
         .unwrap();
+    assert_eq!(
+        small
+            .draw_fold_challenges(&f, 2, 1)
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        small_expected.as_slice()
+    );
     crate::finish_checked_hints().unwrap();
 }

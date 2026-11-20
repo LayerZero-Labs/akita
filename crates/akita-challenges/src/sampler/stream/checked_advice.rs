@@ -1,30 +1,36 @@
 //! Eligibility and authenticated decoding for packed checked advice.
 
 use super::{read_bits, SparseChallengeStream};
-use crate::checked_hint::HintTape;
+use crate::checked_hint::AdviceEncoding;
 use akita_error::AkitaError;
 
 impl SparseChallengeStream {
-    /// Eligibility rule for quartet advice.
-    pub(crate) const fn uses_checked_quartets(&self) -> bool {
-        self.count >= 1024
-            && self.shell.ring_d == 64
-            && self.shell.config.count_pm1 == 31
-            && self.shell.config.count_pm2 == 10
-            && self.shell.rejection.is_none()
+    /// The schedule selects the record encoding without reading a tag.
+    pub(crate) const fn advice_encoding(&self) -> AdviceEncoding {
+        if self.count < 1024 || self.shell.rejection.is_some() {
+            return AdviceEncoding::Positions;
+        }
+        match (
+            self.shell.ring_d,
+            self.shell.config.count_pm1,
+            self.shell.config.count_pm2,
+        ) {
+            (64, 31, 10) => AdviceEncoding::Quartets,
+            (128, 31, 0) => AdviceEncoding::Ternary,
+            _ => AdviceEncoding::Positions,
+        }
     }
 
     pub(crate) fn decode_checked_hints(&self, message: &[u8]) -> Result<Vec<[u64; 4]>, AkitaError> {
         if message.len() != self.message_len
-            || !self.uses_checked_quartets()
+            || self.advice_encoding() != AdviceEncoding::Quartets
             || self.shell.candidate_bits != 128
         {
             return Err(AkitaError::InvalidProof);
         }
         let message_words = crate::checked_hint::native_words(message)?;
         crate::checked_hint::take(
-            crate::checked_hint::HintTape::Quartets,
-            self.count,
+            self.count.checked_mul(4).ok_or(AkitaError::InvalidProof)?,
             |hints| {
                 let mut output = Vec::new();
                 output
@@ -52,22 +58,12 @@ impl SparseChallengeStream {
         )
     }
 
-    /// Eligibility rule for ternary advice.
-    pub(crate) const fn uses_checked_ternary(&self) -> bool {
-        self.count >= 1024
-            && self.shell.ring_d == 128
-            && self.shell.config.count_pm1 == 31
-            && self.shell.config.count_pm2 == 0
-            && self.shell.rejection.is_none()
-    }
-
     pub(crate) fn decode_ternary_hints(&self, message: &[u8]) -> Result<Vec<[u64; 4]>, AkitaError> {
-        if message.len() != self.message_len || !self.uses_checked_ternary() {
+        if message.len() != self.message_len || self.advice_encoding() != AdviceEncoding::Ternary {
             return Err(AkitaError::InvalidProof);
         }
         crate::checked_hint::take(
-            crate::checked_hint::HintTape::Ternary,
-            self.count,
+            self.count.checked_mul(4).ok_or(AkitaError::InvalidProof)?,
             |hints| {
                 let mut output = Vec::new();
                 output
@@ -90,16 +86,5 @@ impl SparseChallengeStream {
                 Ok(output)
             },
         )
-    }
-
-    /// The tape this draw consumes in a verifying session and fills when recording.
-    pub(crate) const fn advice_tape(&self) -> HintTape {
-        if self.uses_checked_quartets() {
-            HintTape::Quartets
-        } else if self.uses_checked_ternary() {
-            HintTape::Ternary
-        } else {
-            HintTape::Positions
-        }
     }
 }

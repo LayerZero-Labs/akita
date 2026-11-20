@@ -58,19 +58,18 @@ fn recorded_advice_verifies_the_same_proof_inner() {
         )
     };
 
-    let (verified, frame) = akita_challenges::record_checked_hints(verify).unwrap();
-    verified.unwrap();
-    assert!(frame.len() > 16, "verification drew no fold challenges");
+    let ((), tape) = akita_challenges::record_checked_hints(verify).unwrap();
+    assert!(!tape.is_empty(), "verification drew no fold challenges");
 
-    akita_challenges::install_checked_hints(&frame, frame.len()).unwrap();
+    akita_challenges::install_checked_hints(&tape, tape.len()).unwrap();
     verify().unwrap();
     akita_challenges::finish_checked_hints().unwrap();
 
     // Advice with one bit flipped must not verify.
-    let mut corrupted = frame.clone();
+    let mut corrupted = tape;
     let last = corrupted.len() - 1;
     corrupted[last] ^= 1;
     akita_challenges::install_checked_hints(&corrupted, corrupted.len()).unwrap();
-    assert!(verify().is_err() || akita_challenges::finish_checked_hints().is_err());
+    assert!(verify().is_err());
     akita_challenges::abort_checked_hints().unwrap();
 }

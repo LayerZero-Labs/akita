@@ -814,7 +814,9 @@ impl CandidateDecoder<'_> {
         };
         let pm1_rank = rank - pm2_rank * stream.shell.pm1_rank_space;
         #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
-        if capture_enabled() && stream.advice_tape() == crate::checked_hint::HintTape::Positions {
+        if capture_enabled()
+            && stream.advice_encoding() == crate::checked_hint::AdviceEncoding::Positions
+        {
             eprintln!(
                 "EXPERIMENT_RANK {} {} {} {} {}",
                 stream.shell.ring_d, a, b, pm1_rank, pm2_rank
@@ -824,7 +826,7 @@ impl CandidateDecoder<'_> {
         let (pm1, pm2) = positions.split_at_mut(a);
         if self.advice == Advice::Verify {
             let width = weight.div_ceil(4);
-            crate::checked_hint::take(crate::checked_hint::HintTape::Positions, width, |words| {
+            crate::checked_hint::take(width, |words| {
                 if !weight.is_multiple_of(4)
                     && words.last().is_some_and(|&w| w >> (16 * (weight % 4)) != 0)
                 {
@@ -842,16 +844,17 @@ impl CandidateDecoder<'_> {
                 self.binomials
                     .unrank(pm2_rank, stream.shell.ring_d - a, b, pm2)?;
             }
-            if self.advice == Advice::Record {
-                // The record holds the ±2 complement indices, before mapping.
-                let mut words = vec![0u64; weight.div_ceil(4)];
-                for (lane, &position) in pm1.iter().chain(pm2.iter()).enumerate() {
-                    words[lane / 4] |= u64::from(position) << (16 * (lane % 4));
-                }
-                crate::checked_hint::record(crate::checked_hint::HintTape::Positions, &words)?;
-            }
+        }
+        if self.advice == Advice::Record {
+            // Record ±2 complement indices before mapping to ring positions.
+            crate::checked_hint::record(positions.chunks(4).map(|lanes| {
+                lanes.iter().enumerate().fold(0, |word, (lane, &position)| {
+                    word | (u64::from(position) << (16 * lane))
+                })
+            }))?;
         }
         if b > 0 {
+            let (pm1, pm2) = positions.split_at_mut(a);
             map_to_complement(pm1, pm2, stream.shell.ring_d)?;
         }
         if weight <= 48 {
