@@ -164,7 +164,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     use akita_params::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork;
+    policy.selection_policy = crate::SelectionPolicyId::FirstDirectCapacity;
     let params_for = |outer_slice_count| {
         let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
@@ -206,8 +206,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
 
     // The setup envelope is a schedule-wide maximum, so no slice can be
     // discarded on its local setup alone.
-    policy.selection_policy =
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork;
+    policy.selection_policy = crate::SelectionPolicyId::PaddedSetupEnvelope;
     assert_eq!(
         prune_root_slices_by_first_direct_setup(&policy, &opening_layout, candidates)
             .expect("no pruning")

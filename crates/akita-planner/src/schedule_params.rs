@@ -587,7 +587,7 @@ pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 
 /// Retain the root slices that reach the smallest padded first-direct setup.
 ///
-/// Under [`crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork`]
+/// Under [`crate::SelectionPolicyId::FirstDirectCapacity`]
 /// the root is the first direct edge, so its padded setup capacity is the
 /// leading objective coordinate and a root slice with a larger capacity can
 /// never win. Equal-capacity slices can still differ in proof size or the
@@ -603,8 +603,7 @@ pub(crate) fn prune_root_slices_by_first_direct_setup(
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
     if candidates.len() <= 1
-        || policy.selection_policy
-            != crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork
+        || policy.selection_policy != crate::SelectionPolicyId::FirstDirectCapacity
     {
         return Ok(candidates);
     }

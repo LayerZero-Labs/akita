@@ -934,7 +934,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
     let mut policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     // Only the direct-setup objective prunes root slices locally: there the root's padded
     // first-direct setup leads the objective.
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork;
+    policy.selection_policy = crate::SelectionPolicyId::FirstDirectCapacity;
     let dimensions = CommitmentRingDims {
         inner: 1024,
         outer: 128,

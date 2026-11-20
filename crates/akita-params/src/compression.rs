@@ -198,24 +198,24 @@ impl CommitmentPayloadGeometry {
 /// Stable identity of the commitment-compression protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CompressionPolicyId {
-    /// Two-map exact monotone cutover with a minimum two-fold compressed prefix
-    /// and a 256-byte terminal image.
+    /// Two negative-binary maps with an 8 KiB input cap and a 256-byte output.
+    /// The schedule starts with at least two compressed folds.
     #[default]
-    NegativeBinaryTwoMapExactMonotoneCutover8KiB,
+    NegativeBinaryTwoMapCutover,
 }
 
 impl CompressionPolicyId {
     /// Stable descriptor tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiB => 4,
+            Self::NegativeBinaryTwoMapCutover => 4,
         }
     }
 
     /// Parse the stable descriptor tag.
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
-            4 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiB),
+            4 => Some(Self::NegativeBinaryTwoMapCutover),
             _ => None,
         }
     }
@@ -223,16 +223,14 @@ impl CompressionPolicyId {
     /// Descriptive policy name used in reports and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiB => {
-                "NegativeBinaryTwoMapExactMonotoneCutover8KiB"
-            }
+            Self::NegativeBinaryTwoMapCutover => "NegativeBinaryTwoMapCutover",
         }
     }
 }
 
 /// The only compression policy supported by this protocol epoch.
 pub const COMPRESSION_POLICY: CompressionPolicyId =
-    CompressionPolicyId::NegativeBinaryTwoMapExactMonotoneCutover8KiB;
+    CompressionPolicyId::NegativeBinaryTwoMapCutover;
 
 /// The two compression-only ring dimensions for one modulus profile.
 ///

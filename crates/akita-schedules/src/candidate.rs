@@ -157,7 +157,7 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork,
+            selection_policy: SelectionPolicyId::FirstDirectCapacity,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -215,7 +215,7 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork,
+            selection_policy: SelectionPolicyId::FirstDirectCapacity,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,

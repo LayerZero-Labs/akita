@@ -313,8 +313,8 @@ disjoint role labels.
 
 #### `Shake256Paged`
 
-The first derivation algorithm is a fixed-page SHAKE256 construction. A page is
-a derivation unit for deterministic parallelism, not a ring.
+SHAKE256 derives each fixed-size page independently for deterministic
+parallelism.
 
 ```text
 PUBLIC_MATRIX_DOMAIN = "akita/commitment/public-field-stream"
@@ -325,15 +325,14 @@ page(i)   = floor(i / PAGE_FIELD_ELEMENTS)
 offset(i) = i mod PAGE_FIELD_ELEMENTS
 ```
 
-`4096` is a fixed v1 policy constant, not a number derived from ring geometry.
+`Shake256Paged` fixes the page size at 4096 field elements for every ring
+dimension.
 A temporary local microbenchmark compared 512, 1024, 2048, 4096, 8192, and
 16384 field elements per page over `2^23` outputs. On the measured machine,
 4096 was the best fp128 candidate and remained near the fp32/fp64 throughput
 plateau. Those measurements are machine-specific and are not expected to
-establish a portable optimum. A fixed page size is required for deterministic
-parallel derivation, and 4096 is a reasonable granularity, so v1 simply chooses
-it and does not retain a permanent benchmark target. Changing the constant
-requires another derivation variant and new golden vectors.
+establish a portable optimum. Changing the page size requires another
+derivation variant and new golden vectors.
 
 For each page index, initialize SHAKE256 and absorb the following values with
 the repository's canonical length-prefixed encoding:

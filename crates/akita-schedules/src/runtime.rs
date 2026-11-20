@@ -55,7 +55,7 @@ impl PlannerCostModelId {
     /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::NoncePayloadAndSetupEnvelope => "NativeNoncePayloadAndSetupEnvelope",
+            Self::NoncePayloadAndSetupEnvelope => "NoncePayloadAndSetupEnvelope",
         }
     }
 }
@@ -65,27 +65,27 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick first direct setup, exact additive cost, proof bytes, total setup,
     /// root output witness, then descriptor.
-    MinFirstDirectSetupThenExactProofAndWork,
+    FirstDirectCapacity,
     /// Pick power-of-two setup-envelope capacity, first direct setup, exact
     /// additive cost, proof bytes, first direct output witness, then descriptor.
-    MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork,
+    PaddedSetupEnvelope,
 }
 
 impl SelectionPolicyId {
     /// Canonical selection objective for one schedule policy shape.
     pub fn for_policy(recursive_setup_planning: bool) -> Self {
         if recursive_setup_planning {
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork
+            Self::PaddedSetupEnvelope
         } else {
-            Self::MinFirstDirectSetupThenExactProofAndWork
+            Self::FirstDirectCapacity
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinFirstDirectSetupThenExactProofAndWork => 14,
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork => 15,
+            Self::FirstDirectCapacity => 14,
+            Self::PaddedSetupEnvelope => 15,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
             // belonged to the retired setup-envelope-first policy. Tags 4--6
             // selected proof bytes; tags 7--9 used rounded work cost,
@@ -98,12 +98,8 @@ impl SelectionPolicyId {
     /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinFirstDirectSetupThenExactProofAndWork => {
-                "MinFirstDirectSetupThenExactProofAndWork"
-            }
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork => {
-                "MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork"
-            }
+            Self::FirstDirectCapacity => "FirstDirectCapacity",
+            Self::PaddedSetupEnvelope => "PaddedSetupEnvelope",
         }
     }
 }
@@ -186,11 +182,9 @@ pub struct RingDimensionSchedule {
 /// Number of leading fold levels covered by the audited adaptive search.
 pub const ADAPTIVE_SEARCH_LEVELS: usize = 2;
 
-/// Runtime schedule validation policy.
+/// Policy shared by offline schedule planning and runtime validation.
 ///
-/// The compatibility name stays `PlannerPolicy` during the migration because
-/// trusted catalog identities already embed these fields. Runtime code must
-/// only use this as validation policy; search remains in `akita-planner`.
+/// Trusted catalogs bind the policy fields through their canonical encodings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
@@ -921,7 +915,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelope,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMoments,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork,
+            selection_policy: SelectionPolicyId::FirstDirectCapacity,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,

@@ -405,16 +405,16 @@ The external catalog binds:
 
 ```text
 cost model      = NoncePayloadAndSetupEnvelope
-direct policy = MinFirstDirectSetupThenExactProofAndWork
-recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork
+direct policy = FirstDirectCapacity
+recursive policy = PaddedSetupEnvelope
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The selection objective is an explicit catalog-identity input derived from the
 setup mode. Adaptive direct planning selects
-`MinFirstDirectSetupThenExactProofAndWork`. Recursive setup planning selects
-`MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork`. The scalar boundary
+`FirstDirectCapacity`. Recursive setup planning selects
+`PaddedSetupEnvelope`. The scalar boundary
 disables recursive setup search and uses the direct objective.
 
 The planner does not use artifact registry contents to decide mode. Registry

@@ -10,10 +10,9 @@ use crate::schedule_params::{
     objective::CompleteObjectiveBound, CandidateMetrics, ProofCost, SetupPrefixCapacity,
 };
 
-const SETUP_FIRST: crate::SelectionPolicyId =
-    crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWork;
+const SETUP_FIRST: crate::SelectionPolicyId = crate::SelectionPolicyId::FirstDirectCapacity;
 const PADDED_ENVELOPE_FIRST: crate::SelectionPolicyId =
-    crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork;
+    crate::SelectionPolicyId::PaddedSetupEnvelope;
 
 fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
     DescriptorOrderContext {
@@ -453,7 +452,7 @@ fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
 #[test]
 fn recursive_bound_requires_dominance_in_both_parent_projections() {
     let candidate_admission = admission(2, 16);
-    let lower_bound = CompleteObjectiveBound::SetupFirst {
+    let lower_bound = CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 16,
         exact_score: 10 * crate::schedule_params::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 10,

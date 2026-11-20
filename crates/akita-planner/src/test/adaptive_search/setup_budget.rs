@@ -29,7 +29,7 @@ fn assert_budgeted_search_matches_unbounded_pass<C: akita_config::CommitmentConf
     assert_eq!(policy.setup_field_budget, None, "{label}");
     assert_eq!(
         policy.selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork,
+        crate::SelectionPolicyId::PaddedSetupEnvelope,
         "{label}"
     );
     let mut unbounded = policy;

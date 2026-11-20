@@ -590,8 +590,7 @@ pub(crate) fn find_schedule_in_relation_order(
     //   smallest rejected setup, padded; if that overflows, the last pass runs
     //   without a budget. The starting budget changes only the pass count.
     let mut padded_setup_limit = (policy.setup_field_budget.is_none()
-        && policy.selection_policy
-            == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWork)
+        && policy.selection_policy == crate::SelectionPolicyId::PaddedSetupEnvelope)
         .then_some(1);
     let best = loop {
         let pass_budget = padded_setup_limit.or(policy.setup_field_budget);
