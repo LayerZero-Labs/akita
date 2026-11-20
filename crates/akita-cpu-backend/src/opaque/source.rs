@@ -160,3 +160,56 @@ where
     )?;
     recover_ring_subfield_inner_product::<F, E, D>(folded_ring, &packed_inner_point)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::arithmetic::extension_opening_reduction::tensor_packed_witness_evals;
+    use jolt_field::{Ext2, One, Zero};
+
+    #[test]
+    fn canonical_prefix_tensor_opening_differs_from_trace_scalar_recovery() {
+        type Base = jolt_field::Prime64Offset59;
+        type Extension = Ext2<Base>;
+        const D: usize = 256;
+        let mut coefficients = [Base::zero(); D];
+        coefficients[1] = Base::one();
+        let canonical = CyclotomicRing::from_coefficients(coefficients);
+        let tensor = tensor_packed_witness_evals::<Base, Extension>(8, &coefficients).unwrap();
+        let point = [Extension::zero(); 7];
+        let prepared =
+            prepare_opening_point::<Base, Extension, D>(&point, BasisMode::Lagrange, 1, 1, 8)
+                .unwrap();
+
+        // The all-zero Boolean point selects slot zero of the reduction table.
+        let reduced = tensor[0];
+        let scalar = scalar_opening_from_folded_ring::<Base, Extension, D>(
+            &canonical,
+            &prepared,
+            &point,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
+        assert_eq!(
+            reduced,
+            Extension::from_base_slice(&[Base::zero(), Base::one()])
+        );
+        assert_eq!(scalar, Extension::zero());
+        assert_ne!(scalar, reduced);
+
+        // Encoding the same table with psi makes trace recovery agree.
+        let packed =
+            embed_ring_subfield_vector::<Base, Extension, D>(&tensor, AkitaError::InvalidProof)
+                .unwrap();
+        assert_eq!(
+            scalar_opening_from_folded_ring::<Base, Extension, D>(
+                &packed,
+                &prepared,
+                &point,
+                BasisMode::Lagrange,
+            )
+            .unwrap(),
+            reduced,
+        );
+    }
+}

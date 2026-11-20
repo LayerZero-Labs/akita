@@ -49,6 +49,12 @@ pub(super) fn prepare_recursive_level_search(
 
     let setup_prefixes = match setup_prefix {
         RecursiveSetupPrefix::Search { cache, natural_len } => {
+            if opening
+                .method()
+                .requires_extension_opening_reduction(policy.claim_ext_degree)
+            {
+                return Ok(None);
+            }
             let n_prefix = padded_setup_prefix_len(natural_len);
             let groups = derive_setup_prefix_groups(
                 cache,
@@ -128,4 +134,68 @@ pub(super) fn finalize_recursive_level_candidate(
         search.num_chunks,
     )?;
     Ok(Some((score, candidate_params, next_witness_len)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
+
+    #[test]
+    fn extension_trace_search_excludes_setup_prefixes_at_every_recursive_level() {
+        let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        for fold_level in [1, 2, 3] {
+            let mut cache = SetupPrefixSearchCache::default();
+            let mut request = RecursiveCandidateRequest {
+                policy: &policy,
+                payload_mode: akita_params::CommitmentPayloadMode::Compressed,
+                opening: PlannerOpeningCandidate::evaluation_trace(
+                    Dense::ring_challenge_config(128).unwrap(),
+                ),
+                dimensions: CommitmentRingDims::uniform(128),
+                current_witness_len: 16_384,
+                input_chunks: None,
+                source: crate::InnerBasisSource::BalancedDigits { log_basis: 3 },
+                log_basis_inner: 3,
+                log_basis_open: 3,
+                fold_level,
+                source_moment: None,
+                relation_traversal_order: RelationTraversalOrder::Canonical,
+                guide: None,
+            };
+            assert!(prepare_recursive_level_search(
+                &request,
+                RecursiveSetupPrefix::Search {
+                    cache: &mut cache,
+                    natural_len: 1024,
+                },
+            )
+            .unwrap()
+            .is_none());
+            assert_eq!(cache.diagnostics(), (0, 0));
+            assert!(
+                prepare_recursive_level_search(&request, RecursiveSetupPrefix::None)
+                    .unwrap()
+                    .is_some()
+            );
+            assert_eq!(cache.diagnostics(), (0, 0));
+
+            request.opening = PlannerOpeningCandidate::coefficient_packing(
+                policy.claim_ext_degree,
+                request.dimensions,
+                64,
+            )
+            .unwrap()
+            .unwrap();
+            let _ = prepare_recursive_level_search(
+                &request,
+                RecursiveSetupPrefix::Search {
+                    cache: &mut cache,
+                    natural_len: 1024,
+                },
+            )
+            .unwrap();
+            assert_eq!(cache.diagnostics(), (0, 1));
+        }
+    }
 }
