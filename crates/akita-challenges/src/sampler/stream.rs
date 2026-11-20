@@ -31,6 +31,7 @@
 mod checked_advice;
 
 use super::ChallengePolicy;
+use crate::checked_hint::Advice;
 use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
@@ -339,14 +340,15 @@ impl SparseChallengeStream {
     /// length, and [`AkitaError::InvalidSetup`] when the predicate table is
     /// unavailable.
     pub fn decode(&self, message: &[u8]) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
-        self.decode_with(message, false)
+        self.decode_with(message, Advice::Off)
     }
 
-    /// Fold drawing selects position advice explicitly; generic decoding never consumes it.
+    /// Fold drawing selects position advice explicitly; generic decoding never
+    /// consumes or records it.
     pub(crate) fn decode_with(
         &self,
         message: &[u8],
-        position_hints: bool,
+        advice: Advice,
     ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
         if message.len() != self.message_len() {
             return Err(AkitaError::InvalidInput(
@@ -377,7 +379,7 @@ impl SparseChallengeStream {
             self.shell.config.count_pm1.max(self.shell.config.count_pm2),
         )?;
         let decoder = CandidateDecoder {
-            position_hints,
+            advice,
             stream: self,
             message,
             binomials: &binomials,
@@ -397,7 +399,7 @@ impl SparseChallengeStream {
                         )?
                         .then_some(challenge))
                 };
-                self.first_accepted(position_hints, accept)
+                self.first_accepted(advice, accept)
             }
         }
     }
@@ -412,7 +414,7 @@ impl SparseChallengeStream {
             })
         };
         #[cfg(feature = "parallel")]
-        if !decoder.position_hints && self.parallel() {
+        if decoder.advice == Advice::Off && self.parallel() {
             return (0..self.count).into_par_iter().map(decode).collect();
         }
         let mut result = Vec::new();
@@ -427,11 +429,11 @@ impl SparseChallengeStream {
 
     fn first_accepted(
         &self,
-        position_hints: bool,
+        advice: Advice,
         accept: impl Fn(usize) -> Result<Option<SparseChallenge>, AkitaError> + Sync,
     ) -> Result<Option<Vec<SparseChallenge>>, AkitaError> {
         #[cfg(not(feature = "parallel"))]
-        let _ = position_hints;
+        let _ = advice;
         let mut accepted = Vec::new();
         accepted
             .try_reserve_exact(self.count)
@@ -439,7 +441,7 @@ impl SparseChallengeStream {
         // In parallel, decode the pool in order in chunks of twice the
         // challenge count and stop after the chunk that fills the count.
         #[cfg(feature = "parallel")]
-        if !position_hints && self.parallel() {
+        if advice == Advice::Off && self.parallel() {
             let chunk = self.count.saturating_mul(2);
             let mut start = 0;
             while accepted.len() < self.count && start < self.candidates {
@@ -784,7 +786,7 @@ impl BinomialTable {
 }
 
 struct CandidateDecoder<'a> {
-    position_hints: bool,
+    advice: Advice,
     stream: &'a SparseChallengeStream,
     message: &'a [u8],
     binomials: &'a BinomialTable,
@@ -812,7 +814,9 @@ impl CandidateDecoder<'_> {
         };
         let pm1_rank = rank - pm2_rank * stream.shell.pm1_rank_space;
         #[cfg(all(not(target_arch = "riscv64"), feature = "experiment-capture"))]
-        if capture_enabled() && !stream.uses_checked_quartets() {
+        if capture_enabled()
+            && stream.advice_encoding() == crate::checked_hint::AdviceEncoding::Positions
+        {
             eprintln!(
                 "EXPERIMENT_RANK {} {} {} {} {}",
                 stream.shell.ring_d, a, b, pm1_rank, pm2_rank
@@ -820,9 +824,9 @@ impl CandidateDecoder<'_> {
         }
         let mut positions = crate::SparseChallengePositions::from_elem(0, weight);
         let (pm1, pm2) = positions.split_at_mut(a);
-        if self.position_hints {
+        if self.advice == Advice::Verify {
             let width = weight.div_ceil(4);
-            crate::checked_hint::take(crate::checked_hint::HintTape::Positions, width, |words| {
+            crate::checked_hint::take(width, |words| {
                 if !weight.is_multiple_of(4)
                     && words.last().is_some_and(|&w| w >> (16 * (weight % 4)) != 0)
                 {
@@ -841,7 +845,16 @@ impl CandidateDecoder<'_> {
                     .unrank(pm2_rank, stream.shell.ring_d - a, b, pm2)?;
             }
         }
+        if self.advice == Advice::Record {
+            // Record ±2 complement indices before mapping to ring positions.
+            crate::checked_hint::record(positions.chunks(4).map(|lanes| {
+                lanes.iter().enumerate().fold(0, |word, (lane, &position)| {
+                    word | (u64::from(position) << (16 * lane))
+                })
+            }))?;
+        }
         if b > 0 {
+            let (pm1, pm2) = positions.split_at_mut(a);
             map_to_complement(pm1, pm2, stream.shell.ring_d)?;
         }
         if weight <= 48 {

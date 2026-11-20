@@ -81,6 +81,24 @@ blocks!(
     B15:15, B16:16, B17:17, B18:18, B19:19, B20:20, B21:21,
 );
 
+/// Pack a D128/31/0 challenge into the four ternary-code words [`validate`] checks.
+pub(crate) fn encode(challenge: &crate::SparseChallenge) -> Result<[u64; 4], AkitaError> {
+    // Group 21 covers positions 126..132; positions from 128 on stay zero.
+    let mut digits = [1u64; 6 * GROUPS];
+    for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+        if position >= 128 {
+            return Err(AkitaError::Internal("ternary position out of range".into()));
+        }
+        digits[position as usize] = (i64::from(coefficient) + 1) as u64;
+    }
+    let mut words = [0u64; 4];
+    for (group, digits) in digits.chunks_exact(6).enumerate() {
+        let code = digits.iter().rev().fold(0, |code, &digit| code * 3 + digit);
+        words[group / 6] |= code << (10 * (group % 6));
+    }
+    Ok(words)
+}
+
 pub(crate) fn validate(words: &[u64; 4], expected: u128, signs: u64) -> Result<(), AkitaError> {
     if words[..3].iter().any(|word| word >> 60 != 0) || words[3] >> 40 != 0 {
         return Err(AkitaError::InvalidProof);
