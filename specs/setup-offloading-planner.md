@@ -375,9 +375,10 @@ experiment first applied an exact envelope objective to adaptive direct rows
 and a padded envelope objective to recursive rows. Exact envelope-first direct
 selection produced shallow, proof-heavy schedules, so commit `a9f8bd814`
 restored the direct-setup objective while retaining the padded setup-envelope
-objective for recursive planning. The padded recursive coordinate also made the schedule-wide maximum an early monotone bound; local
-release measurements during that experiment reduced representative recursive
-searches by roughly 6–16 times. A later output-before-proof experiment in
+objective for recursive planning. The padded recursive coordinate also made the
+schedule-wide maximum an early monotone bound. During that experiment, local
+release measurements showed representative recursive searches running roughly
+6–16 times faster. A later output-before-proof experiment in
 commit `9698637df` reduced selected first-direct witnesses but exposed proof-size
 regressions. The current order consequently treats first-direct output as a
 proof-byte tie-break. These observations explain the policy; they do not show

@@ -35,7 +35,7 @@ impl SelectiveL2ResponseModelId {
         }
     }
 
-    /// Stable identity name.
+    /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Disabled => "Disabled",
@@ -52,7 +52,7 @@ impl PlannerCostModelId {
         }
     }
 
-    /// Stable identity name.
+    /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
             Self::NoncePayloadAndSetupEnvelope => "NativeNoncePayloadAndSetupEnvelope",
@@ -95,7 +95,7 @@ impl SelectionPolicyId {
         }
     }
 
-    /// Stable identity name.
+    /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
             Self::MinFirstDirectSetupThenExactProofAndWork => {

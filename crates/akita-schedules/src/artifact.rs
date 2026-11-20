@@ -943,7 +943,7 @@ mod tests {
             "fp64_dense",
             "fp64_onehot",
             "A0",
-            "family-name.catalog",
+            "family-name.v1",
         ] {
             validate_family_name(family_name).expect("shipped-style family name must be valid");
             let token = serde_json::to_string(family_name).expect("family name is serializable");
