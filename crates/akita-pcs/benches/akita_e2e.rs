@@ -5,7 +5,7 @@ mod workspace_schedules;
 use workspace_schedules::load_workspace_scheme;
 
 use akita_algebra::poly::multilinear_eval;
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::CommitmentHandle;
 use akita_cpu_backend::{CpuBackend, DensePoly, OneHotPoly};

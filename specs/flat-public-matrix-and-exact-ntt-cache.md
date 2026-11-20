@@ -100,7 +100,7 @@ pub struct AkitaSetupSeed {
 }
 
 pub enum PublicMatrixDerivation {
-    Shake256PagedV1,
+    Shake256Paged,
 }
 ```
 
@@ -311,10 +311,10 @@ All A, B, and D matrices, including matrices used to commit a setup-prefix
 object, are overlapping prefix views of this same stream. They are not assigned
 disjoint role labels.
 
-#### `Shake256PagedV1`
+#### `Shake256Paged`
 
-The first derivation algorithm is a fixed-page SHAKE256 construction. A page is
-a derivation unit for deterministic parallelism, not a ring.
+SHAKE256 derives each fixed-size page independently for deterministic
+parallelism.
 
 ```text
 PUBLIC_MATRIX_DOMAIN = "akita/commitment/public-field-stream"
@@ -325,15 +325,14 @@ page(i)   = floor(i / PAGE_FIELD_ELEMENTS)
 offset(i) = i mod PAGE_FIELD_ELEMENTS
 ```
 
-`4096` is a fixed v1 policy constant, not a number derived from ring geometry.
+`Shake256Paged` fixes the page size at 4096 field elements for every ring
+dimension.
 A temporary local microbenchmark compared 512, 1024, 2048, 4096, 8192, and
 16384 field elements per page over `2^23` outputs. On the measured machine,
 4096 was the best fp128 candidate and remained near the fp32/fp64 throughput
 plateau. Those measurements are machine-specific and are not expected to
-establish a portable optimum. A fixed page size is required for deterministic
-parallel derivation, and 4096 is a reasonable granularity, so v1 simply chooses
-it and does not retain a permanent benchmark target. Changing the constant
-requires another derivation variant and new golden vectors.
+establish a portable optimum. Changing the page size requires another
+derivation variant and new golden vectors.
 
 For each page index, initialize SHAKE256 and absorb the following values with
 the repository's canonical length-prefixed encoding:
@@ -360,7 +359,7 @@ at `offset(i)` in that page. The final requested page MAY stop after the last
 needed element.
 
 This rejection sampler is both the protocol sampling rule for
-`Shake256PagedV1` and the repository-wide meaning of `RandomSampling`.
+`Shake256Paged` and the repository-wide meaning of `RandomSampling`.
 `Fp32`, `Fp64`, and `Fp128` MUST share one canonical helper or equivalent
 cross-checked implementations with identical byte-consumption semantics.
 Extension-field implementations remain coefficient-wise calls to the uniform
@@ -1078,7 +1077,7 @@ This follow-up is not complete until all merge-blocking criteria below are satis
   fp64, and fp128 implementations pass shared distribution/byte-consumption
   vectors.
 - [x] A temporary page-size microbenchmark covered
-  512/1024/2048/4096/8192/16384; `Shake256PagedV1` fixes 4096 as a policy
+  512/1024/2048/4096/8192/16384; `Shake256Paged` fixes 4096 as a policy
   constant without retaining benchmark-only code.
 
 #### Protocol identity

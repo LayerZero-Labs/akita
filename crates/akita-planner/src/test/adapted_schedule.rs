@@ -2,7 +2,7 @@ use super::*;
 
 use akita_config::{
     policy_of,
-    proof_optimized::fp128::{Dense, DenseBounded, OneHot},
+    presets::fp128::{Dense, DenseBounded, OneHot},
     CommitmentConfig,
 };
 use akita_params::CommittedGroupBatchProfile;

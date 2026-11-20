@@ -4,7 +4,7 @@ use super::*;
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+    use akita_config::{policy_of, presets::fp128::OneHot};
 
     struct FixedFoldPolicy;
 

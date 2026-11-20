@@ -1,6 +1,6 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
-use akita_config::proof_optimized::{fp128, fp32};
+use akita_config::presets::{fp128, fp32};
 use akita_params::sis::sis_table_key_for_linf_bound;
 use akita_params::{
     scheduled_setup_prefix, CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams,

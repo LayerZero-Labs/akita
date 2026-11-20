@@ -1,6 +1,6 @@
 use crate::opaque::CpuBackend as GenericCpuBackend;
 use crate::opaque::RecursiveWitnessFlat;
-use akita_config::proof_optimized::fp128::OneHot;
+use akita_config::presets::fp128::OneHot;
 use akita_error::AkitaError;
 use akita_params::*;
 use akita_prover::backend::*;

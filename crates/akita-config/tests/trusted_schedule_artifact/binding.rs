@@ -1,7 +1,6 @@
 use super::support::{checked_in_artifact_bytes, checked_in_catalog};
 use akita_config::{
-    policy_of, proof_optimized::fp128, CommitmentConfig, TrustedScheduleCatalog,
-    ValidatedScheduleCatalog,
+    policy_of, presets::fp128, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog,
 };
 use akita_params::{
     DecompositionParams, OpeningScheduleSelection, ScheduleRowDigest, SisModulusProfileId,

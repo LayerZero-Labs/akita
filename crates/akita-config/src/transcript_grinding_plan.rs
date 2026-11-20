@@ -39,7 +39,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proof_optimized::fp128;
+    use crate::presets::fp128;
     use akita_params::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
 
     #[test]
@@ -161,13 +161,13 @@ mod tests {
             assert_eq!(order.grind_bits(3).unwrap(), 2);
         }
         check::<fp128::OneHot>();
-        check::<crate::proof_optimized::fp64::OneHot>();
-        check::<crate::proof_optimized::fp32::OneHot>();
+        check::<crate::presets::fp64::OneHot>();
+        check::<crate::presets::fp32::OneHot>();
     }
 
     #[test]
     fn every_generated_production_row_derives_a_complete_plan() {
-        use crate::proof_optimized::{fp32, fp64};
+        use crate::presets::{fp32, fp64};
 
         fn audit<Cfg: CommitmentConfig>(chunking: akita_params::ChunkedWitnessCfg)
         where
@@ -279,9 +279,9 @@ mod tests {
 
         audit::<fp128::Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
         audit::<fp128::DenseBounded>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-        audit::<fp128::DenseMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
+        audit::<fp128::DenseMultiChunkW8R2>(akita_params::MultiChunkProfileId::W8R2.cfg());
         audit::<fp128::OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-        audit::<fp128::OneHotMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
+        audit::<fp128::OneHotMultiChunkW8R2>(akita_params::MultiChunkProfileId::W8R2.cfg());
         audit::<fp128::OneHotMultiChunkW2R2>(akita_params::MultiChunkProfileId::W2R2.cfg());
         audit::<fp128::OneHotMultiChunkW4R2>(akita_params::MultiChunkProfileId::W4R2.cfg());
         audit::<fp128::OneHotMultiChunkW2R3>(akita_params::MultiChunkProfileId::W2R3.cfg());
@@ -304,7 +304,7 @@ mod tests {
         audit::<crate::RecursiveCommitmentConfig<fp128::OneHot>>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),
         );
-        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>(
+        audit::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>>(
             akita_params::MultiChunkProfileId::W8R2.cfg(),
         );
     }

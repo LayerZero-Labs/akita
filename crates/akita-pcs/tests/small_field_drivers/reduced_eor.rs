@@ -1,6 +1,6 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use akita_config::proof_optimized::fp32;
+use akita_config::presets::fp32;
 use akita_error::AkitaError;
 use akita_params::{BasisMode, OpeningMethod, RingRelationMode};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};

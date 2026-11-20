@@ -372,7 +372,7 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
-    use akita_config::proof_optimized::fp128;
+    use akita_config::presets::fp128;
 
     /// Production's balanced decomposition of `extreme_digits` yields the
     /// extreme digit in every plane the value spans.

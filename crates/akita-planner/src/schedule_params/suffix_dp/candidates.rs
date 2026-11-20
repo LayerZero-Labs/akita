@@ -761,7 +761,7 @@ mod tests {
 
     #[test]
     fn opening_domain_requires_packing_prefix_then_keeps_both_methods_until_cutover() {
-        use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+        use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
         let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
         let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));

@@ -76,7 +76,7 @@ pub(crate) fn recursive_split_search_domain(
 ) -> Vec<usize> {
     match search_policy {
         crate::RecursiveSplitSearchPolicy::Exhaustive => (1..reduced_vars).rev().collect(),
-        crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1 => {
+        crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremes => {
             bounded_recursive_split_candidates(
                 num_ring_elems,
                 reduced_vars,

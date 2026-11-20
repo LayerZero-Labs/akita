@@ -6,7 +6,7 @@ mod portable;
 #[path = "dynamic_backends/private_cpu.rs"]
 mod private_cpu;
 
-use akita_config::{proof_optimized::fp128, unit_onehot_source_chunk_size};
+use akita_config::{presets::fp128, unit_onehot_source_chunk_size};
 use akita_cpu_backend::{CpuBackend, OneHotPoly};
 use akita_error::AkitaError;
 use akita_params::{lagrange_weights, BasisMode};

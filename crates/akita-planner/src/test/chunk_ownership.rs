@@ -1,5 +1,5 @@
 use super::*;
-use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
 #[cfg(feature = "catalog-gen")]
 struct IncomingWidthFixture {

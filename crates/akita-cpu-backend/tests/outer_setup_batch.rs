@@ -43,24 +43,22 @@ where
 
 #[test]
 fn direct_outer_closes_collected_claims_without_an_extra_sumcheck() {
-    run::<akita_config::proof_optimized::fp128::Dense>(14, false);
+    run::<akita_config::presets::fp128::Dense>(14, false);
 }
 
 #[test]
 fn quadratic_outer_round_trips_collected_claims_through_transport() {
-    run::<akita_config::proof_optimized::fp64::Dense>(14, false);
+    run::<akita_config::presets::fp64::Dense>(14, false);
 }
 
 #[test]
 fn quartic_outer_round_trips_collected_claims_through_transport() {
-    run::<akita_config::proof_optimized::fp32::Dense>(20, false);
+    run::<akita_config::presets::fp32::Dense>(20, false);
 }
 
 #[test]
 fn offloaded_outer_consumes_inherited_claims_in_both_modes() {
-    run::<akita_config::RecursiveCommitmentConfig<akita_config::proof_optimized::fp128::Dense>>(
-        24, true,
-    );
+    run::<akita_config::RecursiveCommitmentConfig<akita_config::presets::fp128::Dense>>(24, true);
 }
 
 fn run<Cfg>(nv: usize, offloaded: bool)

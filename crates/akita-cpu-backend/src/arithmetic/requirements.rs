@@ -620,7 +620,7 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::proof_optimized::{fp128, fp32, fp64};
+    use akita_config::presets::{fp128, fp32, fp64};
     use akita_params::PolynomialGroupLayout;
     use akita_params::ScheduleLookupKey;
 

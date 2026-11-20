@@ -6,7 +6,7 @@ use crate::schedule_params::CandidateFoldChain;
 fn score(objective: CompleteObjectiveBound, descriptor: u8) -> CompleteScheduleScore {
     CompleteScheduleScore {
         objective,
-        legacy_root_output_witness_len: Some(1_000),
+        root_output_witness_len: Some(1_000),
         descriptor: vec![descriptor],
     }
 }
@@ -18,7 +18,7 @@ fn setup_first(
     descriptor: u8,
 ) -> CompleteScheduleScore {
     score(
-        CompleteObjectiveBound::SetupFirst {
+        CompleteObjectiveBound::FirstDirectCapacity {
             first_direct_setup_capacity,
             exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
@@ -36,14 +36,14 @@ fn padded_setup_envelope_first(
     descriptor: u8,
 ) -> CompleteScheduleScore {
     CompleteScheduleScore {
-        objective: CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
+        objective: CompleteObjectiveBound::PaddedSetupEnvelope {
             setup_envelope_capacity: akita_params::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
             exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
             proof_bytes,
             first_direct_output_witness_len,
         },
-        legacy_root_output_witness_len: None,
+        root_output_witness_len: None,
         descriptor: vec![descriptor],
     }
 }
@@ -83,13 +83,13 @@ fn padded_setup_envelope_prefers_proof_before_first_direct_output() {
 fn padded_setup_envelope_uses_descriptor_after_output() {
     let smaller_descriptor = padded_setup_envelope_first(30, 16, 1_000, 100, 1);
     let larger_descriptor = padded_setup_envelope_first(30, 16, 1_000, 100, 2);
-    assert_eq!(smaller_descriptor.legacy_root_output_witness_len, None);
+    assert_eq!(smaller_descriptor.root_output_witness_len, None);
     assert!(smaller_descriptor < larger_descriptor);
 }
 
 #[test]
 fn output_witness_precedes_the_canonical_descriptor() {
-    let objective = CompleteObjectiveBound::SetupFirst {
+    let objective = CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 16,
         exact_score: 100 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 100,
@@ -97,12 +97,12 @@ fn output_witness_precedes_the_canonical_descriptor() {
     };
     let smaller_output = CompleteScheduleScore {
         objective,
-        legacy_root_output_witness_len: Some(999),
+        root_output_witness_len: Some(999),
         descriptor: vec![2],
     };
     let smaller_descriptor = CompleteScheduleScore {
         objective,
-        legacy_root_output_witness_len: Some(1_000),
+        root_output_witness_len: Some(1_000),
         descriptor: vec![1],
     };
     assert!(smaller_output < smaller_descriptor);
@@ -129,42 +129,42 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
         cost: super::super::ProofCost::new(20, 0, 0, 0).unwrap(),
         setup_field_elements: 30,
     };
-    assert!(CompleteObjectiveBound::SetupFirst {
+    assert!(CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 16,
         exact_score: 21 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 21,
         setup_field_elements: 0,
     }
     .is_strictly_worse_than(incumbent));
-    assert!(!CompleteObjectiveBound::SetupFirst {
+    assert!(!CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 8,
         exact_score: (usize::MAX as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: usize::MAX,
         setup_field_elements: usize::MAX,
     }
     .is_strictly_worse_than(incumbent));
-    assert!(!CompleteObjectiveBound::SetupFirst {
+    assert!(!CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 16,
         exact_score: 20 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 20,
         setup_field_elements: 31,
     }
     .is_strictly_worse_for_recursive_parent(incumbent));
-    assert!(CompleteObjectiveBound::SetupFirst {
+    assert!(CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 16,
         exact_score: 21 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 21,
         setup_field_elements: 0,
     }
     .is_strictly_worse_for_recursive_parent(incumbent));
-    assert!(!CompleteObjectiveBound::SetupFirst {
+    assert!(!CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 16,
         exact_score: 20 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 20,
         setup_field_elements: usize::MAX,
     }
     .is_strictly_worse_for_recursive_payload(incumbent));
-    assert!(CompleteObjectiveBound::SetupFirst {
+    assert!(CompleteObjectiveBound::FirstDirectCapacity {
         first_direct_setup_capacity: 0,
         exact_score: 21 * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
         proof_bytes: 21,
@@ -172,7 +172,7 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
     }
     .is_strictly_worse_for_recursive_payload(incumbent));
     let padded_envelope_bound = |setup_field_elements, first_direct_setup_capacity, proof_bytes| {
-        CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
+        CompleteObjectiveBound::PaddedSetupEnvelope {
             setup_envelope_capacity: akita_params::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
             exact_score: (proof_bytes as u128) * super::super::WORK_ELEMENTS_PER_OBJECTIVE_BYTE,
@@ -255,7 +255,7 @@ fn complete_candidate(
 
 #[test]
 fn actual_policy_can_select_a_noncontractive_complete_candidate() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let contractive = complete_candidate(101, 64, 1_000);
@@ -277,7 +277,7 @@ fn actual_policy_can_select_a_noncontractive_complete_candidate() {
 
 #[test]
 fn exact_work_score_can_outweigh_one_modeled_proof_byte() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let smaller_proof = complete_candidate(100, 64, 1_000_000);
@@ -296,7 +296,7 @@ fn exact_work_score_can_outweigh_one_modeled_proof_byte() {
 
 #[test]
 fn exact_proof_tie_selects_the_smaller_setup_envelope() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let larger_setup = complete_candidate(100, 65, 1_000);
@@ -315,7 +315,7 @@ fn exact_proof_tie_selects_the_smaller_setup_envelope() {
 
 #[test]
 fn exact_numeric_tie_selects_the_smaller_root_output_witness() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+    let policy = akita_config::policy_of::<akita_config::presets::fp128::Dense>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
     let larger_output = complete_candidate(100, 64, 1_001);

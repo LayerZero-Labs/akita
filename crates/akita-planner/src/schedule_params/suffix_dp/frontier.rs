@@ -157,9 +157,7 @@ fn setup_envelope_score(
     selection_policy: crate::SelectionPolicyId,
     setup_field_elements: usize,
 ) -> usize {
-    if selection_policy
-        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
-    {
+    if selection_policy == crate::SelectionPolicyId::PaddedSetupEnvelope {
         akita_params::padded_setup_prefix_len(setup_field_elements)
     } else {
         setup_field_elements
@@ -632,7 +630,7 @@ fn setup_primary_strictly_dominates(
     }
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+        crate::SelectionPolicyId::PaddedSetupEnvelope
     ) {
         return left_score.setup_field_elements <= right_score.setup_field_elements
             && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
@@ -674,7 +672,7 @@ fn setup_projection_dominates(
         cost_never_worse && left.context == right.context && left.descriptor <= right.descriptor;
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+        crate::SelectionPolicyId::PaddedSetupEnvelope
     ) {
         return left.score.setup_field_elements <= right.score.setup_field_elements
             && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
@@ -726,8 +724,7 @@ fn payload_primary_strictly_dominates(
 ) -> bool {
     left_admission.admits_every_parent_of(right_admission)
         && left_score.cost.strictly_better(right_score.cost)
-        && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+        && (selection_policy != crate::SelectionPolicyId::PaddedSetupEnvelope
             || left_score.setup_field_elements <= right_score.setup_field_elements)
 }
 
@@ -737,8 +734,7 @@ fn payload_projection_dominates(
     right: ProjectionOrder<'_, PayloadScore>,
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
-        && (selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+        && (selection_policy != crate::SelectionPolicyId::PaddedSetupEnvelope
             || left.score.setup_field_elements <= right.score.setup_field_elements)
         && (left.score.cost.strictly_better(right.score.cost)
             || (left.score.cost.never_worse(right.score.cost)

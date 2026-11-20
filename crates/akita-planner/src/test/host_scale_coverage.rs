@@ -1,6 +1,6 @@
 use super::*;
 
-use akita_config::proof_optimized::fp128::{Dense, DenseBounded, OneHot};
+use akita_config::presets::fp128::{Dense, DenseBounded, OneHot};
 use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::sis::CommittedSourceClass;
 use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId, OpeningClaimsLayout};

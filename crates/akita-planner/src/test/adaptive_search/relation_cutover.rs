@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let domain = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(256)]).unwrap();
     let base_policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
@@ -73,7 +73,7 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
 
 #[test]
 fn selected_cutover_is_invariant_under_relation_traversal_order() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let domain = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(256)]).unwrap();
     let mut policy = policy_for_domain(

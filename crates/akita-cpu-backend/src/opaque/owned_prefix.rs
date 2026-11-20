@@ -231,7 +231,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::proof_optimized::fp128;
+    use akita_config::presets::fp128;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use jolt_field::One;
 

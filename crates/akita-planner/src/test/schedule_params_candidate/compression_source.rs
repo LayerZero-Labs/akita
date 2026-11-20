@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+    use akita_config::{policy_of, presets::fp128::OneHot};
 
     struct FixedFoldPolicy;
 

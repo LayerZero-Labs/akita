@@ -1,7 +1,7 @@
 //! End-to-end coverage for the mixed distributed (multi-chunk) + recursive
 //! setup-offload profile.
 //!
-//! This test uses `RecursiveCommitmentConfig<fp128::OneHotMultiChunk>` (the
+//! This test uses `RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>` (the
 //! production `W8R2` preset, `fp128_onehot_recursive_multi_chunk_w8r2`
 //! family): two precommitted singleton groups at `nv=16` and a two-polynomial
 //! final group at `nv=32`. That schedule combines the `W8R2` chunked witness
@@ -20,7 +20,7 @@
 
 use crate::common;
 
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::ScheduleLookupKey;
 use akita_params::{
@@ -31,9 +31,9 @@ use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 
-type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>;
 fn w8r2_profiling_key(
-    base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunk>,
+    base_catalog: &akita_config::TrustedScheduleCatalog<fp128::OneHotMultiChunkW8R2>,
 ) -> ScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
     let precommitted = base_catalog
@@ -51,7 +51,7 @@ fn w8r2_profiling_key(
 #[test]
 fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let base_catalog = akita_config::test_support::workspace_schedule_catalog::<
-        fp128::OneHotMultiChunk,
+        fp128::OneHotMultiChunkW8R2,
     >(akita_params::MultiChunkProfileId::W8R2.cfg())
     .expect("base W8R2 catalog");
     let catalog = akita_config::test_support::workspace_schedule_catalog::<W8R2Cfg>(
@@ -269,7 +269,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
 #[test]
 #[ignore = "production-sized profile E2E; run explicitly with --release"]
 fn mix_multi_chunk_recursive_profile_proves_and_verifies() {
-    recursive_multi_group_round_trip::<fp128::OneHotMultiChunk>(
+    recursive_multi_group_round_trip::<fp128::OneHotMultiChunkW8R2>(
         akita_params::MultiChunkProfileId::W8R2.cfg(),
         TRANSCRIPT_DOMAIN,
         assert_w8r2_profile_shape,

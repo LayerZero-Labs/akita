@@ -2,7 +2,7 @@ use super::*;
 
 use akita_config::{
     policy_of,
-    proof_optimized::{fp128::DenseMultiChunk, fp64::Dense},
+    presets::{fp128::DenseMultiChunkW8R2, fp64::Dense},
     CommitmentConfig,
 };
 
@@ -107,18 +107,18 @@ fn noncontractive_root_is_selected_by_the_complete_policy() {
 
 #[test]
 fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
-    let policy = policy_of::<DenseMultiChunk>(akita_params::MultiChunkProfileId::W8R2.cfg());
+    let policy = policy_of::<DenseMultiChunkW8R2>(akita_params::MultiChunkProfileId::W8R2.cfg());
     let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
     let schedule = find_schedule(
         &key,
-        DenseMultiChunk::committed_source_contract().unwrap(),
+        DenseMultiChunkW8R2::committed_source_contract().unwrap(),
         &[],
         &policy,
-        DenseMultiChunk::ring_challenge_config,
+        DenseMultiChunkW8R2::ring_challenge_config,
     )
     .expect("valid multi-chunk root");
     assert_eq!(
-        root_candidate_classes::<DenseMultiChunk>(
+        root_candidate_classes::<DenseMultiChunkW8R2>(
             16,
             akita_params::MultiChunkProfileId::W8R2.cfg()
         )

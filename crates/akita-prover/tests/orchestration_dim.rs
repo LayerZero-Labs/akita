@@ -2,7 +2,7 @@
 
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp128, fp64};
+use akita_config::presets::{fp128, fp64};
 use akita_params::ScheduleLookupKey;
 use akita_params::{
     validate_schedule_ring_dims, CommittedGroupBatchProfile, GroupCommitPhaseParams,

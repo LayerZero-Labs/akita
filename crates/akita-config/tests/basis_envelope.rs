@@ -1,7 +1,7 @@
 //! Planner guard: shipped adaptive fp128 one-hot schedules must stay within the
-//! configured proof-optimized basis search window.
+//! configured preset basis search window.
 
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::CommitmentConfig;
 use akita_params::sis::{HonestFoldPolicy, HonestFoldSizingQuery};
 use akita_params::PolynomialGroupLayout;
@@ -31,7 +31,7 @@ fn large_field_dense_presets_search_the_extended_a_dimension_domain() {
             &[64, 128, 256, 512, 1024][..],
         ),
         (
-            akita_config::proof_optimized::fp64::Dense::RING_DIMENSION_SCHEDULE,
+            akita_config::presets::fp64::Dense::RING_DIMENSION_SCHEDULE,
             &[64, 128, 256, 512, 1024, 2048][..],
         ),
     ] {

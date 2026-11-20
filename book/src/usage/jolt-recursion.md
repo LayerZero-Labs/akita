@@ -74,7 +74,7 @@ RISC-V program.
 
 ## The current configuration
 
-The harness uses `proof_optimized::fp128::OneHot`. Its input is one structured
+The harness uses `presets::fp128::OneHot`. Its input is one structured
 one hot polynomial, and the guest is compiled with a source-view dimension of
 $D = 256$. This fixed type is the root envelope for the current adaptive
 configuration. The generated schedule still chooses the dimensions used at

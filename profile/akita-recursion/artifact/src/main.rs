@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_cpu_backend::{AkitaProverSetup, CommitOutput, CpuBackend, GroupContext, OneHotPoly};
 use akita_params::ScheduleLookupKey;

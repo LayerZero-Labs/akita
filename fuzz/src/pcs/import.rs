@@ -9,7 +9,7 @@
 //! explicit reason rather than failing at run time.
 
 use super::ops::{Handle, PcsOps};
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
 use akita_error::AkitaError;

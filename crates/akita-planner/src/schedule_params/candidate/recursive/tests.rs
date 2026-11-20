@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn combined_terminal_and_fold_views_match_independent_searches() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
     use akita_params::InnerCommitSecurityRoute;
 
@@ -13,7 +13,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
     // The recursive selection rule returns the independent searches as they
     // are. Only the direct rule runs the combined search, so test both.
     let direct_policy = PlannerPolicy {
-        selection_policy: crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+        selection_policy: crate::SelectionPolicyId::FirstDirectCapacity,
         ..recursive_policy
     };
     let opening = PlannerOpeningCandidate::evaluation_trace(
@@ -72,7 +72,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
 #[test]
 fn guided_search_forces_a_split_outside_the_bounded_domain() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
@@ -148,7 +148,7 @@ fn guided_search_forces_a_split_outside_the_bounded_domain() {
 #[test]
 fn guided_recursive_l2_survives_the_profitability_filter() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
     use akita_params::InnerCommitSecurityRoute;
 
@@ -239,7 +239,7 @@ fn guided_recursive_l2_survives_the_profitability_filter() {
 #[test]
 fn combined_relation_views_match_mode_specific_searches() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
     use akita_params::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
@@ -301,7 +301,7 @@ fn combined_relation_views_match_mode_specific_searches() {
 #[test]
 fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
     use akita_params::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
@@ -347,7 +347,7 @@ fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
 #[test]
 fn combined_views_keep_a_noncontracting_terminal_candidate() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
@@ -392,7 +392,7 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
 #[test]
 fn late_consumer_keeps_setup_prefix_slices_eligible() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;

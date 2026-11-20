@@ -189,7 +189,7 @@ fn recursive_split_bound_prices_packing_e_at_its_physical_width() {
 fn recursive_split_policy_controls_the_shared_search_domain() {
     assert_eq!(
         recursive_split_search_domain(
-            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremes,
             1 << 12,
             12,
             4,
@@ -200,7 +200,7 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
     );
     assert_eq!(
         recursive_split_search_domain(
-            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+            crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremes,
             1 << 16,
             16,
             4,
@@ -225,7 +225,7 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn response_model_keeps_one_split_per_fold_work_size() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
     let policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
@@ -284,7 +284,7 @@ fn response_model_keeps_one_split_per_fold_work_size() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
-    use akita_config::{policy_of, proof_optimized::fp64::Dense};
+    use akita_config::{policy_of, presets::fp64::Dense};
     use akita_params::{InnerCommitSecurityRoute, OpeningMethod};
 
     let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
@@ -420,7 +420,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
 fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
     use akita_config::{
         policy_of,
-        proof_optimized::{fp128, fp32, fp64},
+        presets::{fp128, fp32, fp64},
     };
 
     let cases = [
@@ -506,7 +506,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
-    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp64::Dense, CommitmentConfig};
     use akita_params::{InnerCommitSecurityRoute, OpeningMethod, ScheduleLookupKey};
 
     let policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
@@ -789,7 +789,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
 
     let one_hot_contract =
-        akita_config::proof_optimized::fp64::OneHot::committed_source_contract().unwrap();
+        akita_config::presets::fp64::OneHot::committed_source_contract().unwrap();
     let mixed_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
         &policy,
         dimensions,
@@ -928,13 +928,13 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn guided_root_slice_survives_grouped_local_pruning() {
-    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp64::Dense, CommitmentConfig};
     use akita_params::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
-    // Only the V5 root prunes slices locally: there the root's padded
+    // Only the direct-setup objective prunes root slices locally: there the root's padded
     // first-direct setup leads the objective.
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
+    policy.selection_policy = crate::SelectionPolicyId::FirstDirectCapacity;
     let dimensions = CommitmentRingDims {
         inner: 1024,
         outer: 128,
@@ -1027,7 +1027,7 @@ fn guided_root_slice_survives_grouped_local_pruning() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
-    use akita_config::{policy_of, proof_optimized::fp64::Dense, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp64::Dense, CommitmentConfig};
     use akita_params::ScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>(akita_params::ChunkedWitnessCfg::default_non_chunked());
@@ -1072,7 +1072,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn setup_prefix_cache_separates_equal_width_opening_methods() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, RecursiveCommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, RecursiveCommitmentConfig};
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let policy = policy_of::<Recursive>(akita_params::ChunkedWitnessCfg::default_non_chunked());
@@ -1168,7 +1168,7 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+    use akita_config::{policy_of, presets::fp128::OneHot};
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     policy.claim_ext_degree = 2;
@@ -1245,7 +1245,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
 #[test]
 fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;

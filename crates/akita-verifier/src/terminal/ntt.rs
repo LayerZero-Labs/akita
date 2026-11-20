@@ -38,7 +38,7 @@ mod tests {
     };
     use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
-    use akita_config::proof_optimized::fp128::OneHot;
+    use akita_config::presets::fp128::OneHot;
     use akita_params::{FlatMatrix, PolynomialGroupLayout, ScheduleLookupKey};
     use akita_types::{
         ntt_cache_requires_exactness_tail, prepare_ntt_cache, AkitaExpandedSetup,

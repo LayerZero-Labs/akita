@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn unpruned_search_covers_selective_l2_candidate_domain() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     policy.inner_basis_range.1 = policy.inner_basis_range.0;

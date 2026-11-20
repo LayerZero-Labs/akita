@@ -367,7 +367,7 @@ Supporting limits live in these files:
 - `crates/akita-algebra/src/ring/crt_ntt_repr/lut.rs` prepares signed `i8`
   digits for the CRT and NTT commitment path.
 - `crates/akita-schedules/src/runtime.rs` validates schedule basis ranges.
-- `crates/akita-config/src/proof_optimized.rs` defines the production search
+- `crates/akita-config/src/presets.rs` defines the production search
   ranges.
 
 ## From the protocol rule to the code

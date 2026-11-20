@@ -533,9 +533,9 @@ fn bounded_dense_declares_a_bound_that_contains_every_u64() {
     // `log_commit_bound` is a *signed* bit width: `k` is `[-2^(k-1), 2^(k-1) - 1]`.
     // Covering `u64::MAX = 2^64 - 1` therefore takes 65, not 64.
     assert_eq!(BoundedDenseCfg::LOG_COMMIT_BOUND, 65);
-    const { assert!(BoundedDenseCfg::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128) };
+    const { assert!(BoundedDenseCfg::MAX_POSITIVE_COEFFICIENT >= u64::MAX as u128) };
     assert_eq!(
-        BoundedDenseCfg::MAX_CENTERED_MAGNITUDE,
+        BoundedDenseCfg::MAX_POSITIVE_COEFFICIENT,
         u128::from(u64::MAX),
         "the positive endpoint must be exactly u64::MAX"
     );

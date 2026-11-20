@@ -73,7 +73,7 @@ chunking from trusted application configuration. This example uses a single
 chunk:
 
 ```rust
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_params::ChunkedWitnessCfg;
 use akita_pcs::AkitaCommitmentScheme;
 

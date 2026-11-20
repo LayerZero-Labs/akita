@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_algebra::CyclotomicRing;
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_cpu_backend::standalone::{
     dense_coefficient_packing, onehot_coefficient_packing,
     recursive_witness_coefficient_packing_partials, recursive_witness_from_i8_digits,

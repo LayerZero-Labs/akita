@@ -22,7 +22,7 @@ use akita_params::sis::CommittedSourceContract;
 use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId, ScheduleLookupKey};
 use akita_params::{FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout};
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 
 struct ScalarPreplan {
@@ -712,9 +712,9 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
         recursive,
         &[],
-        RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
-        fp128::OneHotMultiChunk,
-        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>(
+        RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>,
+        fp128::OneHotMultiChunkW8R2,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunkW8R2>(
             preplans,
             FP128_ONEHOT_MULTI_CHUNK_R2_GROUPED_FINALS,
             chunking
@@ -737,8 +737,8 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     ),
     family_row!(
         FP128_ONEHOT_MULTI_CHUNK_KEYS,
-        fp128::OneHotMultiChunk,
-        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>(
+        fp128::OneHotMultiChunkW8R2,
+        |preplans, chunking| recursive_onehot_profile_keys::<fp128::OneHotMultiChunkW8R2>(
             preplans,
             FP128_ONEHOT_MULTI_CHUNK_R2_GROUPED_FINALS,
             chunking
@@ -759,7 +759,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     ),
     family_row!(
         FP128_DENSE_MULTI_CHUNK_KEYS,
-        fp128::DenseMultiChunk,
+        fp128::DenseMultiChunkW8R2,
         no_grouped_requests,
         MultiChunkProfileId::W8R2.cfg()
     ),

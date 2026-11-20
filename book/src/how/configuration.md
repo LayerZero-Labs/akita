@@ -27,7 +27,7 @@ dimension selected by the fold that consumes the prefix.
 **Implementation map**
 
 - `crates/akita-config/src/lib.rs:54-120`.
-- `crates/akita-config/src/proof_optimized/`.
+- `crates/akita-config/src/presets/`.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner/config boundary.
 
 ### Runtime witness chunking

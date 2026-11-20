@@ -105,8 +105,9 @@ chunks; `DenseMultiChunkW8R3` offers eight chunks for dense sources.
 `RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>`,
 `RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>`, and
 `RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>` combine each chunk
-width with recursive setup offloading. Each preset uses its own trusted schedule catalog;
-`OneHotMultiChunk` and `DenseMultiChunk` continue to use W8R2.
+width with recursive setup offloading. The W8R2 variants are
+`OneHotMultiChunkW8R2` and `DenseMultiChunkW8R2`. Each preset uses its own
+trusted schedule catalog.
 
 Multi chunk configurations are deployment choices for measured large
 workloads. Begin with `Dense` or `OneHot`. Move to a multi chunk companion after

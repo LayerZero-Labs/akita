@@ -2,7 +2,7 @@
 
 use akita_config::{
     policy_of,
-    proof_optimized::{fp128, fp32},
+    presets::{fp128, fp32},
     CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog,
 };
 use akita_params::{

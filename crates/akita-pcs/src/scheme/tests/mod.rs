@@ -13,7 +13,7 @@ where
         akita_config::test_support::workspace_schedule_catalog::<C>(chunking)?,
     ))
 }
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::evaluate_root_polynomial;
 use akita_cpu_backend::CpuBackend;

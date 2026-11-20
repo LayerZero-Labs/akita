@@ -13,7 +13,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlannerCostModelId {
     /// Message payload, additive nonce maxima, and setup-envelope accounting.
-    NoncePayloadAndSetupEnvelopeV2,
+    NoncePayloadAndSetupEnvelope,
 }
 
 /// Offline response-energy model used to admit selective L2 candidates.
@@ -23,7 +23,7 @@ pub enum SelectiveL2ResponseModelId {
     Disabled,
     /// Typed Z/E/T/R/compression moment propagation with extension tensor
     /// packing and a Markov-backed grinding cap.
-    TypedProtocolMomentsV1,
+    TypedProtocolMoments,
 }
 
 impl SelectiveL2ResponseModelId {
@@ -31,15 +31,15 @@ impl SelectiveL2ResponseModelId {
     pub const fn tag(self) -> u32 {
         match self {
             Self::Disabled => 0,
-            Self::TypedProtocolMomentsV1 => 1,
+            Self::TypedProtocolMoments => 1,
         }
     }
 
-    /// Stable identity name.
+    /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Disabled => "Disabled",
-            Self::TypedProtocolMomentsV1 => "TypedProtocolMomentsV1",
+            Self::TypedProtocolMoments => "TypedProtocolMoments",
         }
     }
 }
@@ -48,14 +48,14 @@ impl PlannerCostModelId {
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::NoncePayloadAndSetupEnvelopeV2 => 2,
+            Self::NoncePayloadAndSetupEnvelope => 2,
         }
     }
 
-    /// Stable identity name.
+    /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::NoncePayloadAndSetupEnvelopeV2 => "NativeNoncePayloadAndSetupEnvelopeV2",
+            Self::NoncePayloadAndSetupEnvelope => "NoncePayloadAndSetupEnvelope",
         }
     }
 }
@@ -65,27 +65,27 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick first direct setup, exact additive cost, proof bytes, total setup,
     /// root output witness, then descriptor.
-    MinFirstDirectSetupThenExactProofAndWorkV5,
+    FirstDirectCapacity,
     /// Pick power-of-two setup-envelope capacity, first direct setup, exact
     /// additive cost, proof bytes, first direct output witness, then descriptor.
-    MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6,
+    PaddedSetupEnvelope,
 }
 
 impl SelectionPolicyId {
     /// Canonical selection objective for one schedule policy shape.
     pub fn for_policy(recursive_setup_planning: bool) -> Self {
         if recursive_setup_planning {
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6
+            Self::PaddedSetupEnvelope
         } else {
-            Self::MinFirstDirectSetupThenExactProofAndWorkV5
+            Self::FirstDirectCapacity
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => 14,
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => 15,
+            Self::FirstDirectCapacity => 14,
+            Self::PaddedSetupEnvelope => 15,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
             // belonged to the retired setup-envelope-first policy. Tags 4--6
             // selected proof bytes; tags 7--9 used rounded work cost,
@@ -95,15 +95,11 @@ impl SelectionPolicyId {
         }
     }
 
-    /// Stable identity name.
+    /// Descriptive policy name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinFirstDirectSetupThenExactProofAndWorkV5 => {
-                "MinFirstDirectSetupThenExactProofAndWorkV5"
-            }
-            Self::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
-                "MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6"
-            }
+            Self::FirstDirectCapacity => "FirstDirectCapacity",
+            Self::PaddedSetupEnvelope => "PaddedSetupEnvelope",
         }
     }
 }
@@ -115,21 +111,21 @@ pub enum RecursiveSplitSearchPolicy {
     Exhaustive,
     /// Search the two extremes and a fixed radius-two balance window for
     /// states above twelve reduced variables.
-    BoundedBalancedExtremesV1,
+    BoundedBalancedExtremes,
 }
 
 impl RecursiveSplitSearchPolicy {
     pub const fn tag(self) -> u32 {
         match self {
             Self::Exhaustive => 1,
-            Self::BoundedBalancedExtremesV1 => 2,
+            Self::BoundedBalancedExtremes => 2,
         }
     }
 
     pub const fn name(self) -> &'static str {
         match self {
             Self::Exhaustive => "Exhaustive",
-            Self::BoundedBalancedExtremesV1 => "BoundedBalancedExtremesV1",
+            Self::BoundedBalancedExtremes => "BoundedBalancedExtremes",
         }
     }
 }
@@ -144,21 +140,21 @@ pub enum RecursiveSetupSearchPolicy {
     /// This bounds production catalog generation without changing direct-edge
     /// traversal. It is an explicit search-domain choice, not a dominance
     /// claim about deeper offload points.
-    RootAndFirstChildV1,
+    RootAndFirstChild,
 }
 
 impl RecursiveSetupSearchPolicy {
     pub const fn tag(self) -> u32 {
         match self {
             Self::Exhaustive => 1,
-            Self::RootAndFirstChildV1 => 2,
+            Self::RootAndFirstChild => 2,
         }
     }
 
     pub const fn name(self) -> &'static str {
         match self {
             Self::Exhaustive => "Exhaustive",
-            Self::RootAndFirstChildV1 => "RootAndFirstChildV1",
+            Self::RootAndFirstChild => "RootAndFirstChild",
         }
     }
 
@@ -166,7 +162,7 @@ impl RecursiveSetupSearchPolicy {
     pub const fn admits_offloaded_edge_at(self, level: usize) -> bool {
         match self {
             Self::Exhaustive => true,
-            Self::RootAndFirstChildV1 => level <= 1,
+            Self::RootAndFirstChild => level <= 1,
         }
     }
 }
@@ -186,11 +182,9 @@ pub struct RingDimensionSchedule {
 /// Number of leading fold levels covered by the audited adaptive search.
 pub const ADAPTIVE_SEARCH_LEVELS: usize = 2;
 
-/// Runtime schedule validation policy.
+/// Policy shared by offline schedule planning and runtime validation.
 ///
-/// The compatibility name stays `PlannerPolicy` during the migration because
-/// trusted catalog identities already embed these fields. Runtime code must
-/// only use this as validation policy; search remains in `akita-planner`.
+/// Trusted catalogs bind the policy fields through their canonical encodings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
@@ -242,7 +236,7 @@ impl PlannerPolicy {
 
     /// Whether this family opts into the typed suffix response model.
     pub fn selective_l2_response_model_enabled(&self) -> bool {
-        self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMomentsV1
+        self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMoments
     }
 
     /// Validate extension-field geometry and return the challenge-field width.
@@ -919,9 +913,9 @@ mod tests {
 
     fn adaptive_policy() -> PlannerPolicy {
         PlannerPolicy {
-            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelopeV2,
-            selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5,
+            cost_model: PlannerCostModelId::NoncePayloadAndSetupEnvelope,
+            selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMoments,
+            selection_policy: SelectionPolicyId::FirstDirectCapacity,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -954,11 +948,11 @@ mod tests {
     #[test]
     fn recursive_setup_search_policy_has_stable_domain_semantics() {
         assert_eq!(RecursiveSetupSearchPolicy::Exhaustive.tag(), 1);
-        assert_eq!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.tag(), 2);
+        assert_eq!(RecursiveSetupSearchPolicy::RootAndFirstChild.tag(), 2);
         assert!(RecursiveSetupSearchPolicy::Exhaustive.admits_offloaded_edge_at(12));
-        assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(0));
-        assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(1));
-        assert!(!RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(2));
+        assert!(RecursiveSetupSearchPolicy::RootAndFirstChild.admits_offloaded_edge_at(0));
+        assert!(RecursiveSetupSearchPolicy::RootAndFirstChild.admits_offloaded_edge_at(1));
+        assert!(!RecursiveSetupSearchPolicy::RootAndFirstChild.admits_offloaded_edge_at(2));
     }
 
     #[test]
