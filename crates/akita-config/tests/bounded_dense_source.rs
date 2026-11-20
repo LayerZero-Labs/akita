@@ -69,7 +69,7 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
     // The declaration must contain the workload the preset is for. `65` is a
     // signed bit width, so it spans `[-2^64, 2^64 - 1]` and `u64::MAX` sits on
     // the positive endpoint; `64` would have covered only half of that.
-    const { assert!(fp128::DenseBounded::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128) };
+    const { assert!(fp128::DenseBounded::MAX_POSITIVE_COEFFICIENT >= u64::MAX as u128) };
     assert_eq!(
         fp128::DenseBounded::committed_source_contract()
             .expect("the preset declares a valid producer contract")

@@ -63,8 +63,8 @@ pub struct OneHotMultiChunkW8R3;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DenseMultiChunkW8R3;
 
-/// Dense preset for witnesses known to fit an **unsigned 64-bit** magnitude
-/// inside the 128-bit field, i.e. `u64`-valued coefficients.
+/// Dense preset for centered coefficients in `[-2^64, 2^64 - 1]`.
+/// This interval includes every `u64` value.
 ///
 /// Same field, same SIS modulus profile, and the same balanced signed-digit
 /// source class as [`Dense`]; the only difference is the declared committed-source
@@ -84,8 +84,7 @@ pub struct DenseMultiChunkW8R3;
 /// would cover only `[-2^63, 2^63 - 1]` and miss half of a uniform `u64`
 /// distribution.
 ///
-/// [`Self::MAX_CENTERED_MAGNITUDE`] states the same fact without the
-/// signed-bit-width indirection; prefer it when asserting your data fits.
+/// [`Self::MAX_POSITIVE_COEFFICIENT`] exposes the positive endpoint directly.
 ///
 /// # What you must guarantee
 ///
@@ -104,11 +103,8 @@ impl DenseBounded {
     /// `u64`. See the type docs for why this is `65` rather than `64`.
     pub const LOG_COMMIT_BOUND: u32 = 65;
 
-    /// Largest centered magnitude this preset commits, on the positive side.
-    ///
-    /// Exactly `u64::MAX`, so `u64`-valued coefficients sit on the endpoint and
-    /// anything above is rejected at `commit`.
-    pub const MAX_CENTERED_MAGNITUDE: u128 = (1u128 << (Self::LOG_COMMIT_BOUND - 1)) - 1;
+    /// Largest positive centered coefficient this preset admits, equal to `u64::MAX`.
+    pub const MAX_POSITIVE_COEFFICIENT: u128 = (1u128 << (Self::LOG_COMMIT_BOUND - 1)) - 1;
 }
 
 // The preset's whole reason to exist, enforced at compile time rather than left
@@ -119,7 +115,7 @@ impl DenseBounded {
 // macro is configured from `LOG_COMMIT_BOUND` itself, this covers the value that
 // actually builds the preset.
 const _: () = assert!(
-    DenseBounded::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128,
+    DenseBounded::MAX_POSITIVE_COEFFICIENT >= u64::MAX as u128,
     "fp128::DenseBounded must declare a bound containing every u64"
 );
 
