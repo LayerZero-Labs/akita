@@ -65,7 +65,7 @@ impl SignedDigitBounds {
 /// not to the encoded payload: architecture decoders may issue bounded word
 /// vector loads that extend past the final payload byte.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PackedSignedDigits {
+pub struct PackedSignedDigits {
     storage: Arc<Vec<u8>>,
     encoded_len: usize,
     len: usize,
@@ -93,7 +93,7 @@ impl From<Arc<[i8]>> for PackedSignedDigits {
 }
 
 impl PackedSignedDigits {
-    pub(crate) fn from_i8_digits_auto(digits: Vec<i8>) -> Self {
+    pub fn from_i8_digits_auto(digits: Vec<i8>) -> Self {
         let bounds = signed_digit_bounds(digits.iter().copied());
         let bit_width = minimum_signed_bit_width(bounds);
         let len = digits.len();

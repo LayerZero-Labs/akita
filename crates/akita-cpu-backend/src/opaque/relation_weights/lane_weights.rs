@@ -30,7 +30,7 @@ pub(crate) struct ResponseNormFactors<E: Field> {
 
 /// Exact common-alpha factorization of the padded relation-weight table.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RelationWeightFactorization<E: Field> {
+pub struct RelationWeightFactorization<E: Field> {
     common_alpha_factor: Vec<E>,
     relation_lane_weights: Vec<E>,
 }

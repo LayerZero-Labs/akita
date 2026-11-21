@@ -50,7 +50,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
-    pub(crate) fn new(
+    pub fn new(
         batching_coeff: E,
         w_evals_compact: PackedSignedDigits,
         stage1_point: &[E],
@@ -129,7 +129,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 }
             }
         }
-        linear_terms.validate_len(witness_len)?;
+        linear_terms.validate_shape(live_lane_count, coeff_count)?;
 
         // Self-consistency check: the materialized ordinary relation weights
         // plus the structured linear weights must reproduce the combined

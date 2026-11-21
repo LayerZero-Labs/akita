@@ -18,15 +18,6 @@ const NUM_VARIABLES: usize = 16;
 
 // Test-only constructors and readback for the prepared linear terms.
 impl<E: Field> PreparedProverLinearTerms<E> {
-    pub(crate) fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
-        Self {
-            lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
-            sources: Vec::new(),
-            live_lane_count,
-            coeff_count,
-        }
-    }
-
     pub(crate) fn from_dense(dense: Vec<E>, live_lane_count: usize, coeff_count: usize) -> Self {
         assert_eq!(dense.len(), live_lane_count * coeff_count);
         let mut lane_terms = vec![Vec::new(); live_lane_count];
@@ -593,4 +584,13 @@ pub(crate) fn response_norm_trace_fixture<E: Field>(
         PreparedProverLinearTerms::from_evaluation_trace(&weights, coeff_count, E::one()).unwrap();
     assert!(!prepared.sources.is_empty());
     (prepared, dense)
+}
+
+#[test]
+fn prepared_linear_terms_reject_transposed_shape() {
+    // Equal products with different dimensions must not pass as the same shape.
+    let terms = PreparedProverLinearTerms::<F>::zero(32, 128);
+    assert!(terms.validate_shape(32, 128).is_ok());
+    assert!(terms.validate_shape(64, 64).is_err());
+    assert!(terms.validate_shape(128, 32).is_err());
 }

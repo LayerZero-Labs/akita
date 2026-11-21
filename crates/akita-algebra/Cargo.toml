@@ -22,6 +22,7 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+rand_chacha = "0.3"
 criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
@@ -33,11 +34,16 @@ harness = false
 name = "offset_eq_window"
 harness = false
 
+[[bench]]
+name = "eq_tables"
+harness = false
+
 [features]
 ntt-inline = ["dep:jolt-inlines-ntt"]
 default = []
 parallel = ["jolt-poly/parallel", "dep:rayon", "jolt-field/parallel"]
 tensor-no-carry = []
 tensor-eq-runs = []
+
 [lints]
 workspace = true

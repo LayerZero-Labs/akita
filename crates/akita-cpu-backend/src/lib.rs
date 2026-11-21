@@ -74,6 +74,12 @@ pub mod benchmark_support {
         centered_quotient_rows_with_i16_tail, fused_split_eq_quotients_prover_bounds,
         mat_vec_mul_ntt_digits_i8, FusedQuotientRows,
     };
+    pub use crate::opaque::sumcheck::digit_range::LowBasisRangeCheckProver;
+    pub use crate::opaque::sumcheck::relation_range_image::{
+        DenseRelationWeights, PreparedProverLinearTerms, RelationRangeImageProver,
+        RelationWeightOracle,
+    };
+    pub use crate::sources::packed_digits::PackedSignedDigits;
     pub use crate::sources::poly_helpers::balanced_ring_decompose_fold_partitioned;
 }
 
