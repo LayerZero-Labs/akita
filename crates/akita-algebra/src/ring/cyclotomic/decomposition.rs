@@ -1,5 +1,8 @@
 use super::*;
 
+mod constant_time;
+pub use constant_time::balanced_decompose_coefficients_pow2_i8_into_ct;
+
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 

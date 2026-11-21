@@ -1,5 +1,9 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
+mod constant_time;
+mod radix_sum;
+pub use radix_sum::{RADIX_SUM_BITS, RADIX_SUM_PLANES};
+
 use std::array::from_fn;
 
 use crate::ntt::butterfly::NttTwiddles;

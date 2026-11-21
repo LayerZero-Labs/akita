@@ -415,6 +415,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// Convert small integer coefficients (e.g. gadget digits) into
     /// negacyclic CRT+NTT domain, bypassing Fp128 centering entirely.
+    ///
+    /// Branches and memory indices are independent of the digits. Constant
+    /// time requires data-independent integer arithmetic and forward NTT
+    /// kernels on the target; parameters and CPU dispatch are public.
     pub fn from_i8_with_params(digits: &[i8; D], params: &CrtNttParamSet<W, K, D>) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs

@@ -20,8 +20,8 @@ use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub use decomposition::{
-    balanced_decompose_coefficients_pow2_i8_into, decompose_centering_threshold,
-    BalancedDecomposePow2Params, SmallSignedValue,
+    balanced_decompose_coefficients_pow2_i8_into, balanced_decompose_coefficients_pow2_i8_into_ct,
+    decompose_centering_threshold, BalancedDecomposePow2Params, SmallSignedValue,
 };
 pub use shift_windows::NegacyclicShiftWindows;
 pub use wide::WideCyclotomicRing;
