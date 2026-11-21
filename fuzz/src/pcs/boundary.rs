@@ -93,9 +93,9 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
         }
         let field = std::any::type_name::<Cfg::Field>();
         let commitment_selector = [
-            std::any::type_name::<akita_config::proof_optimized::fp128::Field>(),
-            std::any::type_name::<akita_config::proof_optimized::fp64::Field>(),
-            std::any::type_name::<akita_config::proof_optimized::fp32::Field>(),
+            std::any::type_name::<akita_config::presets::fp128::Field>(),
+            std::any::type_name::<akita_config::presets::fp64::Field>(),
+            std::any::type_name::<akita_config::presets::fp32::Field>(),
         ]
         .iter()
         .position(|candidate| *candidate == field);

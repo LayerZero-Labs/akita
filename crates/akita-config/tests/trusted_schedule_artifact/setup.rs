@@ -1,6 +1,6 @@
 use super::support::checked_in_catalog;
 use akita_config::{
-    proof_optimized::fp128, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
+    presets::fp128, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
     ValidatedScheduleCatalog,
 };
 use akita_serialization::AkitaSerialize;
@@ -46,9 +46,9 @@ fn recursive_prefix_slot_id_fixture() {
     let onehot = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHot>>(
         akita_params::ChunkedWitnessCfg::default_non_chunked(),
     );
-    let multichunk = recursive_prefix_fixture::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>(
-        akita_params::MultiChunkProfileId::W8R2.cfg(),
-    );
+    let multichunk = recursive_prefix_fixture::<
+        RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>,
+    >(akita_params::MultiChunkProfileId::W8R2.cfg());
     assert_eq!(
         onehot,
         (
@@ -123,7 +123,7 @@ fn setup_requirements_keep_precommits_when_the_grouped_row_does_not_fit() {
 #[test]
 fn setup_requirements_union_covers_both_families_at_one_bound() {
     type OneHot = RecursiveCommitmentConfig<fp128::OneHot>;
-    type MultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    type MultiChunk = RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>;
     let requirements_at = |max_num_vars, max_num_batched_polys| {
         (
             akita_config::SetupRequirements::from_catalog::<OneHot>(

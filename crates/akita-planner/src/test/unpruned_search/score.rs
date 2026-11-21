@@ -2,13 +2,13 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum OracleObjective {
-    SetupFirst {
+    FirstDirectCapacity {
         first_direct_setup_capacity: usize,
         exact_score: u128,
         proof_bytes: usize,
         setup_field_elements: usize,
     },
-    PaddedSetupEnvelopeFirst {
+    PaddedSetupEnvelope {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
         exact_score: u128,
@@ -20,7 +20,7 @@ enum OracleObjective {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct OracleScore {
     objective: OracleObjective,
-    legacy_root_output_witness_len: Option<usize>,
+    root_output_witness_len: Option<usize>,
     descriptor: Vec<u8>,
 }
 
@@ -61,37 +61,32 @@ pub(super) fn score(
         .first_direct_setup_field_len
         .map(|natural_len| padded_setup_prefix_len(natural_len.get()));
     let objective = match policy.selection_policy {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5 => {
-            OracleObjective::SetupFirst {
-                first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "unpruned setup-first candidate is missing direct setup size".into(),
-                    )
-                })?,
-                exact_score: candidate.cost.exact_score(),
-                proof_bytes: candidate.cost.proof_bytes(),
-                setup_field_elements: candidate.setup_field_elements,
-            }
-        }
-        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6 => {
-            OracleObjective::PaddedSetupEnvelopeFirst {
-                setup_envelope_capacity: padded_setup_prefix_len(candidate.setup_field_elements),
-                first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "unpruned padded-envelope-first candidate is missing direct setup size"
-                            .into(),
-                    )
-                })?,
-                exact_score: candidate.cost.exact_score(),
-                proof_bytes: candidate.cost.proof_bytes(),
-                first_direct_output_witness_len: candidate.first_direct_output_witness_len,
-            }
-        }
+        crate::SelectionPolicyId::FirstDirectCapacity => OracleObjective::FirstDirectCapacity {
+            first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "unpruned setup-first candidate is missing direct setup size".into(),
+                )
+            })?,
+            exact_score: candidate.cost.exact_score(),
+            proof_bytes: candidate.cost.proof_bytes(),
+            setup_field_elements: candidate.setup_field_elements,
+        },
+        crate::SelectionPolicyId::PaddedSetupEnvelope => OracleObjective::PaddedSetupEnvelope {
+            setup_envelope_capacity: padded_setup_prefix_len(candidate.setup_field_elements),
+            first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "unpruned padded-envelope-first candidate is missing direct setup size".into(),
+                )
+            })?,
+            exact_score: candidate.cost.exact_score(),
+            proof_bytes: candidate.cost.proof_bytes(),
+            first_direct_output_witness_len: candidate.first_direct_output_witness_len,
+        },
     };
     Ok(OracleScore {
         objective,
-        legacy_root_output_witness_len: (policy.selection_policy
-            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenExactProofAndWorkV6)
+        root_output_witness_len: (policy.selection_policy
+            != crate::SelectionPolicyId::PaddedSetupEnvelope)
             .then(|| {
                 candidate
                     .folds

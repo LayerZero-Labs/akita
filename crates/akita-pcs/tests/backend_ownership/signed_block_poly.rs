@@ -1,5 +1,5 @@
 use super::common;
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
 use akita_params::BasisMode;
 use akita_pcs::custom_source::{SignedBlockDecoder, SignedBlockPoly};

@@ -8,7 +8,7 @@
 
 mod integration;
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::RecursiveCommitmentConfig;
 use akita_recursion_glue::AkitaJoltCase;
 use integration::declare_akita_guest;

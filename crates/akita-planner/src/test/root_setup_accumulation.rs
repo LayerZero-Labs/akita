@@ -1,7 +1,5 @@
 use super::*;
-use akita_config::{
-    policy_of, proof_optimized::fp128::Dense, CommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::{policy_of, presets::fp128::Dense, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::{ChunkedWitnessCfg, CommittedGroupBatchProfile};
 
 #[test]

@@ -109,7 +109,7 @@ pub(crate) fn attest<Cfg: CommitmentConfig>(mode: &str, nv: usize, np: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::proof_optimized::{fp128, fp32};
+    use akita_config::presets::{fp128, fp32};
 
     fn dense() -> Declaration {
         serde_json::from_str(

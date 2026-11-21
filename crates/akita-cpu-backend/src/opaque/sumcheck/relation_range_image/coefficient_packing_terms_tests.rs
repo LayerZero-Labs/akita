@@ -336,7 +336,7 @@ fn materialize_cpu_sources(
 #[test]
 fn begin_stage3_without_a_next_fold_rejects_the_level() {
     use crate::opaque::{CpuBackend, OpaqueStage3Kernel, ProofScope, Stage3Request};
-    use akita_config::proof_optimized::fp64;
+    use akita_config::presets::fp64;
     use akita_params::{PolynomialGroupLayout, ScheduleLookupKey, SetupPrefixSlotId};
 
     let fixture = fixture();

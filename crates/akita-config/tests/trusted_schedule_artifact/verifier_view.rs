@@ -1,4 +1,4 @@
-use akita_config::{proof_optimized::fp128, TrustedScheduleCatalog};
+use akita_config::{presets::fp128, TrustedScheduleCatalog};
 use akita_params::ChunkedWitnessCfg;
 
 use super::support::checked_in_catalog;

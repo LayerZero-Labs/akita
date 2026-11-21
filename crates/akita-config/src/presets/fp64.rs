@@ -28,7 +28,7 @@ pub struct Dense;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OneHot;
 
-impl_proof_optimized_preset!(
+impl_preset!(
     Dense,
     Field,
     ExtensionField,
@@ -39,7 +39,7 @@ impl_proof_optimized_preset!(
     schedule_family = "fp64_dense",
     ring_dimension_schedule = ADAPTIVE_RING_DIMENSION_SCHEDULE
 );
-impl_proof_optimized_preset!(
+impl_preset!(
     OneHot,
     Field,
     ExtensionField,

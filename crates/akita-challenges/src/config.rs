@@ -366,7 +366,7 @@ mod entropy_tests {
     }
 
     #[test]
-    fn production_ladder_matches_proof_optimized_dims() {
+    fn production_ladder_matches_preset_dims() {
         assert_eq!(
             PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len(),
             PRODUCTION_FOLD_CHALLENGE_LADDER.len(),

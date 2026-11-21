@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn terminal_rejects_an_input_not_divisible_by_its_a_ring() {
-        let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>(
+        let policy = akita_config::policy_of::<akita_config::presets::fp128::Dense>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),
         );
         let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
@@ -203,7 +203,7 @@ mod tests {
     fn terminal_route_guide_preserves_either_feasible_route() {
         use crate::schedule_params::PlannerOpeningCandidate;
         use akita_config::{
-            policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+            policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
         };
         use akita_params::InnerCommitSecurityRoute;
 

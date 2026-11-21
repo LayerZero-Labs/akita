@@ -14,7 +14,7 @@ use akita_algebra::ring::cyclotomic::{
     BalancedDecomposePow2Params,
 };
 use akita_algebra::CyclotomicRing;
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use jolt_field::{CanonicalEncoding, Field};
 

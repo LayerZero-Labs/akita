@@ -163,7 +163,7 @@ the predecessor response basis into its A source. This source classification is
 offline policy only. Runtime profiles carry the resulting exact basis, digit
 depth, widths, ranks, and bounds without a source tag.
 
-Proof-optimized catalogs currently admit inner bases 3 through 10 for the Q32
+The built-in catalogs admit inner bases 3 through 10 for the Q32
 modulus profile and 3 through 11 for Q64 and Q128. These upper limits are
 versioned search-policy choices from exhaustive schedule sweeps, not protocol
 or signed-storage limits. Bases 9 through 11 require the exact signed-i16

@@ -150,7 +150,7 @@ proof bytes, including every Stage 3 proof, and the first direct output-witness
 length. The canonical descriptor breaks remaining ties.
 
 The shipped recursive catalogs consider offloaded edges produced by the root
-and its direct child. This `RootAndFirstChildV1` domain is part of the catalog
+and its direct child. This `RootAndFirstChild` domain is part of the catalog
 identity; direct traversal remains available at every level. Exhaustive search
 is available for audit workloads. Within the selected domain, the planner may
 select no offloaded levels, one level, or several levels. A prefix size does
@@ -170,7 +170,7 @@ catalogs. The current build can expose recursive setup schedules for:
 - the fp32, fp64, and fp128 dense configurations;
 - the fp128 one hot configuration;
 - the fp128 one hot multi chunk configuration with eight chunks and two leading
-  distributed levels (`OneHotMultiChunk`); and
+  distributed levels (`OneHotMultiChunkW8R2`); and
 - the fp128 one hot multi chunk configurations with two, four, or eight chunks
   and three leading distributed levels (`OneHotMultiChunkW2R3`,
   `OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3`).

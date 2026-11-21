@@ -1,4 +1,4 @@
-use crate::proof_optimized::fp128::{OneHot, OneHotMultiChunkW2R3, OneHotMultiChunkW4R3};
+use crate::presets::fp128::{OneHot, OneHotMultiChunkW2R3, OneHotMultiChunkW4R3};
 use crate::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::ChunkedWitnessCfg;
 use akita_schedules::ValidatedScheduleCatalog;

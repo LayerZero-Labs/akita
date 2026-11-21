@@ -44,7 +44,7 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
 #[ignore = "production-sized profile E2E; run explicitly with --release"]
 fn combined_recursive_setup_proves_both_onehot_families() {
     type OneHotRec = RecursiveCommitmentConfig<fp128::OneHot>;
-    type MultiChunkRec = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
+    type MultiChunkRec = RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R2>;
 
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -84,7 +84,7 @@ fn combined_recursive_setup_proves_both_onehot_families() {
             b"recursive_setup_e2e/combined/onehot",
             |_schedule| {},
         );
-        recursive_multi_group_round_trip_on::<fp128::OneHotMultiChunk>(
+        recursive_multi_group_round_trip_on::<fp128::OneHotMultiChunkW8R2>(
             akita_params::MultiChunkProfileId::W8R2.cfg(),
             &setup,
             &stack,

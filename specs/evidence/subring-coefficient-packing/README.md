@@ -47,21 +47,19 @@ This repository permits intentional catalog-breaking changes, so revision
 policy is reviewed from the checked evidence. Same-head generated-table drift
 remains an automatic failure.
 
-## Current fp32 nv20 adaptive objective
+## fp32 nv20 objective in the recorded snapshots
 
-The two fp32 dense nv20 rows have a sharp choice between setup size and proof
-size. Adaptive direct schedules retain the first-direct-first V2 objective:
-first-direct setup capacity, proof bytes, total setup, root output-witness
-length, then the canonical descriptor. Recursive schedules use a separate
-power-of-two-bucketed setup objective. No amortized or weighted objective is
-used.
+The two fp32 dense nv20 rows show a tradeoff between setup size and proof
+size. The adaptive direct objective used for these rows compared first-direct
+setup capacity, proof bytes, total setup, root output-witness length, and
+finally the canonical descriptor. The recursive planner used a separate
+power-of-two-bucketed setup objective.
 
 | Row | First-direct capacity | Setup fields | Proof bytes | Fold levels |
 | --- | ---: | ---: | ---: | ---: |
 | No precommit | 131,072 | 458,752 | 62,447 | 6 |
 | One precommit | 262,144 | 524,288 | 63,254 | 6 |
 
-The first-direct-primary objective retains the smaller first-direct capacity,
-then selects proof bytes before exact total setup. A host can apply the existing
-explicit setup field budget as an admission limit; the planner does not guess
-an expected proof count or convert setup and proof into a weighted score.
+The objective retained the smaller first-direct capacity, then compared proof
+bytes before exact total setup. The explicit setup field budget served as an
+admission limit.

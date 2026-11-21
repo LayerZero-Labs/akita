@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::DensePoly;
 use akita_params::balanced_signed_digit_abs_bound;

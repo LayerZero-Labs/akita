@@ -9,7 +9,7 @@ use crate::workload::{
     run_onehot, run_recursive_multi_group_onehot,
 };
 use crate::workspace_schedules::load_workspace_scheme;
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_params::{
     ChunkedWitnessCfg, CommittedGroupParams, MultiChunkProfileId, PolynomialGroupLayout,
@@ -393,7 +393,7 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
-    type Cfg = fp128::DenseMultiChunk;
+    type Cfg = fp128::DenseMultiChunkW8R2;
     crate::contract::attest::<Cfg>("dense_fp128_multi_chunk_w8r2", nv, num_polys);
     let prime = fp128_prime_label();
     let scheme = load_workspace_scheme::<Cfg>(MultiChunkProfileId::W8R2.cfg())
@@ -532,7 +532,7 @@ fn run_profile_onehot_fp128_multi_group_recursive(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, num_polys: usize) {
-    type Cfg = fp128::OneHotMultiChunk;
+    type Cfg = fp128::OneHotMultiChunkW8R2;
     run_multi_group_mode::<256, Cfg>(
         MultiChunkProfileId::W8R2.cfg(),
         "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
@@ -568,7 +568,7 @@ fn run_profile_onehot_fp128_multi_chunk_named<
 }
 
 fn run_profile_onehot_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp128_multi_chunk_named::<256, fp128::OneHotMultiChunk>(
+    run_profile_onehot_fp128_multi_chunk_named::<256, fp128::OneHotMultiChunkW8R2>(
         "onehot_fp128_multi_chunk_w8r2",
         MultiChunkProfileId::W8R2,
         nv,

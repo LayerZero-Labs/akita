@@ -1,5 +1,5 @@
 use super::*;
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::SetupMatrixCapacity;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};

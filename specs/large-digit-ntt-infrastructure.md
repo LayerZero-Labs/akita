@@ -810,12 +810,11 @@ and terminal verification contract used by the implementation.
 - archive this record after the exact contract is no longer needed as a
   load-bearing reference, according to `specs/PRUNING.md`.
 
-The planner follow-up is complete. The proof-optimized configuration now
-searches inner bases through L10 for Q32 and L11 for Q64 and Q128, while the
-planner validates recursive balanced bases through the signed-i16 limit. The
-planner and NTT implementation share the signed-digit storage envelope, while
-the exact field/ring/width CRT selector remains in
-`akita-types::ntt_cache` and is used by prover and verifier preparation.
+The built-in presets search inner bases through L10 for Q32 and L16 for Q64
+and Q128. The planner validates recursive balanced bases through the signed-i16
+limit. The planner and NTT implementation share the signed-digit storage
+envelope. Prover and verifier preparation use the exact field/ring/width CRT
+selector in `akita-types::ntt_cache`.
 
 ## Reviewer Map
 
@@ -828,7 +827,7 @@ the exact field/ring/width CRT selector remains in
 | terminal verifier and no-panic behavior | `crates/akita-verifier/src/terminal/direct.rs`, `terminal/ntt.rs`, `fold/verify.rs` |
 | backend portability | `crates/akita-prover/src/backend/`, `crates/akita-cpu-backend/src/opaque/backend.rs`, `crates/akita-cpu-backend/src/arithmetic/` |
 | dead-code cutover | deleted `partial_split_ntt.rs`; `crates/akita-prover/src/kernels/linear/` |
-| schedule capability | `crates/akita-config/src/proof_optimized/tests.rs` |
+| schedule capability | `crates/akita-config/tests/basis_envelope.rs` |
 | benchmarks | `crates/akita-cpu-backend/benches/ntt_matvec.rs`, `crates/akita-pcs/benches/ring_ntt.rs` |
 | generated capacity artifact | `scripts/gen_crt_capacity_profile.py`, `docs/crt-ntt-capacity-profile.md` |
 

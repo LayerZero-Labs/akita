@@ -9,7 +9,7 @@ use crate::input::Reader;
 use crate::oracle::{self, index_weight};
 use crate::{gen, stats};
 use akita_algebra::{EqPolynomial, GruenSplitEq, SplitEqEvals};
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use akita_error::AkitaError;
 use akita_params::{
     basis_weights, basis_weights_prefix, lagrange_weights, monomial_weights, BasisMode,

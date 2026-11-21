@@ -15,7 +15,7 @@ use crate::commitment::{
 };
 use crate::opaque::{CommitInnerPlan, ComputeBackendSetup};
 use crate::{AkitaProverSetup, CpuBackend, DensePoly, GroupContext};
-use akita_config::proof_optimized::fp64;
+use akita_config::presets::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::{CommittedSourceEncoding, OpeningClaimsLayout};

@@ -1,12 +1,62 @@
-//! Setup requirements derived in one pass over a validated trusted catalog.
+//! Matrix requirements and setup capacity checks for admitted schedules.
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_params::{
-    setup_matrix_capacity_for_schedule, FoldSchedule, SetupMatrixCapacity, SetupPrefixSlotId,
+    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
+    verifier_setup_matrix_capacity_for_schedule, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixCapacity, SetupPrefixSlotId,
 };
+use akita_types::AkitaExpandedSetup;
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
+
+/// Reject a concrete schedule whose exact matrix footprint exceeds setup.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when sizing overflows or the setup's
+/// materialized shared matrix is too short for `schedule` and `layout`.
+pub fn ensure_prover_schedule_fits_setup<Cfg>(
+    setup: &AkitaExpandedSetup<Cfg::Field>,
+    schedule: &FoldSchedule,
+    layout: &OpeningClaimsLayout,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    // `setup_matrix_field_elements_for_schedule` already maxes over the root
+    // level's A/B/D matrices, every frozen precommitted group, the compression maps,
+    // and the fold tail, so it dominates any per-level recomputation here.
+    schedule.root.params.validate_opening_batch(layout)?;
+    let required_field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
+    let available_field_elements = setup.shared_matrix.as_field_slice().len();
+    if required_field_elements <= available_field_elements {
+        return Ok(());
+    }
+    Err(AkitaError::InvalidSetup(format!(
+        "schedule requires {required_field_elements} physical setup field elements, but setup \
+         provides {available_field_elements}"
+    )))
+}
+
+/// Whether a concrete schedule's direct verifier matrix uses fit setup.
+///
+/// Offloaded producer edges are covered by verifier-visible setup-prefix
+/// commitments and do not require their full committed source prefixes here.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when sizing `schedule` overflows.
+pub fn verifier_schedule_fits_setup(
+    setup: &AkitaExpandedSetup<impl jolt_field::Field>,
+    schedule: &FoldSchedule,
+    layout: &OpeningClaimsLayout,
+    mode: akita_params::SetupMode,
+) -> Result<bool, AkitaError> {
+    let required = verifier_setup_matrix_capacity_for_schedule(schedule, layout, mode)?;
+    Ok(required.num_field_elements <= setup.shared_matrix.as_field_slice().len())
+}
 
 /// Running maximum over every setup matrix a sizing request can reach.
 ///

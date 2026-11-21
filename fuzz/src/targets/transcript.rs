@@ -9,7 +9,7 @@
 
 use crate::input::Reader;
 use crate::{gen, stats};
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::presets::{fp32, fp64};
 use akita_transcript::{
     exchange_extension_group, ext_challenge, new_prover_channel, new_verifier_channel,
     public_bytes, public_fields, receive_byte_group, receive_field_group, send_byte_group,
@@ -17,7 +17,7 @@ use akita_transcript::{
 };
 use jolt_field::Zero;
 
-type F = akita_config::proof_optimized::fp128::Field;
+type F = akita_config::presets::fp128::Field;
 type Ext4 = fp32::ExtensionField;
 type Ext2 = fp64::ExtensionField;
 

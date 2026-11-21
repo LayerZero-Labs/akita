@@ -56,7 +56,7 @@ mod reduced_eor;
 #[path = "small_field_drivers/mod.rs"]
 mod small_field_drivers;
 
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::presets::{fp32, fp64};
 use akita_cpu_backend::CpuBackend;
 use akita_params::{
     lagrange_weights, BasisMode, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,

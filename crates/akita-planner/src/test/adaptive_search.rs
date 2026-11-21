@@ -184,7 +184,7 @@ fn policy_for_domain(
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn mixed_domain_search_beats_or_ties_singleton_d64() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let dimensions = [
@@ -266,7 +266,7 @@ fn mixed_domain_search_beats_or_ties_singleton_d64() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn statically_infeasible_multi_chunk_packing_domain_is_unsupported() {
-    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp32::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     policy.witness_chunk = akita_params::MultiChunkProfileId::W2R1.cfg();
@@ -277,7 +277,7 @@ fn statically_infeasible_multi_chunk_packing_domain_is_unsupported() {
         potential_b_dimensions: &[128],
         potential_d_dimensions: &[128],
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenExactProofAndWorkV5;
+    policy.selection_policy = crate::SelectionPolicyId::FirstDirectCapacity;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),
@@ -300,7 +300,7 @@ fn statically_infeasible_multi_chunk_packing_domain_is_unsupported() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
-    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp32::OneHot, CommitmentConfig};
 
     let dimensions = RingDimensionSearchDomain::new([
         CommitmentRingDims::uniform(64),
@@ -376,7 +376,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
 
 #[test]
 fn adaptive_initial_ceiling_is_componentwise() {
-    use akita_config::{policy_of, proof_optimized::fp128::Dense};
+    use akita_config::{policy_of, presets::fp128::Dense};
 
     const A: &[usize] = &[64, 256, 1024];
     const B: &[usize] = &[64, 128, 256];
@@ -403,7 +403,7 @@ fn adaptive_initial_ceiling_is_componentwise() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn production_suffix_selects_l2_with_the_typed_response_model() {
-    use akita_config::{policy_of, proof_optimized::fp128, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128, CommitmentConfig};
     use akita_params::InnerCommitSecurityRoute;
 
     let fp128_policy =
@@ -431,7 +431,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
 #[test]
 fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
     use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        policy_of, presets::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
@@ -443,7 +443,7 @@ fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
     );
     assert_eq!(
         bounded.recursive_setup_search_policy,
-        crate::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+        crate::RecursiveSetupSearchPolicy::RootAndFirstChild
     );
     let mut exhaustive = bounded;
     exhaustive.recursive_setup_search_policy = crate::RecursiveSetupSearchPolicy::Exhaustive;
@@ -473,7 +473,7 @@ fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let domains = [
         RingDimensionSearchDomain::new([
@@ -583,7 +583,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let handles = (0..8)
         .map(|_| {
@@ -622,7 +622,7 @@ fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let d64 = CommitmentRingDims::uniform(64);
@@ -643,7 +643,7 @@ fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let d64 = CommitmentRingDims::uniform(64);
@@ -737,7 +737,7 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_search_rejects_missing_suffix_and_unsupported_role_dimensions() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let missing_d64 = RingDimensionSearchDomain::new([
@@ -783,7 +783,7 @@ fn adaptive_search_rejects_missing_suffix_and_unsupported_role_dimensions() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_search_supports_direct_multi_chunk_policy() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     for profile in [
         None,
@@ -866,7 +866,7 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_search_validates_key_and_policy_at_entry() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let domain = RingDimensionSearchDomain::new([
@@ -904,7 +904,7 @@ fn adaptive_search_validates_key_and_policy_at_entry() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_search_applies_setup_budget_in_physical_fields() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, presets::fp128::OneHot, CommitmentConfig};
 
     let mut policy = policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
     let domain = RingDimensionSearchDomain::new([

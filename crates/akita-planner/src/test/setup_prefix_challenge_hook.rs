@@ -1,7 +1,7 @@
 use super::*;
 
 use akita_challenges::SparseChallengeConfig;
-use akita_config::proof_optimized::fp128::OneHotMultiChunk;
+use akita_config::presets::fp128::OneHotMultiChunkW8R2;
 use akita_config::{
     policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
 };
@@ -72,7 +72,7 @@ fn replace_schedule_evaluation_trace_challenges(
 
 #[test]
 fn catalog_binding_revalidates_recursive_setup_prefix_challenge_hook() {
-    type RecursiveMultiChunk = RecursiveCommitmentConfig<OneHotMultiChunk>;
+    type RecursiveMultiChunk = RecursiveCommitmentConfig<OneHotMultiChunkW8R2>;
 
     // No checked-in recursive row consumes a setup prefix with an
     // evaluation-trace opening. The W8R2 recursive nv38 schedule offloads

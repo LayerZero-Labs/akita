@@ -13,7 +13,7 @@ use akita_algebra::ntt::tables::{q128_primes, I16_TAIL_PRIME, Q32_PRIMES, Q64_PR
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::presets::{fp128, fp32, fp64};
 use jolt_field::{CanonicalEncoding, Field};
 use std::sync::OnceLock;
 

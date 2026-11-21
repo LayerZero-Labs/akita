@@ -5,7 +5,7 @@ use crate::common;
 #[path = "backend_ownership/signed_block_poly.rs"]
 mod signed_block_poly;
 
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_cpu_backend::{CommitmentHandle, CpuBackend, DensePoly, GroupContext};
 use akita_params::{BasisMode, PolynomialGroupLayout};
 use akita_prover::{
@@ -395,8 +395,8 @@ fn admission_rejects_wrong_context_and_scope_cleanup_preserves_other_proofs() {
 #[test]
 fn admission_uses_the_extension_field_owned_by_the_configuration() {
     common::run_on_large_stack(|| {
-        type SmallCfg = akita_config::proof_optimized::fp32::OneHot;
-        type SmallF = akita_config::proof_optimized::fp32::Field;
+        type SmallCfg = akita_config::presets::fp32::OneHot;
+        type SmallF = akita_config::presets::fp32::Field;
         type SmallE = <SmallCfg as akita_config::CommitmentConfig>::ExtField;
         let scheme = common::load_workspace_scheme::<SmallCfg>(
             akita_params::ChunkedWitnessCfg::default_non_chunked(),

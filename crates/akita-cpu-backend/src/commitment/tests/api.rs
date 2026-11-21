@@ -506,7 +506,7 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
 
 #[test]
 fn imported_root_outer_image_matches_full_cpu_commitment() {
-    type ImportedF = akita_config::proof_optimized::fp32::Field;
+    type ImportedF = akita_config::presets::fp32::Field;
     let setup = AkitaProverSetup::<ImportedF>::generate_with_capacity(
         FIXTURE_NUM_VARS,
         1,

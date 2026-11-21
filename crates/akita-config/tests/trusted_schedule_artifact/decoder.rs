@@ -1,9 +1,8 @@
 use super::json_mutation::*;
 use super::support::{checked_in_artifact_bytes, checked_in_catalog};
 use akita_config::{
-    policy_of, proof_optimized::fp128, CommitmentConfig, TrustedScheduleCatalog,
-    ValidatedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
-    MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
+    policy_of, presets::fp128, CommitmentConfig, TrustedScheduleCatalog, ValidatedScheduleCatalog,
+    MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES, MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
 
 #[test]

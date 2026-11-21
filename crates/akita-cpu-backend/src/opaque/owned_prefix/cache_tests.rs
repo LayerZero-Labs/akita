@@ -1,6 +1,6 @@
 use crate::cache::tests::watchdog;
 use crate::opaque::backend::SetupPrefixCache;
-use akita_config::proof_optimized::fp128;
+use akita_config::presets::fp128;
 use akita_error::AkitaError;
 use akita_params::SetupPrefixSlotId;
 use std::sync::{mpsc, Arc};
