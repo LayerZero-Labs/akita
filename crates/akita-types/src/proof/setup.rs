@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 mod range;
-pub use range::derive_public_matrix_range;
+pub use range::{check_public_matrix_prefix, derive_public_matrix_range};
 
 /// Versioned derivation algorithm for the public field stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +26,21 @@ pub enum PublicMatrixDerivation {
 }
 
 impl PublicMatrixDerivation {
+    const fn tag(self) -> u8 {
+        match self {
+            Self::Shake256PagedV1 => 1,
+        }
+    }
+
+    fn from_tag(tag: u8) -> Result<Self, AkitaError> {
+        match tag {
+            1 => Ok(Self::Shake256PagedV1),
+            _ => Err(AkitaError::InvalidSetup(format!(
+                "unsupported public matrix derivation tag {tag}"
+            ))),
+        }
+    }
+
     /// Number of field elements in one independently derived page.
     #[must_use]
     pub const fn page_field_elements(self) -> usize {
@@ -45,6 +60,9 @@ pub struct AkitaSetupSeed {
 }
 
 impl AkitaSetupSeed {
+    /// Length of the canonical derivation tag and seed encoding.
+    pub const CANONICAL_LEN: usize = 33;
+
     /// Construct a v1 paged SHAKE256 public-matrix identity.
     #[must_use]
     pub const fn shake256_paged_v1(seed: [u8; 32]) -> Self {
@@ -52,6 +70,26 @@ impl AkitaSetupSeed {
             derivation: PublicMatrixDerivation::Shake256PagedV1,
             seed,
         }
+    }
+
+    /// Canonical encoding: the derivation tag followed by the 32 seed bytes.
+    /// Setup serialization and setup digests use these same bytes.
+    #[must_use]
+    pub fn to_canonical_bytes(&self) -> [u8; Self::CANONICAL_LEN] {
+        let mut bytes = [self.derivation.tag(); Self::CANONICAL_LEN];
+        for (byte, seed_byte) in bytes.iter_mut().skip(1).zip(self.seed) {
+            *byte = seed_byte;
+        }
+        bytes
+    }
+
+    /// Decode a canonical seed, rejecting unknown derivation tags.
+    pub fn from_canonical_bytes(bytes: &[u8; Self::CANONICAL_LEN]) -> Result<Self, AkitaError> {
+        let [tag, seed @ ..] = *bytes;
+        Ok(Self {
+            derivation: PublicMatrixDerivation::from_tag(tag)?,
+            seed,
+        })
     }
 }
 
@@ -195,6 +233,47 @@ impl<F: Field> AkitaExpandedSetup<F> {
 
 impl<F> AkitaExpandedSetup<F>
 where
+    F: Field + CanonicalEncoding,
+{
+    /// Materialize exactly `num_field_elements` from the public stream without
+    /// provisioning a PCS schedule. The descriptor uses zero variables and one
+    /// polynomial; consumers supply their own matrix geometry.
+    ///
+    /// Returns an error for an empty stream, an unsupported field modulus, or
+    /// an allocation failure.
+    pub fn derive_stream(
+        seed: AkitaSetupSeed,
+        num_field_elements: usize,
+    ) -> Result<Self, AkitaError> {
+        if num_field_elements == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup stream must contain at least one field element".into(),
+            ));
+        }
+        akita_params::field_modulus_be_bytes::<F>()?;
+        let mut data = Vec::new();
+        data.try_reserve_exact(num_field_elements)
+            .map_err(|error| {
+                AkitaError::InvalidSetup(format!(
+                    "cannot allocate {num_field_elements} field elements: {error}"
+                ))
+            })?;
+        data.resize(num_field_elements, F::zero());
+        derive_public_matrix_range(0, &mut data, &seed)?;
+        Ok(Self {
+            descriptor: AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 1,
+                num_field_elements,
+                setup_seed: seed,
+            },
+            shared_matrix: FlatMatrix::from_flat_data(data),
+        })
+    }
+}
+
+impl<F> AkitaExpandedSetup<F>
+where
     F: Field + CanonicalEncoding + Valid,
 {
     /// Build an expanded setup from untrusted parts and verify the materialized
@@ -287,23 +366,13 @@ pub fn validate_public_matrix_matches_seed<F: Field + CanonicalEncoding + Valid>
     descriptor: &AkitaSetupDescriptor,
 ) -> Result<(), SerializationError> {
     validate_public_matrix_shape_matches_seed(shared_matrix, descriptor)?;
-    let mut expected = vec![F::zero(); descriptor.setup_seed.derivation.page_field_elements()];
-    for (page_index, coeffs) in shared_matrix
-        .as_field_slice()
-        .chunks(descriptor.setup_seed.derivation.page_field_elements())
-        .enumerate()
-    {
-        let mut page_rng = SetupSeedPageXof::new::<F>(&descriptor.setup_seed, page_index);
-        for value in &mut expected[..coeffs.len()] {
-            *value = F::random(&mut page_rng);
-        }
-        if coeffs != &expected[..coeffs.len()] {
-            return Err(SerializationError::InvalidData(
+    check_public_matrix_prefix(shared_matrix.as_field_slice(), &descriptor.setup_seed).map_err(
+        |_| {
+            SerializationError::InvalidData(
                 "setup shared_matrix does not match public matrix seed".to_string(),
-            ));
-        }
-    }
-    Ok(())
+            )
+        },
+    )
 }
 
 /// Concrete SHAKE256 XOF reader for one public-matrix page.
@@ -384,10 +453,7 @@ impl AkitaSerialize for PublicMatrixDerivation {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        let tag = match self {
-            Self::Shake256PagedV1 => 1u8,
-        };
-        tag.serialize_with_mode(&mut writer, compress)
+        self.tag().serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -404,12 +470,12 @@ impl AkitaDeserialize for PublicMatrixDerivation {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        match u8::deserialize_with_mode(&mut reader, compress, validate, &())? {
-            1 => Ok(Self::Shake256PagedV1),
-            tag => Err(SerializationError::InvalidData(format!(
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        Self::from_tag(tag).map_err(|_| {
+            SerializationError::InvalidData(format!(
                 "unsupported public matrix derivation tag {tag}"
-            ))),
-        }
+            ))
+        })
     }
 }
 
@@ -423,10 +489,9 @@ impl AkitaSerialize for AkitaSetupSeed {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
-        compress: Compress,
+        _compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.derivation.serialize_with_mode(&mut writer, compress)?;
-        writer.write_all(&self.seed)?;
+        writer.write_all(&self.to_canonical_bytes())?;
         Ok(())
     }
 
