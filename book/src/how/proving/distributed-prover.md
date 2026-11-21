@@ -200,7 +200,12 @@ response. The rest of this chapter makes that change precise.
 ### The per-machine partial root relation
 
 Each machine holds its partial witness and the matching partial commitments, plus
-the fold of its own blocks. Over $R_q$, machine $P_j$ satisfies:
+the fold of its own blocks. The folded-evaluation consistency row below is
+written in the evaluation-trace form because that form is the shortest. Admitted
+schedules require subring coefficient packing for every multi-chunk fold, so a
+real chunked fold uses the packed form of that row. The partition of blocks
+among machines does not depend on the opening method. Over $R_q$, machine
+$P_j$ satisfies:
 
 $$
 \begin{aligned}

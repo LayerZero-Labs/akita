@@ -21,7 +21,8 @@ messages at several later points:
 
 - each sumcheck sends round polynomials derived from the witness;
 - each fold commits to values derived from the preceding witness; and
-- terminal verification receives the final short witness in clear form.
+- terminal verification receives the final folded response and the opening
+  partials in clear form.
 
 A complete zero knowledge construction must hide every one of these messages
 while preserving the same opening claim. It must also show that the masks used

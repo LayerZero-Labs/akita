@@ -14,8 +14,11 @@ as large as or larger than the application source.
 
 The root and recursive nonterminal levels use the same fold engine. They differ
 in the source they consume and the schedule parameters assigned to them. The
-terminal level is different: it checks the final clear witness directly and
-does not create another recursive witness.
+terminal level is different. The prover folds one last time and sends the
+result in the clear: the folded response $\mathbf z$ and the opening partials
+$\mathbf e$. The inner images $\mathbf t$ were already sent by the predecessor.
+The verifier checks these values directly, and the terminal creates no
+further recursive witness.
 
 This chapter is the map for the proving section. Its child chapters derive the
 relations, physical layouts, opening methods, and sum-checks in detail.
@@ -166,11 +169,16 @@ The process repeats until the schedule reaches its terminal level.
 | --- | --- | --- | --- |
 | Root | Application polynomial groups | Batch the requested openings and enter the recursive fold path | First recursive witness claim, plus an optional setup claim |
 | Recursive nonterminal | Witness and optional setup group from the predecessor | Authenticate the handoff and reduce it to the next opening claim | Next witness claim, plus an optional setup claim |
-| Terminal | Final clear witness bound by its predecessor | Check consistency, A relation, evaluation trace, encoding, and scheduled norm directly | Accept or reject |
+| Terminal | Witness whose inner images the predecessor bound | Send the clear folded response and opening partials; the verifier checks consistency, A relation, evaluation trace, encoding, and scheduled norm directly | Accept or reject |
 
 The terminal has no outer B commitment, no opening D commitment, and no
-sum-check cascade. Its predecessor already binds the terminal witness through
-the opening claim that enters the final check.
+Stage 1 or Stage 2 sum-check. Over a proper extension field it still runs the
+[extension-opening reduction](./extension-opening-reduction.md) sum-check for
+its opening point. Its predecessor already binds the terminal witness through
+the opening claim that enters the final check. The $\mathbf e$ and $\mathbf t$
+segments omit their last live block. The proof binds that block with a digest
+and the verifier recomputes it.
+[Terminal verification](../verifying/terminal.md) gives the equations.
 
 [Recursion and proof shape](../recursion.md) explains how these records are
 encoded and connected.

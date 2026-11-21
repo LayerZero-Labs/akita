@@ -359,14 +359,16 @@ $$
 
 The proof carries the public integer value $S$, one additional coefficient in
 each final sumcheck round, and the final virtual evaluation of $z$. The verifier
-checks $S$ against the cap stored in the schedule.
+checks $S$ against the cap stored in the schedule. The schedule calls this
+proof shape `Direct`.
 
 For a small field, the allowed digit range may make the full square sum wrap
 the base field. The schedule then divides the physical domain into fixed
 blocks and proves bounded limb inner products. Each subclaim has a unique
 centered integer lift because its public bound is below half the modulus. The
 verifier reconstructs $S$ with checked integer arithmetic and rejects a wrong
-subclaim count, an overflow, or a value above the cap.
+subclaim count, an overflow, or a value above the cap. The schedule calls this
+proof shape `LimbGram`. It carries one virtual evaluation for each limb.
 
 The proof stream has no route header. The schedule determines whether the norm
 proof exists and gives its exact shape. An `L∞` fold uses the ordinary Stage 1
@@ -438,8 +440,8 @@ cancellation $\Delta=-E_0$. With the shifted identity above, an identically zero
 polynomial has separately zero constant and virtual coefficients.
 
 The transcript absorbs all Stage-1 claims and physical-L2 virtual evaluations
-before sampling $\eta$. Direct mode has one virtual residual; LimbGram mode has
-one per limb. The resulting polynomial has degree at most $m$, and the
+before sampling $\eta$. The `Direct` shape has one virtual residual; the
+`LimbGram` shape has one per limb. The resulting polynomial has degree at most $m$, and the
 transcript-grinding plan prices that degree.
 
 ### Start with the schedule-selected ring relation
@@ -858,6 +860,26 @@ C_0^{\mathrm{comp}}
 \tag{10c}
 $$
 
+On a fold that takes the `L2` route, both modes gain the physical norm term.
+Let $e_0,\ldots,e_{m-1}$ be the virtual evaluations that Stage 1 returns. Here
+$m$ is the number of virtual evaluations: one for the `Direct` shape, and the
+limb count for the `LimbGram` shape. Each $e_i$ is the value whose residual is
+$E_i$ above. Let $W_{L2}(r_1,x)$ be the schedule-derived weight of the Z virtualization
+relation, already combined with the powers $\eta,\ldots,\eta^m$. The input
+claim gains
+
+$$
+v_{L2}=\sum_{i=0}^{m-1}\eta^{i+1}e_i,
+$$
+
+and the bracket in Equation (10) or (10c) gains the term
+
+$$
+w(x)W_{L2}(r_1,x).
+$$
+
+An `L∞` fold has $v_{L2}=0$ and no such term.
+
 Every term uses the same flat witness address $x$. This is why each payload
 mode still needs only one Stage-2 sumcheck.
 
@@ -927,6 +949,10 @@ C_n^{\mathrm{comp}}={}
 \end{aligned}
 \tag{11c}
 $$
+
+On the `L2` route, both closing values gain
+$\widetilde w(r_2)\widetilde W_{L2}(r_1,r_2)$. This term has degree at most
+two in each sumcheck variable.
 
 The value $\widetilde w(r_2)$ becomes the next-witness opening claim in both
 modes. The shared range term and the restricted compression-binary term have

@@ -102,8 +102,9 @@ why the two methods need different witnesses.
 
 In quotient-lift mode, `r_hat` is logically one quotient family in
 relation-row order, but its compression rows are physically interleaved with the corresponding digit
-layer rather than stored in one contiguous quotient tail. Every alignment
-range is zero. Boolean padding, if needed by a later flat-table sumcheck, is a
+layer rather than stored in one contiguous quotient tail. The canonical prover fills
+every alignment range with zero; the verifier's rule for these coordinates is
+stated below. Boolean padding, if needed by a later flat-table sumcheck, is a
 separate zero suffix after the complete live witness.
 
 In compressed mode, the negative-binary constraint is active exactly on one

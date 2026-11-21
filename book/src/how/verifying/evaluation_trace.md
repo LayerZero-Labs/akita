@@ -85,8 +85,10 @@ proof bytes, transcript order, opening schedule, or protocol claims.
 
 The paired recurrence has better asymptotic behavior for long block ranges,
 but a short affine scan has a lower constant cost for small ranges. The
-verifier uses the scan for 2 to 32 blocks per unit. It uses the paired recurrence
-for singleton units and for at least 64 blocks per unit.
+verifier chooses one kernel for a whole group from the largest block count of
+any unit in that group. It uses the scan when that count is from 2 to 63. It
+uses the paired recurrence when every unit is a singleton, or when the largest
+unit has at least 64 blocks.
 
 This is a local kernel choice. Both paths evaluate the same prepared unit
 formula, and dense tests compare them with the materialized trace definition.
