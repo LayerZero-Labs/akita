@@ -745,7 +745,7 @@ where
         } else {
             let matrix =
                 setup
-                    .shared_matrix
+                    .shared_matrix()
                     .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
             let matrix_row = matrix.row_flat(0)?;
             let powers = scalar_powers(alpha, map.ring_dimension());

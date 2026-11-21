@@ -77,7 +77,7 @@ where
         setup
             .check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        if setup != &prepared.expanded.descriptor {
+        if setup != prepared.expanded.descriptor() {
             return Err(AkitaError::InvalidSetup(
                 "proof setup differs from backend setup".into(),
             ));
@@ -166,7 +166,7 @@ where
             > self
                 .prepared()?
                 .expanded
-                .shared_matrix
+                .shared_matrix()
                 .as_field_slice()
                 .len()
         {

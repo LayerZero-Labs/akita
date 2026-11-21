@@ -99,7 +99,7 @@ fn automatic_scratch_fits_large_blocks() {
         commit_onehot_sources::<F, D, u8, _>(&backend, &prepared, &sources, plan).unwrap();
     let matrix = setup
         .expanded
-        .shared_matrix
+        .shared_matrix()
         .ring_view::<D>(1, positions)
         .unwrap();
     let first_column = matrix.rows().next().unwrap()[0];

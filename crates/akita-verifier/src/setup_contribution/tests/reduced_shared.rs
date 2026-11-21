@@ -76,18 +76,10 @@ where
         );
     }
     let setup_coefficients = plan.required() * 64;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_coefficients,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_coefficients)
-                .map(|index| test_scalar(901 + index as u128))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_coefficients)
+            .map(|index| test_scalar(901 + index as u128))
+            .collect(),
     );
     let expected = reduced_direct_literal_oracle(
         plan,
@@ -106,15 +98,7 @@ where
     }
 
     // A truncated public setup is still rejected at the existing boundary.
-    let truncated = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_coefficients - 64,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(vec![F::zero(); setup_coefficients - 64]),
-    );
+    let truncated = coefficient_setup(vec![F::zero(); setup_coefficients - 64]);
     assert!(scan.evaluate_direct::<F>(&truncated).is_err());
 }
 

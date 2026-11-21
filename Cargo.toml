@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/akita-algebra",
+  "crates/akita-anchors",
   "crates/akita-challenges",
   "crates/akita-config",
   "crates/akita-cpu-backend",
@@ -15,6 +16,7 @@ members = [
   "crates/akita-verifier",
   "crates/akita-prover",
   "crates/akita-planner",
+  "crates/akita-preprocess",
   "crates/akita-schedules",
   "crates/akita-sis-estimator",
 ]

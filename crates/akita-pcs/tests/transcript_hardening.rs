@@ -38,8 +38,8 @@ fn stream_binds_session_statement_basis_and_eof() {
         let point = random_point(NUM_VARS, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier = self_derived_verifier(&scheme, &setup);
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -66,22 +66,13 @@ fn stream_binds_session_statement_basis_and_eof() {
         #[cfg(feature = "logging-transcript")]
         let prover_ranges = akita_transcript::thread_proof_ranges();
         let verify = |candidate: &[u8], session: &[u8], claimed: F, basis| {
-            scheme
-                .verifier(verifier_setup.clone())
-                .and_then(|verifier| {
-                    verifier.batched_verify(
-                        candidate,
-                        session,
-                        verify_input::<OneHotCfg>(
-                            &point,
-                            &[claimed],
-                            &commitment,
-                            scheme.schedules(),
-                        ),
-                        basis,
-                        akita_verifier::SetupPolicy::Check(None),
-                    )
-                })
+            verifier.batched_verify(
+                candidate,
+                session,
+                verify_input::<OneHotCfg>(&point, &[claimed], &commitment, scheme.schedules()),
+                basis,
+                akita_verifier::SetupPolicy::Check(None),
+            )
         };
 
         #[cfg(feature = "logging-transcript")]
@@ -243,8 +234,8 @@ fn stream_mutations_reject_without_panicking() {
             BasisMode::Lagrange,
         );
         let setup = scheme.setup_prover(NUM_VARS, 1).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+        let verifier = self_derived_verifier(&scheme, &setup);
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -274,22 +265,13 @@ fn stream_mutations_reject_without_panicking() {
             let mut mutated = proof.clone();
             mutated[offset] ^= 1;
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                scheme
-                    .verifier(verifier_setup.clone())
-                    .and_then(|verifier| {
-                        verifier.batched_verify(
-                            &mutated,
-                            LABEL,
-                            verify_input::<DenseCfg>(
-                                &point,
-                                &[opening],
-                                &commitment,
-                                scheme.schedules(),
-                            ),
-                            BasisMode::Lagrange,
-                            akita_verifier::SetupPolicy::Check(None),
-                        )
-                    })
+                verifier.batched_verify(
+                    &mutated,
+                    LABEL,
+                    verify_input::<DenseCfg>(&point, &[opening], &commitment, scheme.schedules()),
+                    BasisMode::Lagrange,
+                    akita_verifier::SetupPolicy::Check(None),
+                )
             }));
             assert!(matches!(outcome, Ok(Err(_))));
         }

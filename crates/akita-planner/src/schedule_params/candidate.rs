@@ -284,6 +284,7 @@ pub(crate) use recursive::{
 pub(crate) use recursive::{
     derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
 };
+pub use setup_prefix::SetupPrefixProfileFilter;
 pub(crate) use setup_prefix::SetupPrefixSearchCache;
 pub(super) use setup_prefix::{derive_setup_prefix_groups, SetupPrefixSearchRequest};
 

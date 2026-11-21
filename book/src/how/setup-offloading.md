@@ -255,7 +255,8 @@ panic.
 | Define prefix identities and proof data | `crates/akita-params/src/layout/setup_prefix_slots.rs` and `crates/akita-types/src/proof/setup_prefix.rs` |
 | Build the shared setup contribution plan | `crates/akita-types/src/setup_contribution/` |
 | Evaluate the setup contribution at the Stage 2 point | `crates/akita-verifier/src/setup_contribution/` |
-| Materialize required prefix commitments | `crates/akita-setup/src/recursive_prefixes.rs` |
+| Materialize required prefix commitments | `crates/akita-cpu-backend/src/setup/prover.rs` (`export_setup_prefixes`) |
+| Publish and load anchored prefix commitments | `crates/akita-preprocess/src/generate.rs`, `crates/akita-config/src/preprocessing/commitments.rs` |
 | Prove the setup product | `crates/akita-cpu-backend/src/opaque/sumcheck/stage3/` |
 | Verify Stage 3 | `crates/akita-verifier/src/stages/stage3.rs` |
 | Enforce the recursive fold handoff | `crates/akita-prover/src/protocol/prove/` and `crates/akita-verifier/src/fold/` |

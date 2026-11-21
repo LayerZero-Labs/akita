@@ -117,20 +117,22 @@ mod tests {
     }
 
     fn verifier_setup(matrix: &[CyclotomicRing<F, D>]) -> AkitaVerifierSetup<F> {
-        AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars: 1,
-                        max_num_batched_polys: 1,
-                        num_field_elements: matrix.len(),
-                        setup_seed: [9; 32].into(),
-                    },
-                    FlatMatrix::from_ring_slice(matrix),
+        unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        AkitaSetupDescriptor {
+                            max_num_vars: 1,
+                            max_num_batched_polys: 1,
+                            num_field_elements: matrix.len(),
+                            setup_seed: [9; 32].into(),
+                        },
+                        FlatMatrix::from_ring_slice(matrix),
+                    ),
                 ),
-            ),
-            SetupPrefixVerifierRegistry::new([9; 32].into()),
-        )
+                SetupPrefixVerifierRegistry::new([9; 32].into()),
+            )
+        }
         .expect("matching public-matrix identity")
     }
 
@@ -209,20 +211,22 @@ mod tests {
                 }))
             })
             .collect::<Vec<_>>();
-        let setup = AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars: 1,
-                        max_num_batched_polys: 1,
-                        num_field_elements: matrix.len(),
-                        setup_seed: [8; 32].into(),
-                    },
-                    FlatMatrix::from_ring_slice(&matrix),
+        let setup = unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        AkitaSetupDescriptor {
+                            max_num_vars: 1,
+                            max_num_batched_polys: 1,
+                            num_field_elements: matrix.len(),
+                            setup_seed: [8; 32].into(),
+                        },
+                        FlatMatrix::from_ring_slice(&matrix),
+                    ),
                 ),
-            ),
-            SetupPrefixVerifierRegistry::new([8; 32].into()),
-        )
+                SetupPrefixVerifierRegistry::new([8; 32].into()),
+            )
+        }
         .expect("matching public-matrix identity");
         let rhs = vec![[i16::MAX; D]; 5];
         let needs_tail =
@@ -305,20 +309,22 @@ mod tests {
             .prefix_len
             .checked_mul(requirement.ring_dimension)
             .expect("terminal setup field length");
-        let setup = AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars: 1,
-                        max_num_batched_polys: 1,
-                        num_field_elements: field_len,
-                        setup_seed: [9; 32].into(),
-                    },
-                    FlatMatrix::from_flat_data(vec![F::from_i64(0); field_len]),
+        let setup = unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        AkitaSetupDescriptor {
+                            max_num_vars: 1,
+                            max_num_batched_polys: 1,
+                            num_field_elements: field_len,
+                            setup_seed: [9; 32].into(),
+                        },
+                        FlatMatrix::from_flat_data(vec![F::from_i64(0); field_len]),
+                    ),
                 ),
-            ),
-            SetupPrefixVerifierRegistry::new([9; 32].into()),
-        )
+                SetupPrefixVerifierRegistry::new([9; 32].into()),
+            )
+        }
         .expect("matching public-matrix identity");
 
         let cache =

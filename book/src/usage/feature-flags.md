@@ -40,14 +40,16 @@ application-owned storage and pass its bytes to
 `AkitaCommitmentScheme::from_schedule_artifact`. The config validates the family
 name and planner-policy digest before any row can be used.
 
-### Disk backed public setup
+### Release file cache
 
 ```bash
 cargo build -p akita-pcs --release --features disk-persistence
 ```
 
-This stores public matrix coefficients and setup prefix artifacts. Prepared NTT
-caches remain local memory state and rebuild from the public setup.
+This enables `akita_setup::ReleaseCache`, a disk cache of pinned release files
+keyed by `bundle_id`. Loaders check every cached file against the anchored
+manifest. Prepared NTT caches remain local memory state and rebuild from the
+public setup.
 
 Backend routing requires no Cargo feature; see [backend routing](../how/architecture.md#backend-routing).
 

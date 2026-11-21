@@ -76,18 +76,10 @@ fn delayed_scan_matches_row_oracle_across_jobs_with_projected_roles() {
     assert_ne!(required % job_rings, 0);
 
     let setup_elements = required.div_ceil(2) * D_A;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_elements,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_elements)
-                .map(|index| P::from_u64(211 + 7_919 * index as u64))
-                .collect(),
-        ),
+    let setup = coefficient_setup(
+        (0..setup_elements)
+            .map(|index| P::from_u64(211 + 7_919 * index as u64))
+            .collect(),
     );
     let alpha = E::from_u64(3);
     let alpha_pows_a = scalar_powers(alpha, D_A);

@@ -155,9 +155,10 @@ impl TerminalNttCache {
         artifact: TrustedTerminalCache<'_>,
     ) -> Result<Self, AkitaError> {
         let expected_binding = PreparedVerifierNttCacheBinding {
-            setup_seed_digest: setup_seed_digest(&setup.expanded().descriptor.setup_seed).map_err(
-                |error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")),
-            )?,
+            setup_seed_digest: setup_seed_digest(&setup.expanded().descriptor().setup_seed)
+                .map_err(|error| {
+                    AkitaError::InvalidSetup(format!("setup seed identity: {error}"))
+                })?,
             schedule_row_digest,
             setup_field_elements: akita_error::checked::product([
                 requirement.prefix_len,
@@ -238,7 +239,7 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
     schedule_row_digest: ScheduleRowDigest,
 ) -> Result<Vec<u8>, AkitaError> {
     let requirement = terminal_ntt_cache_requirement(schedule)?;
-    let setup_seed_digest = setup_seed_digest(&setup.expanded().descriptor.setup_seed)
+    let setup_seed_digest = setup_seed_digest(&setup.expanded().descriptor().setup_seed)
         .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
     let binding = PreparedVerifierNttCacheBinding {
         setup_seed_digest,
@@ -309,20 +310,22 @@ mod tests {
             .checked_mul(requirement.ring_dimension)
             .expect("setup field count");
         let seed: akita_types::AkitaSetupSeed = [6; 32].into();
-        let setup = AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    AkitaSetupDescriptor {
-                        max_num_vars: 15,
-                        max_num_batched_polys: 1,
-                        num_field_elements: setup_field_elements,
-                        setup_seed: seed.clone(),
-                    },
-                    FlatMatrix::from_flat_data(vec![F::from_i64(1); setup_field_elements]),
+        let setup = unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(
+                    AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                        AkitaSetupDescriptor {
+                            max_num_vars: 15,
+                            max_num_batched_polys: 1,
+                            num_field_elements: setup_field_elements,
+                            setup_seed: seed.clone(),
+                        },
+                        FlatMatrix::from_flat_data(vec![F::from_i64(1); setup_field_elements]),
+                    ),
                 ),
-            ),
-            SetupPrefixVerifierRegistry::new(seed),
-        )
+                SetupPrefixVerifierRegistry::new(seed),
+            )
+        }
         .expect("verifier setup");
 
         let artifact = build_riscv64_terminal_ntt_cache(&setup, schedule, selection.row_digest)

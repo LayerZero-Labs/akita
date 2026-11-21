@@ -155,7 +155,7 @@ where
         &profile.outer.matrix,
         profile.outer_slice_count,
     )?;
-    let available = setup.shared_matrix.num_field_elements();
+    let available = setup.shared_matrix().num_field_elements();
     if required > available {
         return Err(AkitaError::InvalidSetup(format!(
             "commit profile requires {required} setup field elements for commitment, but setup has {available}"
@@ -242,17 +242,18 @@ where
             ));
         }
     }
-    if polys.len() > setup.descriptor.max_num_batched_polys {
+    if polys.len() > setup.descriptor().max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "commit received {} polynomials but setup supports at most {}",
             polys.len(),
-            setup.descriptor.max_num_batched_polys
+            setup.descriptor().max_num_batched_polys
         )));
     }
-    if num_vars > setup.descriptor.max_num_vars {
+    if num_vars > setup.descriptor().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.descriptor.max_num_vars
+            num_vars,
+            setup.descriptor().max_num_vars
         )));
     }
     Ok(akita_params::PolynomialGroupLayout::new(

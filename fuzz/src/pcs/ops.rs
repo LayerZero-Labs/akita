@@ -229,7 +229,7 @@ where
         _scheme: &AkitaCommitmentScheme<Self>,
         setup: &AkitaProverSetup<Self::Field>,
     ) -> Result<CpuBackend<Self::Field, Self::ExtField>, AkitaError> {
-        CpuBackend::new(Arc::clone(&setup.expanded))
+        CpuBackend::new(Arc::clone(setup.expanded()))
     }
 
     fn setup_requirements(
@@ -266,7 +266,7 @@ where
         scheme: &AkitaCommitmentScheme<Self>,
         setup: AkitaVerifierSetup<Self::Field>,
     ) -> Result<AkitaVerifier<Self>, AkitaError> {
-        scheme.verifier(setup)
+        unsafe { scheme.verifier(setup) }
     }
 
     fn selection_verifier(
@@ -274,13 +274,15 @@ where
         setup: AkitaVerifierSetup<Self::Field>,
         selection: OpeningScheduleSelection,
     ) -> Result<AkitaVerifier<Self>, AkitaError> {
-        AkitaVerifier::for_selection(
-            setup,
-            scheme.schedules().clone(),
-            selection,
-            None,
-            akita_verifier::SetupMode::Check,
-        )
+        unsafe {
+            AkitaVerifier::for_selection(
+                setup,
+                scheme.schedules().clone(),
+                selection,
+                None,
+                akita_verifier::SetupMode::Check,
+            )
+        }
     }
 
     fn commit_dense(

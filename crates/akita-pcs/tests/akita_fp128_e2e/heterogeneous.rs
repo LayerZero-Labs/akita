@@ -31,7 +31,7 @@ fn heterogeneous_group_types() {
         .expect("workspace dense schedule catalog");
 
         let setup = onehot_scheme.setup_prover(FINAL_NV, 4).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
 
         let onehot_k_pre =
             akita_config::unit_onehot_source_chunk_size::<OneHotCfg>().expect("one-hot config");
@@ -170,9 +170,7 @@ fn heterogeneous_group_types() {
             .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("heterogeneous prove");
 
-        let verifier_setup = onehot_scheme
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier = self_derived_verifier(&onehot_scheme, &setup);
         let verify_claims = OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(
                 onehot_pre_point,
@@ -190,17 +188,14 @@ fn heterogeneous_group_types() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        onehot_scheme
-            .verifier(verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                    BasisMode::Lagrange,
-                    akita_verifier::SetupPolicy::Check(None),
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
+            )
             .expect("heterogeneous verify");
     });
 }
@@ -246,7 +241,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let setup = onehot_scheme
             .setup_prover(FINAL_NV, 2)
             .expect("one-hot root setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
         let akita_cpu_backend::CommitOutput {
             committed_group: bounded_commitment,
             private_handle: bounded_hint,
@@ -348,9 +343,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             .batched_prove(&setup, prover_data, &stack, session, BasisMode::Lagrange)
             .expect("mixed-bound prove");
 
-        let verifier_setup = onehot_scheme
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier = self_derived_verifier(&onehot_scheme, &setup);
         let verify_claims = OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(bounded_point, vec![bounded_opening], &bounded_commitment)
                 .expect("bounded dense verifier group"),
@@ -358,17 +351,14 @@ fn bounded_dense_precommit_with_onehot_final_group() {
                 .expect("final verifier group"),
         ])
         .expect("verifier claims");
-        onehot_scheme
-            .verifier(verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-                    BasisMode::Lagrange,
-                    akita_verifier::SetupPolicy::Check(None),
-                )
-            })
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+                BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
+            )
             .expect("mixed-bound verify");
 
         // Proves the verification above is load-bearing: the same proof against a
@@ -389,15 +379,14 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         ])
         .expect("tampered claims");
         assert!(
-            onehot_scheme
-                .verifier(verifier_setup.clone())
-                .and_then(|verifier| verifier.batched_verify(
+            verifier
+                .batched_verify(
                     &proof,
                     session,
                     GroupBatchStatement::new(selection, tampered).expect("statement"),
                     BasisMode::Lagrange,
                     akita_verifier::SetupPolicy::Check(None),
-                ))
+                )
                 .is_err(),
             "a tampered bounded-group opening must not verify"
         );
@@ -451,7 +440,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         )
         .expect("workspace schedule catalog");
         let setup = scheme.setup_prover(NV, 1).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
 
         let profile = scheme
             .schedules()
@@ -592,7 +581,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         )
         .expect("workspace dense schedule catalog");
         let setup = bounded_scheme.setup_prover(NV, 1).expect("bounded setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
 
         let commit = |evals: &[F]| {
             let poly =
@@ -664,7 +653,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         // fine: it declares the whole field, so the guard is specific to a bounded
         // source and costs unbounded configs nothing.
         let full_setup = dense_scheme.setup_prover(NV, 1).expect("setup");
-        let full_stack = CpuBackend::new(full_setup.expanded.clone()).unwrap();
+        let full_stack = CpuBackend::new(full_setup.expanded().clone()).unwrap();
         let poly =
             akita_cpu_backend::DensePoly::from_field_evals(NV, &over_positive).expect("dense poly");
         full_stack
@@ -701,7 +690,7 @@ fn final_group_admitted_under_another_producer_contract_is_refused() {
         )
         .expect("workspace bounded-dense schedule catalog");
         let setup = dense_scheme.setup_prover(NV, 1).expect("setup");
-        let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
+        let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
         let profile = dense_scheme
             .schedules()
             .resolve_key(&akita_params::ScheduleLookupKey::single(
@@ -794,8 +783,8 @@ fn explicit_commitment_transfer_between_backends() {
         let poly = akita_cpu_backend::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
 
         let setup = scheme.setup_prover(NV, 1).unwrap();
-        let stack = CpuBackend::new(setup.expanded.clone()).unwrap();
-        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+        let stack = CpuBackend::new(setup.expanded().clone()).unwrap();
+        let verifier = self_derived_verifier(&scheme, &setup);
         let akita_cpu_backend::CommitOutput {
             committed_group: commitment,
             private_handle: hint,
@@ -807,7 +796,7 @@ fn explicit_commitment_transfer_between_backends() {
             )
             .expect("commit");
 
-        let receiver = CpuBackend::new(setup.expanded.clone()).unwrap();
+        let receiver = CpuBackend::new(setup.expanded().clone()).unwrap();
         let hint = receiver
             .import_commitment(&hint)
             .expect("validated commitment transfer");
@@ -836,14 +825,14 @@ fn explicit_commitment_transfer_between_backends() {
         )
         .unwrap();
         let prefixes = receiver
-            .import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)
+            .import_setup_prefixes(setup.prefix_slots(), &required_prefix_ids)
             .unwrap();
         let mut registry = akita_prover::BackendRegistry::<Cfg>::new().unwrap();
         let root = registry.register(&receiver, &prefixes).unwrap();
         let mut route =
             akita_prover::FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
         let proof = akita_prover::batched_prove::<Cfg, _>(
-            setup.expanded.descriptor(),
+            setup.expanded().descriptor(),
             scheme.schedules(),
             &registry,
             prover_data,
@@ -852,27 +841,24 @@ fn explicit_commitment_transfer_between_backends() {
             &mut route,
         )
         .expect("heterogeneous prove");
-        scheme
-            .verifier(verifier_setup.clone())
-            .and_then(|verifier| {
-                verifier.batched_verify(
-                    &proof,
-                    session,
-                    GroupBatchStatement::new(
-                        selection,
-                        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                            pt.clone(),
-                            vec![expected_opening],
-                            &commitments[0],
-                        )
-                        .expect("verifier group")])
-                        .expect("verifier claims"),
+        verifier
+            .batched_verify(
+                &proof,
+                session,
+                GroupBatchStatement::new(
+                    selection,
+                    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                        pt.clone(),
+                        vec![expected_opening],
+                        &commitments[0],
                     )
-                    .expect("statement"),
-                    BasisMode::Lagrange,
-                    akita_verifier::SetupPolicy::Check(None),
+                    .expect("verifier group")])
+                    .expect("verifier claims"),
                 )
-            })
+                .expect("statement"),
+                BasisMode::Lagrange,
+                akita_verifier::SetupPolicy::Check(None),
+            )
             .expect("heterogeneous verify");
     });
 }
@@ -912,22 +898,14 @@ where
         )
         .expect("prove");
     let openings = [opening];
-    scheme
-        .verifier(
-            scheme
-                .setup_verifier(setup)
-                .expect("verifier setup")
-                .clone(),
+    self_derived_verifier(scheme, setup)
+        .batched_verify(
+            &proof,
+            session,
+            verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),
+            BasisMode::Lagrange,
+            akita_verifier::SetupPolicy::Check(None),
         )
-        .and_then(|verifier| {
-            verifier.batched_verify(
-                &proof,
-                session,
-                verify_input::<Cfg>(point, &openings, &commitment, scheme.schedules()),
-                BasisMode::Lagrange,
-                akita_verifier::SetupPolicy::Check(None),
-            )
-        })
         .expect("verify");
     (commitment, proof)
 }
@@ -981,7 +959,7 @@ fn combined_family_setup_matches_per_family_proofs() {
             dense_fields.max(onehot_fields)
         );
         assert_setup_capacity(&combined_setup, dense_fields.max(onehot_fields));
-        let backend = CpuBackend::new(combined_setup.expanded.clone()).expect("backend");
+        let backend = CpuBackend::new(combined_setup.expanded().clone()).expect("backend");
 
         let dense_evals = dense_field_evals(DENSE_NV, 0x5e70_0001);
         let dense_poly =
@@ -1018,7 +996,7 @@ fn combined_family_setup_matches_per_family_proofs() {
         let (dense_commitment, dense_proof) = commit_prove_verify_single_group(
             &dense_scheme,
             &dense_setup,
-            &CpuBackend::new(dense_setup.expanded.clone()).expect("dense backend"),
+            &CpuBackend::new(dense_setup.expanded().clone()).expect("dense backend"),
             dense_poly,
             &dense_point,
             dense_opening,
@@ -1031,7 +1009,7 @@ fn combined_family_setup_matches_per_family_proofs() {
         let (onehot_commitment, onehot_proof) = commit_prove_verify_single_group(
             &onehot_scheme,
             &onehot_setup,
-            &CpuBackend::new(onehot_setup.expanded.clone()).expect("one-hot backend"),
+            &CpuBackend::new(onehot_setup.expanded().clone()).expect("one-hot backend"),
             onehot_poly,
             &onehot_point,
             onehot_opening,
@@ -1045,16 +1023,11 @@ fn combined_family_setup_matches_per_family_proofs() {
     });
 }
 
-/// A setup always covers the capacity it was requested at. Without
-/// `disk-persistence` it is generated at exactly that capacity, so the
-/// per-family and combined setups really differ in size. With it, a cached
-/// covering matrix may be loaded instead.
+/// A setup is generated at exactly the capacity it was requested at, so the
+/// per-family and combined setups really differ in size.
 fn assert_setup_capacity(setup: &akita_cpu_backend::AkitaProverSetup<F>, required: usize) {
-    let actual = setup.expanded.shared_matrix().num_field_elements();
-    assert!(
-        actual >= required,
-        "setup must cover {required} field elements"
+    assert_eq!(
+        setup.expanded().shared_matrix().num_field_elements(),
+        required
     );
-    #[cfg(not(feature = "disk-persistence"))]
-    assert_eq!(actual, required);
 }

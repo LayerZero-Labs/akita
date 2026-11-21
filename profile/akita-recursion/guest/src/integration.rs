@@ -83,13 +83,15 @@ where
     end_cycle_tracking("deserialize_input");
 
     start_cycle_tracking("prepare_verifier");
-    let verifier = AkitaVerifier::for_selection(
-        decoded.verifier_setup.clone(),
-        schedules,
-        decoded.schedule_selection,
-        PROGRAM_BOUND_VERIFIER_CACHE.map(TrustedTerminalCache::Decode),
-        akita_verifier::SetupMode::Check,
-    );
+    let verifier = unsafe {
+        AkitaVerifier::for_selection(
+            decoded.verifier_setup.clone(),
+            schedules,
+            decoded.schedule_selection,
+            PROGRAM_BOUND_VERIFIER_CACHE.map(TrustedTerminalCache::Decode),
+            akita_verifier::SetupMode::Check,
+        )
+    };
     end_cycle_tracking("prepare_verifier");
     let Ok(verifier) = verifier else {
         return GuestStatus::InputRejected.code();

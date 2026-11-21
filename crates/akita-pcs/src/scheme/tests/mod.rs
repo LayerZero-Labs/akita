@@ -13,6 +13,22 @@ where
         akita_config::test_support::workspace_schedule_catalog::<C>(chunking)?,
     ))
 }
+
+/// Verifier over a setup `setup_prover` derived from its own seed.
+fn self_derived_verifier<C>(
+    scheme: &AkitaCommitmentScheme<C>,
+    setup: &AkitaProverSetup<C::Field>,
+) -> AkitaVerifier<C>
+where
+    C: CommitmentConfig + 'static,
+    C::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    C::ExtField: FpExtEncoding<C::Field>,
+    C::ExtField: ExtField<C::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    // SAFETY: `setup_prover` derived the setup from its seed.
+    unsafe { scheme.verifier(scheme.setup_verifier(setup).expect("verifier setup")) }
+        .expect("verifier")
+}
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_cpu_backend::evaluate_root_polynomial;
@@ -82,7 +98,8 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
             .expect("catalog setup capacity");
     let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
     assert!(
-        setup.expanded.shared_matrix().num_field_elements() >= expected_capacity.num_field_elements,
+        setup.expanded().shared_matrix().num_field_elements()
+            >= expected_capacity.num_field_elements,
         "setup must cover the exact catalog-derived matrix requirement"
     );
 }
@@ -242,7 +259,7 @@ fn catalog_profile<C: CommitmentConfig>(
 
 type VerifyFixture = (
     Scheme,
-    AkitaVerifierSetup<F>,
+    AkitaVerifier<Cfg>,
     CommittedGroup<F>,
     Vec<u8>,
     Vec<F>,
@@ -259,8 +276,8 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
-    let stack = CpuBackend::new(setup.expanded.clone()).expect("backend");
-    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
+    let stack = CpuBackend::new(setup.expanded().clone()).expect("backend");
+    let verifier = self_derived_verifier(&scheme, &setup);
     let akita_cpu_backend::CommitOutput {
         committed_group: commitment,
         private_handle: prover_state,
@@ -302,7 +319,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let [commitment] = commitments;
     (
         scheme,
-        verifier_setup,
+        verifier,
         commitment,
         proof,
         opening_point,

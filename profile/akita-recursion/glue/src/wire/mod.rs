@@ -264,7 +264,7 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
             .expanded()
-            .descriptor
+            .descriptor()
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         bytes.push(u8::try_from(layout.setup_matrix_padding).map_err(|_| {
             SerializationError::InvalidData(
@@ -284,7 +284,7 @@ where
         );
         self.verifier_setup
             .expanded()
-            .shared_matrix
+            .shared_matrix()
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
             .prefix_slots()
@@ -324,7 +324,7 @@ where
             self.commitment.serialized_size(BLOB_COMPRESS),
             self.verifier_setup
                 .expanded()
-                .descriptor
+                .descriptor()
                 .serialized_size(BLOB_COMPRESS),
         ])
         .ok_or_else(|| {
@@ -334,7 +334,7 @@ where
             padding_record_offset,
             self.verifier_setup
                 .expanded()
-                .shared_matrix
+                .shared_matrix()
                 .serialized_size(BLOB_COMPRESS),
             self.verifier_setup
                 .prefix_slots()
@@ -741,13 +741,15 @@ where
                 )
             })?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        AkitaVerifierSetup::from_parts(
-            Arc::new(AkitaExpandedSetup::from_verified_parts(
-                seed,
-                shared_matrix,
-            )?),
-            prefix_slots,
-        )
+        unsafe {
+            AkitaVerifierSetup::from_parts(
+                Arc::new(AkitaExpandedSetup::from_verified_parts(
+                    seed,
+                    shared_matrix,
+                )?),
+                prefix_slots,
+            )
+        }
         .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 

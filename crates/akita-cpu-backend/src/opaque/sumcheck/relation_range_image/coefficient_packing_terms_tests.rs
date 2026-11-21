@@ -624,19 +624,21 @@ fn method_aware_relation_builder_uses_batch_packing_events_once() {
     }
 
     let setup_field_len = 1usize << 18;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_field_len,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_field_len)
-                .map(|index| F::from_u64(1 + index as u64))
-                .collect(),
-        ),
-    );
+    let setup = unsafe {
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: setup_field_len,
+                setup_seed: [0u8; 32].into(),
+            },
+            FlatMatrix::from_flat_data(
+                (0..setup_field_len)
+                    .map(|index| F::from_u64(1 + index as u64))
+                    .collect(),
+            ),
+        )
+    };
     let direct = build_relation_lane_weights(RelationLaneWeightInputs {
         setup: RelationSetupSource::Matrix(&setup),
         instance: &fixture.relation,

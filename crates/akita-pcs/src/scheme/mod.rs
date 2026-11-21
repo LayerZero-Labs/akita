@@ -89,7 +89,7 @@ where
         setup: &AkitaProverSetup<Cfg::Field>,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
         let capacity = SetupMatrixCapacity {
-            num_field_elements: setup.expanded.shared_matrix().num_field_elements(),
+            num_field_elements: setup.expanded().shared_matrix().num_field_elements(),
         };
         setup.to_verifier_setup(capacity)
     }
@@ -214,12 +214,12 @@ where
             opening.opening_layout(),
         )?;
         let prefix_slots =
-            backend.import_setup_prefixes(&setup.prefix_slots, &required_prefix_ids)?;
+            backend.import_setup_prefixes(setup.prefix_slots(), &required_prefix_ids)?;
         let mut registry = BackendRegistry::<Cfg>::new()?;
         let root = registry.register(backend, &prefix_slots)?;
         let mut route = FixedFoldRoute::new(vec![root; resolved.schedule().num_fold_levels()]);
         akita_prover::batched_prove_embedded::<Cfg, _>(
-            setup.expanded.descriptor(),
+            setup.expanded().descriptor(),
             &self.schedules,
             &registry,
             opening,
@@ -238,11 +238,17 @@ where
     ///
     /// Returns [`AkitaError::InvalidSetup`] when sizing or preparing an
     /// admitted row fails.
-    pub fn verifier(
+    ///
+    /// # Safety
+    ///
+    /// Soundness contract of [`AkitaVerifier::new`]; a production verifier
+    /// uses [`AkitaVerifier::from_pinned`].
+    pub unsafe fn verifier(
         &self,
         setup: AkitaVerifierSetup<Cfg::Field>,
     ) -> Result<AkitaVerifier<Cfg>, AkitaError> {
-        AkitaVerifier::new(setup, self.schedules.clone())
+        // SAFETY: forwarded to the caller.
+        unsafe { AkitaVerifier::new(setup, self.schedules.clone()) }
     }
 
     /// Protocol identifier.

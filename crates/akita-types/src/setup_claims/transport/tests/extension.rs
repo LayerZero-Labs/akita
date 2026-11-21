@@ -7,15 +7,17 @@ where
     F: Field + CanonicalEncoding + ExtField<F>,
     E: FpExtEncoding<F>,
 {
-    let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 6,
-            max_num_batched_polys: 1,
-            num_field_elements: 64,
-            setup_seed: [19; 32].into(),
-        },
-        derive_public_matrix_prefix(64, &[19; 32].into()),
-    );
+    let setup = unsafe {
+        AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 6,
+                max_num_batched_polys: 1,
+                num_field_elements: 64,
+                setup_seed: [19; 32].into(),
+            },
+            derive_public_matrix_prefix(64, &[19; 32].into()),
+        )
+    };
     let polynomial = SetupPolynomialId::new::<F, E>(&setup, 64).unwrap();
     let value = |seed| E::from_base_fn(|coordinate| F::from_u64(seed + 13 * coordinate as u64));
     let native = SetupQuery::from_native_terms(vec![NativeTerm {
@@ -140,15 +142,17 @@ where
     E: FpExtEncoding<F>,
 {
     let fields = 2 * dimension;
-    let setup = AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: fields.trailing_zeros() as usize,
-            max_num_batched_polys: 1,
-            num_field_elements: fields,
-            setup_seed: [19; 32].into(),
-        },
-        derive_public_matrix_prefix(fields, &[19; 32].into()),
-    );
+    let setup = unsafe {
+        AkitaExpandedSetup::<F>::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: fields.trailing_zeros() as usize,
+                max_num_batched_polys: 1,
+                num_field_elements: fields,
+                setup_seed: [19; 32].into(),
+            },
+            derive_public_matrix_prefix(fields, &[19; 32].into()),
+        )
+    };
     let polynomial = SetupPolynomialId::new::<F, E>(&setup, fields).unwrap();
     let query = SetupQuery::from_native_terms(vec![NativeTerm {
         coefficient: (0..dimension)

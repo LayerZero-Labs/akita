@@ -525,7 +525,7 @@ mod tests {
         .unwrap();
         let operation = CpuInnerCommitOperation::new(&backend, &prepared);
         let binding = crate::commitment::CommitmentStateBinding::new(
-            setup.expanded.descriptor.clone(),
+            setup.expanded.descriptor().clone(),
             plan,
             1,
             None,

@@ -251,7 +251,7 @@ mod tests {
             (RingRelationMode::QuotientLift, plan.maps().len()),
         ] {
             let binding = CommitmentStateBinding::new(
-                setup.expanded.descriptor.clone(),
+                setup.expanded.descriptor().clone(),
                 CommitInnerPlan {
                     ring_dimension: 64,
                     num_live_blocks: 1,

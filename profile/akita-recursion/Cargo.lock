@@ -341,6 +341,7 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "rand_core",
+ "sha3",
  "shake",
  "tracing",
 ]

@@ -657,6 +657,11 @@ where
             "invalid Stage 3 setup prefix".into(),
         ));
     }
+    let digest = akita_types::preprocessing::prefix_commitment_digest(
+        &akita_types::preprocessing::StreamIdentity::for_field::<F>(&expanded.setup_seed)?,
+        &slot.public.id.commitment_profile,
+        &slot.public.commitment,
+    )?;
     let mut batch_statement = None;
     let (claim, mut stage3, rounds) = 'prepare: {
         if let Some(inherited) = inherited {
@@ -675,6 +680,7 @@ where
             akita_types::setup_claims::transcript::bind_outer_prefix(
                 &statement,
                 &slot.public,
+                &digest,
                 next_level_params,
                 grinding,
                 level,
@@ -700,14 +706,7 @@ where
             stage2_challenges: sumcheck_challenges,
             address_geometry: relation_address_geometry,
         })?;
-        let mut encoded_slot = Vec::new();
-        slot.public
-            .id
-            .serialize_compressed(&mut encoded_slot)
-            .map_err(|error| {
-                AkitaError::Internal(format!("setup-prefix slot serialization failed: {error}"))
-            })?;
-        akita_types::stage3_public_slot(grinding, level, &encoded_slot)?;
+        akita_types::stage3_public_slot(grinding, level, &slot.public.id, &digest)?;
         (claim, prepared, prefix_len.trailing_zeros() as usize)
     };
     akita_types::stage3_claim::<F, E, _>(grinding, level, claim)?;

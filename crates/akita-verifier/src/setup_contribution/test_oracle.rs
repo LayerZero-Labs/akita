@@ -22,7 +22,7 @@ impl<E: Field> DirectScan<E> {
         if plan.d_rows() != 0 {
             let d_view =
                 setup
-                    .shared_matrix
+                    .shared_matrix()
                     .ring_view_dyn(plan.d_rows(), plan.d_physical_cols(), d_d)?;
             for (group_index, group) in plan.groups().iter().enumerate() {
                 let (e_eq_slice, _, _) = self
@@ -53,7 +53,7 @@ impl<E: Field> DirectScan<E> {
                 .ok_or(AkitaError::InvalidProof)?;
             let (_, _t_eq_slice, z_eq_slice) = direct.slices();
             let a_view = setup
-                .shared_matrix
+                .shared_matrix()
                 .ring_view_dyn(group.n_a(), group.z_cols(), d_a)?;
             for (row_idx, &row_weight) in group.a_row_weights().iter().enumerate() {
                 if row_weight.is_zero() {
@@ -69,7 +69,7 @@ impl<E: Field> DirectScan<E> {
                 )?;
             }
 
-            let b_view = setup.shared_matrix.ring_view_dyn(
+            let b_view = setup.shared_matrix().ring_view_dyn(
                 group.physical_b().physical_rows(),
                 group.physical_b().physical_input_width(),
                 d_b,

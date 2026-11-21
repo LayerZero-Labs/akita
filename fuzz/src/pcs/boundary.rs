@@ -109,7 +109,7 @@ impl<Cfg: PcsOps> FamilyImpl<Cfg> {
             }
         }
         out.push(encode(9, &fixture.proved.selection));
-        let descriptor = self.prepared().setup.expanded.descriptor();
+        let descriptor = self.prepared().setup.expanded().descriptor();
         let schedule = Cfg::schedules(&self.scheme)
             .resolve_selection(fixture.proved.selection)
             .expect("fixture selection resolves")

@@ -155,8 +155,15 @@ The verifier needs public setup, the commitment, the point, the claimed value,
 and the selected schedule row. It does not receive the polynomial or private
 prover state.
 
+This quickstart checks its own proof with a verifier converted from the setup
+it just derived. That conversion is an `unsafe fn`: its contract is that the
+caller derived every setup-prefix commitment itself, which holds here. A
+production verifier instead loads a pinned setup from an anchored release; see
+[Verifier only integration](./verifier-only.md#supply-verifier-setup).
+
 ```rust
-let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
+// SAFETY: `setup` was derived from its seed in this process.
+let verifier = unsafe { scheme.verifier(scheme.setup_verifier(&setup)?) }?;
 let verifier_claims = OpeningClaims::from_groups(vec![
     PolynomialGroupClaims::new(
         point,

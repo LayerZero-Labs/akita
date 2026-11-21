@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scheme =
         load_workspace_scheme::<Config>(akita_params::ChunkedWitnessCfg::default_non_chunked())?;
     let setup = scheme.setup_prover(NUM_VARS, 1)?;
-    let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
+    let backend = Arc::new(CpuBackend::new(setup.expanded().clone())?);
     let source = backend.import_source(vec![polynomial])?;
     let commit_output = backend.commit(
         scheme.schedules(),
@@ -59,7 +59,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         BasisMode::Lagrange,
     )?;
 
-    let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
+    // SAFETY: `setup` was derived from its seed in this process.
+    let verifier = unsafe { scheme.verifier(scheme.setup_verifier(&setup)?) }?;
     let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point,
         vec![evaluation],

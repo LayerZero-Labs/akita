@@ -129,10 +129,10 @@ impl<F: Field, E> CpuBackend<F, E> {
         F: CanonicalEncoding,
     {
         expanded
-            .descriptor
+            .descriptor()
             .check()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-        let digest = akita_types::setup_seed_digest(&expanded.descriptor.setup_seed)
+        let digest = akita_types::setup_seed_digest(&expanded.descriptor().setup_seed)
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
         Ok(Self {
             identity: BackendIdentity::new(digest)?,

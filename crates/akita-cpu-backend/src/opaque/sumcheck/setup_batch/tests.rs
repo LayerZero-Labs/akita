@@ -7,7 +7,7 @@ use jolt_field::Prime128Offset6A23801F as F;
 
 fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>> {
     let seed = [23; 32].into();
-    Arc::new(
+    Arc::new(unsafe {
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupDescriptor {
                 max_num_vars: 16,
@@ -16,8 +16,8 @@ fn setup<B: Field + CanonicalEncoding>(len: usize) -> Arc<AkitaExpandedSetup<B>>
                 setup_seed: seed,
             },
             derive_public_matrix_prefix(len, &[23; 32].into()),
-        ),
-    )
+        )
+    })
 }
 
 #[test]
