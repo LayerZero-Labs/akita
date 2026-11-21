@@ -1,29 +1,10 @@
 use super::*;
 
 #[cfg(feature = "parallel")]
-use std::mem::{ManuallyDrop, MaybeUninit};
+use crate::opaque::sumcheck::{assume_initialized_fold_output, uninitialized_fold_output};
 
 #[cfg(feature = "parallel")]
 const DENSE_PARALLEL_PAIR_THRESHOLD: usize = 1 << 14;
-
-#[cfg(feature = "parallel")]
-fn uninitialized_fold_output<E>(len: usize) -> Vec<MaybeUninit<E>> {
-    let mut output = Vec::with_capacity(len);
-    output.resize_with(len, MaybeUninit::uninit);
-    output
-}
-
-#[cfg(feature = "parallel")]
-fn assume_initialized_fold_output<E>(output: Vec<MaybeUninit<E>>) -> Vec<E> {
-    let mut output = ManuallyDrop::new(output);
-    let ptr = output.as_mut_ptr().cast::<E>();
-    let len = output.len();
-    let capacity = output.capacity();
-    // SAFETY: `MaybeUninit<E>` has the same layout as `E`. Every caller writes
-    // all `len` entries before converting, and `ManuallyDrop` leaves ownership
-    // of the allocation to the returned vector.
-    unsafe { Vec::from_raw_parts(ptr, len, capacity) }
-}
 
 pub(crate) fn accumulate_dense_round<E: Field + Unreduced>(
     witness_evals: &[E],
