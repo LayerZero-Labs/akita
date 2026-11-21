@@ -18,11 +18,24 @@ use akita_error::AkitaError;
 use jolt_field::{ExtField, Field, Ring};
 use smallvec::SmallVec;
 
-use crate::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
+use crate::{
+    D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT, D64_PRODUCTION_PM1_COUNT,
+    D64_PRODUCTION_PM2_COUNT,
+};
 
-/// Inline capacity chosen for the heaviest production family, D64 `(31, 10)`.
-/// Every other production ring dimension has weight at most 31 and also fits.
-pub const INLINE_SPARSE_WEIGHT: usize = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+/// Inline capacity chosen for the heaviest D64 family: the larger of the
+/// production `(31, 10)` and the selective-L2 operator-norm `(31, 11)`, which
+/// Whiteout's constant-time sampler draws without allocating. Every other
+/// production ring dimension has weight at most 31 and also fits.
+pub const INLINE_SPARSE_WEIGHT: usize = {
+    let production = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+    let l2_op_norm = D64_L2_OP_NORM_PM1_COUNT + D64_L2_OP_NORM_PM2_COUNT;
+    if production > l2_op_norm {
+        production
+    } else {
+        l2_op_norm
+    }
+};
 
 /// Public storage type for sparse challenge positions.
 pub type SparseChallengePositions = SmallVec<[u32; INLINE_SPARSE_WEIGHT]>;

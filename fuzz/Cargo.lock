@@ -28,6 +28,7 @@ dependencies = [
  "akita-error",
  "akita-transcript",
  "jolt-field",
+ "keccak",
  "serde",
  "smallvec",
 ]

@@ -43,6 +43,8 @@ use akita_error::AkitaError;
 
 use super::op_norm_accumulate;
 
+mod constant_time;
+
 /// Internal fixed-point scale for the certified `pi` and trig interval math.
 /// Chosen so that products of two scaled values stay within `i128`
 /// (`2 * TRIG_SCALE < 127`).

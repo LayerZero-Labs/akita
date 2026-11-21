@@ -6,10 +6,17 @@
 //! `count_pm1` coefficients at ±1 and `count_pm2` at ±2. The decoder lives in
 //! [`stream`]; this module holds the certified operator-norm predicates.
 
+mod constant_time;
+mod indexed;
 mod op_norm;
 mod op_norm_accumulate;
+mod position_sample;
+mod signed_sparse;
 mod stream;
+mod xof;
 
+pub use constant_time::{sample_challenge_ct, sample_challenge_ct_counted};
+pub use indexed::sample_indexed_challenges_from_seed;
 pub(crate) use stream::SparseChallengeShell;
 pub use stream::SparseChallengeStream;
 
@@ -19,6 +26,9 @@ use std::sync::{Arc, LazyLock};
 use crate::{OperatorNormRejection, SparseChallengeConfig};
 
 use op_norm::OpNormTable;
+
+/// Maximum norm-filter candidates per indexed coordinate.
+const MAX_OP_NORM_ATTEMPTS: usize = 4096;
 
 const OP_NORM_PREDICATE_SCALE: u32 = 48;
 static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
