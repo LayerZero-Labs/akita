@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use akita_challenges::{FoldChallengeDrawDomain, FoldChallengeFamily, SparseChallengeConfig};
 use akita_error::AkitaError;
 
@@ -370,6 +372,19 @@ impl GroupOpenPhaseParams {
 
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
+        // Only complete values that passed every check enter this bounded cache.
+        // Cache access failure repeats validation; it never grants admission.
+        // The bound keeps arbitrary callers from growing the table.
+        const MAX_VALIDATED: usize = 8;
+        static VALIDATED: Mutex<[Option<GroupOpenPhaseParams>; MAX_VALIDATED]> =
+            Mutex::new([None; MAX_VALIDATED]);
+        if VALIDATED
+            .try_lock()
+            .ok()
+            .is_some_and(|entries| entries.iter().flatten().any(|entry| entry == self))
+        {
+            return Ok(());
+        }
         let field_bits = self.profile.inner.matrix.sis_modulus_profile().field_bits();
         self.profile.validate(field_bits)?;
         if let Some(natural_len) = self.setup_natural_len {
@@ -431,6 +446,14 @@ impl GroupOpenPhaseParams {
                 "precommitted A/B keys do not match frozen ranks, bounds, or digit depths"
                     .to_string(),
             ));
+        }
+        if let Ok(mut entries) = VALIDATED.try_lock() {
+            // A concurrent call may have stored an equal value since the lookup.
+            if !entries.iter().flatten().any(|entry| entry == self) {
+                if let Some(slot) = entries.iter_mut().find(|slot| slot.is_none()) {
+                    *slot = Some(*self);
+                }
+            }
         }
         Ok(())
     }

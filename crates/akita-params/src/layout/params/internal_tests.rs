@@ -53,6 +53,122 @@ fn relation_geometry_revalidates_frozen_precommitted_profiles() {
 }
 
 #[test]
+fn opening_validation_rejects_changed_policy_after_valid_input() {
+    let (lp, _) = sample_multi_group_root_params();
+    let params = *lp.preceding_group_params(0).unwrap();
+    params.validate().unwrap();
+    // The repeat is answered from the stored success.
+    params.validate().unwrap();
+
+    let mut changed = params;
+    changed.profile.version = 0;
+    assert!(matches!(
+        changed.validate(),
+        Err(AkitaError::InvalidSetup(message))
+            if message == "unsupported committed-group profile version 0"
+    ));
+
+    let mut changed = params;
+    changed.setup_natural_len = Some(0);
+    assert!(matches!(
+        changed.validate(),
+        Err(AkitaError::InvalidSetup(message))
+            if message == "setup-prefix inner digit depth 2 does not cover the full field width (43 digits)"
+    ));
+
+    let mut changed = params;
+    changed.opening.log_basis_open = 0;
+    assert!(matches!(
+        changed.validate(),
+        Err(AkitaError::InvalidSetup(message))
+            if message == "precommitted exact fold plan is missing or inconsistent"
+    ));
+
+    changed.profile.version = 0;
+    assert!(matches!(
+        changed.validate(),
+        Err(AkitaError::InvalidSetup(message))
+            if message == "unsupported committed-group profile version 0"
+    ));
+
+    params.validate().unwrap();
+}
+
+#[test]
+fn opening_validation_is_unchanged_once_the_table_is_full() {
+    let (lp, _) = sample_multi_group_root_params();
+    let params = *lp.preceding_group_params(0).unwrap();
+    // `validate` requires only a nonzero fold digit depth, so these are twelve
+    // distinct valid values: more than the table of validated values can hold.
+    let values: Vec<_> = (1..=12)
+        .map(|num_digits_fold| {
+            let mut value = params;
+            value.opening.num_digits_fold = num_digits_fold;
+            value
+        })
+        .collect();
+    for _ in 0..2 {
+        for value in &values {
+            value.validate().unwrap();
+        }
+    }
+
+    // Changed copies of the first and of the last value, whichever of them the
+    // table holds, are rejected with the errors of the full checks.
+    for value in [values[0], values[11]] {
+        let mut changed = value;
+        changed.profile.version = 0;
+        assert!(matches!(
+            changed.validate(),
+            Err(AkitaError::InvalidSetup(message))
+                if message == "unsupported committed-group profile version 0"
+        ));
+
+        let mut changed = value;
+        changed.opening.log_basis_open = 0;
+        assert!(matches!(
+            changed.validate(),
+            Err(AkitaError::InvalidSetup(message))
+                if message == "precommitted exact fold plan is missing or inconsistent"
+        ));
+
+        value.validate().unwrap();
+    }
+}
+
+#[test]
+fn opening_validation_is_consistent_across_threads() {
+    use std::sync::Barrier;
+
+    let (lp, _) = sample_multi_group_root_params();
+    let values = [
+        *lp.preceding_group_params(0).unwrap(),
+        address_oracle_precommit(128, 64, 64, 16, 1),
+    ];
+    assert_ne!(values[0], values[1]);
+    let mut invalid = values[0];
+    invalid.profile.version = 0;
+    let start = Barrier::new(4);
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..32 {
+                    for params in &values {
+                        params.validate().unwrap();
+                    }
+                    assert!(matches!(
+                        invalid.validate(),
+                        Err(AkitaError::InvalidSetup(message))
+                            if message == "unsupported committed-group profile version 0"
+                    ));
+                }
+            });
+        }
+    });
+}
+
+#[test]
 fn opening_batch_validation_checks_every_distinct_group_in_a_repeated_run() {
     let repeated_fixture = || {
         let mut lp = address_oracle_group_params(64, 64, 64, 8);
