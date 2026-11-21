@@ -1,0 +1,19 @@
+[package]
+name = "akita-constant-time"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0 OR MIT"
+description = "Constant-time CPU mode, secret-work pool and timing status for Akita provers"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+rayon = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(all(target_arch = "aarch64", target_vendor = "apple"))'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

@@ -66,6 +66,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-constant-time"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
 name = "akita-cpu-backend"
 version = "0.1.0"
 dependencies = [
