@@ -11,6 +11,7 @@ mod eor_plans;
 mod fold_kernels;
 mod handles;
 pub(crate) mod lifecycle;
+mod narrow;
 mod openings;
 pub(crate) mod operation_plans;
 mod owned;
@@ -429,6 +430,7 @@ where
         }
         let binding = self.next_binding(parent)?;
         let lease = binding.scope_lease().clone();
+        lease.narrow_pool_for(plan.domain().domain_len());
         crate::opaque::CpuStage1SessionHandle::new(binding, lease, relation_handle, plan)
     }
 

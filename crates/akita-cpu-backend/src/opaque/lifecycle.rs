@@ -1,4 +1,5 @@
 //! Private backend identity and independent proof lifetimes.
+use super::narrow::{NarrowedPool, NARROW_DOMAIN};
 use akita_error::AkitaError;
 use akita_prover::backend::{ProofContext, ProofScopeId};
 use std::collections::{HashMap, HashSet};
@@ -76,6 +77,8 @@ struct ProofState {
         Arc<akita_params::FoldSchedule>,
         akita_params::OpeningClaimsLayout,
     )>,
+    /// Set from the proof's first small level until the scope ends.
+    narrowed: Mutex<Option<NarrowedPool>>,
 }
 
 impl ScopeLease {
@@ -90,6 +93,7 @@ impl ScopeLease {
                 commitments: Mutex::new(HashMap::new()),
                 prepared_levels: Mutex::new(HashSet::new()),
                 plan: None,
+                narrowed: Mutex::new(None),
             }),
         }
     }
@@ -247,7 +251,29 @@ impl ScopeLease {
         Ok(())
     }
 
+    /// Narrows the calling pool for the rest of this proof once a level's
+    /// stage domain is at most [`NARROW_DOMAIN`]: levels only shrink from
+    /// there. Called between two stages, as [`NarrowedPool::engage`]
+    /// requires.
+    pub(crate) fn narrow_pool_for(&self, domain_len: usize) {
+        if domain_len > NARROW_DOMAIN {
+            return;
+        }
+        if let Ok(mut narrowed) = self.state.narrowed.lock() {
+            if narrowed.is_none() {
+                *narrowed = NarrowedPool::engage();
+            }
+        }
+    }
+
+    fn widen_pool(&self) {
+        if let Ok(mut narrowed) = self.state.narrowed.lock() {
+            *narrowed = None;
+        }
+    }
+
     fn finish(&self) -> Result<(), AkitaError> {
+        self.widen_pool();
         self.state
             .active
             .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
@@ -258,6 +284,7 @@ impl ScopeLease {
     }
 
     fn abort(&self) {
+        self.widen_pool();
         self.state.active.store(false, Ordering::Release);
     }
 }
@@ -338,6 +365,7 @@ impl BackendIdentity {
                 commitments: Mutex::new(HashMap::new()),
                 prepared_levels: Mutex::new(HashSet::new()),
                 plan,
+                narrowed: Mutex::new(None),
             }),
         })
     }
