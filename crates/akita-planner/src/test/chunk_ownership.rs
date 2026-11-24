@@ -677,9 +677,7 @@ fn contracting_chunk_pruning_preserves_consumer_widths_in_both_orders() {
         let generate = || {
             let mut memo = ScheduleMemo::new();
             let mut raw = Vec::new();
-            for basis in
-                policy.opening_basis_range.0.max(state.current_lb)..=policy.opening_basis_range.1
-            {
+            for basis in policy.opening_basis_range.0..=policy.opening_basis_range.1 {
                 raw.extend(
                     domain
                         .generate_recursive_for_opening_basis(

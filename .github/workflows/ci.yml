@@ -155,12 +155,12 @@ jobs:
           scripts/check-external-schedule-artifacts.sh
           cargo test --release -p akita-config --test trusted_schedule_artifact
       - name: Regenerate schedule artifacts in temporary storage
-        # Planning measured about 18 minutes on CI with two workers, and runner
-        # variance alone has moved this step by about 1.3x. The bound stops a
-        # runaway search. Growth in search size (states, candidates,
-        # descriptors) fails the --planner-cost-baseline check instead; slower
-        # per-candidate pricing is caught only by this timeout.
-        timeout-minutes: 35
+        # Independent suffix bases expand the generated-candidate count by
+        # about 2.4x over the former 18-minute, two-worker baseline. Allow that
+        # search plus runner variance without relaxing the deterministic
+        # --planner-cost-baseline growth guard. This timeout still bounds
+        # slower per-candidate pricing that the counters cannot detect.
+        timeout-minutes: 60
         env:
           AKITA_SCHEDULE_GEN_JOBS: 2
         run: |

@@ -101,6 +101,9 @@ fn visit_fold_opening(
     work: &mut OracleWork,
     frontier: &mut OracleFrontier,
 ) -> Result<(), AkitaError> {
+    if !matches!(state.level, 2 | 3) && fold_opening.log_basis < state.current_log_basis {
+        return Ok(());
+    }
     let policy = ctx.policy;
     for &payload_mode in state.payload_phase.candidate_modes(state.level, false) {
         for relation_transition in relation::transitions(
@@ -212,7 +215,7 @@ pub(super) fn visit_suffixes(
     let mut frontier = OracleFrontier::default();
     let (min_log_basis, max_log_basis) =
         crate::policy::log_basis_search_range_at_level(ctx.policy, state.level);
-    for log_basis in min_log_basis.max(state.current_log_basis)..=max_log_basis {
+    for log_basis in min_log_basis..=max_log_basis {
         for dimensions in dimension_candidates(ctx.policy, state.level, state.dimension_ceiling)? {
             let trace_work = evaluation_trace_work(ctx, state, dimensions)?;
             retain_terminal_candidates(

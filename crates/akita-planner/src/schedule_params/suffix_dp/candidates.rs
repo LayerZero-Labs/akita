@@ -462,8 +462,7 @@ impl<'a> CandidateDomain<'a> {
         let (min_inner_basis, max_inner_basis, min_open_basis, max_open_basis) =
             if let Some((inner, open)) = guided_bases {
                 if !(allowed_min_inner_basis..=allowed_max_inner_basis).contains(&inner)
-                    || !(allowed_min_open_basis.max(state.current_lb)..=allowed_max_open_basis)
-                        .contains(&open)
+                    || !(allowed_min_open_basis..=allowed_max_open_basis).contains(&open)
                 {
                     return Err(AkitaError::UnsupportedSchedule(
                         "adapted schedule bases are outside the current planner policy".into(),
@@ -506,7 +505,8 @@ impl<'a> CandidateDomain<'a> {
             opening_layout,
             inner_source,
             inner_basis_range: min_inner_basis..=max_inner_basis,
-            opening_basis_range: min_open_basis.max(state.current_lb)..=max_open_basis,
+            // The incoming basis fixes the A/source digits, not this fold's output basis.
+            opening_basis_range: min_open_basis..=max_open_basis,
             opening_work,
             fold_policy,
             require_child_fold,
@@ -524,9 +524,20 @@ impl<'a> CandidateDomain<'a> {
         let incoming_setup_prefix = state.topology.incoming_setup_prefix();
         let mut terminal = Vec::new();
         let mut folds = Vec::new();
+        // Empirical pruning, not a PCS validity constraint: the 53-case recursive
+        // fp64/fp128 dense/one-hot sweep selected nonterminal decreases only at
+        // 1->2 and 2->3. state.level names the destination (root = 0). Both matter:
+        // fp64 dense nv30 has outgoing log-bases 3->6->4->3. These positions are
+        // not intrinsic offload boundaries. Level already belongs to the memo key,
+        // so this avoids splitting cached states by decrease history. Terminals
+        // stay free; remeasure when presets/offload policies change. See PR #460.
+        let allows_fold_basis = matches!(state.level, 2 | 3) || open_lb >= state.current_lb;
 
         for inner_lb in self.inner_basis_range.clone() {
             for work in &self.opening_work {
+                if !allows_fold_basis && !work.purpose.allows_terminal() {
+                    continue;
+                }
                 for &payload_mode in state
                     .topology
                     .payload_phase()
@@ -572,7 +583,7 @@ impl<'a> CandidateDomain<'a> {
                             ctx.diagnostics,
                         )?
                         .filtered(ctx.relation_mode_filter)?;
-                    if work.purpose == OpeningPurpose::TerminalAndFold {
+                    if work.purpose == OpeningPurpose::TerminalAndFold && allows_fold_basis {
                         let views = derive_recursive_candidate_views(
                             request,
                             self.fold_policy,
@@ -619,7 +630,7 @@ impl<'a> CandidateDomain<'a> {
                                 }),
                         );
                     }
-                    if !work.purpose.allows_fold() {
+                    if !work.purpose.allows_fold() || !allows_fold_basis {
                         continue;
                     }
                     let fold_work = if let Some(natural_len) = incoming_setup_prefix {
@@ -821,6 +832,56 @@ mod tests {
                     "single-chunk fold {level} in {relation_phase:?}",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn only_early_nonterminal_folds_allow_basis_decreases() {
+        use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+
+        let mut policy =
+            policy_of::<OneHot>(akita_params::ChunkedWitnessCfg::default_non_chunked());
+        policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+        let ctx = SuffixCtx {
+            policy: &policy,
+            challenge_order: policy.transcript_grinding_order().unwrap(),
+            diagnostics: None,
+            ring_challenge_config: &OneHot::ring_challenge_config,
+            key: PolynomialGroupLayout::singleton(20),
+            setup_field_budget: None,
+            root_lookup_key: None,
+            root_main_constraint: None,
+            adaptation_guide: None,
+            root_source_contract: None,
+            precommitted_source_contracts: &[],
+            level_zero_is_root: false,
+            relation_traversal_order: super::super::RelationTraversalOrder::Canonical,
+            relation_mode_filter: super::super::RelationModeFilter::All,
+        };
+        for level in [2, 3, 4] {
+            let state = SuffixState {
+                level,
+                current_witness_len: 1 << 20,
+                input_chunks: None,
+                current_lb: 6,
+                source_moment: None,
+                dimension_ceiling: CommitmentRingDims::uniform(64),
+                topology: super::super::SuffixTopology::Direct {
+                    payload_phase: akita_params::CommitmentPayloadPhase::CompressedPrefix,
+                    relation_phase: super::super::RingRelationPhase::ReducedEvaluationSuffix,
+                },
+            };
+            let domain = CandidateDomain::prepare(&ctx, state).unwrap();
+            let mut prefixes = SetupPrefixSearchCache::default();
+            let lower = domain
+                .generate_recursive_for_opening_basis(&ctx, state, 3, &mut prefixes)
+                .unwrap();
+            assert_eq!(!lower.folds.is_empty(), level <= 3, "fold level {level}");
+            assert!(!lower.terminal.is_empty(), "terminal at level {level}");
+            let equal = domain
+                .generate_recursive_for_opening_basis(&ctx, state, 6, &mut prefixes)
+                .unwrap();
+            assert!(!equal.folds.is_empty(), "equal basis at level {level}");
         }
     }
 }
