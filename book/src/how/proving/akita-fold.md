@@ -578,10 +578,11 @@ is what certifies the bound in the protocol.
 #### Rejection sampling the fold response
 
 The worst-case bound above is loose. The schedule therefore gives
-$\mathbf z$ a smaller bound, the response cap, and the prover retries until
-$\mathbf z$ fits. This subsection explains the cap and the retry.
+$\mathbf z$ a smaller target, and the prover retries until $\mathbf z$
+fits. This subsection explains the target, the bound that the protocol
+enforces, and the retry.
 
-**The cap.** Let $B$ be the number of folded blocks, which is the number of
+**The sizing threshold.** Let $B$ be the number of folded blocks, which is the number of
 claims times the number of live blocks. Let $s_\infty$ bound the witness
 coefficients. A sparse challenge has $a$ coefficients of magnitude 1 and $b$
 of magnitude 2, so its squared Euclidean norm is at most $a+4b$. The
@@ -606,8 +607,8 @@ $$
 
 where $N$ is the number of folded coefficients and $p=1/8$ is the target
 probability that one attempt fits. The code computes $\ell$ as a conservative
-integer upper bound of the logarithm. The cap is $\min(\beta_\infty,t_*)$. The
-function `fold_witness_linf_cap` in
+integer upper bound of the logarithm. The sizing threshold is
+$\min(\beta_\infty,t_*)$. The function `fold_witness_linf_cap` in
 `crates/akita-params/src/sis/norm_bound.rs` returns it, and all arithmetic on
 this path is checked integer arithmetic.
 
@@ -615,8 +616,30 @@ For example, take the D64 challenge family with $a=31$ and $b=10$, so
 $a+4b=71$ and $\lVert c\rVert_1=51$. Take $B=16$ blocks, $s_\infty=1$, and
 $N=2^{16}$, for which $\ell=13$. Then
 $t_*=\lceil\sqrt{2\cdot16\cdot71\cdot13}\rceil=\lceil\sqrt{29536}\rceil=172$,
-while $\beta_\infty=16\cdot51=816$. The cap is 172, and a response under
-that cap needs fewer digits than one sized for 816.
+while $\beta_\infty=16\cdot51=816$. The sizing threshold is 172, and a
+response sized for 172 needs fewer digits than one sized for 816.
+
+**The accepted digit envelope.** The threshold is an offline planner input.
+The protocol does not enforce it. The planner converts it into a digit count
+$\delta_{\mathrm{fold}}$: the smallest number of balanced base-$b$ digits
+whose positive reach covers the threshold. What the prover tests and what
+the verifier's range check enforces is the full interval that those digits
+can represent,
+
+$$
+-\frac b2\sum_{l<\delta_{\mathrm{fold}}}b^l
+\;\le\; z \;\le\;
+\Bigl(\frac b2-1\Bigr)\sum_{l<\delta_{\mathrm{fold}}}b^l .
+$$
+
+This interval is asymmetric, and it is usually wider than the threshold. In
+the example, base $b=8$ needs three digits, because two digits reach only 27.
+Three digits represent every value from $-292$ to $219$. A response
+coefficient of 200 is above the threshold of 172 and is still accepted.
+
+The terminal fold is different. Its response is sent in the clear and is not
+digitized, so the schedule gives it an explicit coefficient cap, and the
+prover and the verifier compare the response with that cap directly.
 
 **The retry.** The challenges come from the transcript, so the prover needs a
 way to obtain different challenges for the same statement. Each fold has one
@@ -627,7 +650,8 @@ drawn. A different nonce gives different challenges.
 2. For each candidate, it works on a copy of the transcript state. It absorbs
    the nonce, performs the fold's proof of work, and draws the challenges of
    every group.
-3. It computes each group's response and compares it with that group's cap.
+3. It computes each group's response and tests it against that group's
+   accepted digit envelope, or against the explicit cap at the terminal fold.
    If any group fails, it moves to the next candidate.
 4. When every group passes, it writes that nonce to the real transcript and
    draws the same challenges there.
@@ -640,8 +664,9 @@ canonical unsigned LEB128 in the proof and one 64-bit word in the transcript;
 see [the order within one fold](../transcript.md#order-within-one-fold).
 
 **What is a protocol rule.** The nonce encoding, its transcript position, the
-limit of 4096, and each cap are fixed by the protocol version and the
-schedule. The order in which the prover tries candidates is an implementation
+limit of 4096, each fold's digit count, and the terminal cap are fixed by the
+protocol version and the schedule. The sizing threshold is not: only the
+digit count that the planner derived from it reaches the protocol. The order in which the prover tries candidates is an implementation
 choice: the verifier accepts any in-range nonce whose response passes the
 checks. The value $p=1/8$ is an offline sizing input. It is not a probability
 that the protocol guarantees.

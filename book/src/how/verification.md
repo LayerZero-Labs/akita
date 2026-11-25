@@ -334,9 +334,14 @@ The variant tells the caller where the fault lies.
 | `UnsupportedSchedule` | The requested polynomial layout has no supported schedule |
 | `Internal` | An invariant that Akita maintains itself failed; this reports a bug in Akita or in a custom backend |
 
-A check on a proof, a commitment, or any other untrusted value returns
-`InvalidProof`, even when only a bug in an honest prover could make it fail.
-`Internal` never stands in for a rejection.
+The variant follows the kind of check, not the trust level of the input. An
+attacker can control the statement and the schedule selection as well as the
+proof bytes, and each keeps its own category. A commitment whose length does
+not match its profile returns `InvalidInput`. A selection that names a row
+the verifier does not admit returns `InvalidSetup`. A failed protocol check
+on proof bytes returns `InvalidProof`, even when only a bug in an honest
+prover could make it fail. `Internal` never stands in for any of these
+rejections.
 
 ### The proof has no shape header
 

@@ -193,9 +193,12 @@ it directly. The prover sends three kinds of values:
 - the inner image $\mathbf t_b=\mathbf A\mathbf s_b$ of each block.
 
 The inner images are not sent at the terminal level. The predecessor fold
-already sent and absorbed them as its next-witness binding, before its own
-challenges. The prover therefore cannot choose new inner images after it
-sees the opening point that the terminal receives.
+already sent and absorbed them as its next-witness binding. That happens
+after the predecessor's sparse fold challenges, because the terminal witness
+contains the predecessor's folded response. It happens before the
+predecessor's ring-switch and sumcheck challenges, and those challenges
+determine the opening point that the terminal receives. The prover therefore
+cannot choose new inner images after it sees that point.
 
 The prover runs these steps, which mirror the verifier's
 [replay order](../verifying/terminal.md#replay-order):
@@ -225,7 +228,7 @@ the last $E_b$, sent in step 4. Across the shipped catalog this saves between
 gives the equations and the soundness argument.
 
 The send order is a protocol rule: $\mathbf t_b$ before the predecessor's
-challenges, and $E_b$ before the $c_b$. How a backend computes the partials
+ring-switch and sumcheck challenges, and $E_b$ before the terminal $c_b$. How a backend computes the partials
 and the response is an implementation choice. The prover code is
 `prove_terminal_suffix` in `crates/akita-prover/src/protocol/prove/suffix.rs`
 and `sample_terminal_fold_response` in

@@ -228,7 +228,8 @@ host can place the bytes correctly.
 ### Install a prepared terminal matrix
 
 `AkitaVerifier::for_selection` admits one schedule row and prepares only that
-row's terminal matrix. Its last argument can supply the prepared matrix:
+row's terminal matrix. Its fourth argument can supply the prepared matrix,
+and its fifth argument is the setup mode:
 
 ```rust
 // Host.
@@ -244,6 +245,7 @@ let verifier = AkitaVerifier::for_selection(
     catalog,
     selection,
     Some(TrustedTerminalCache::Decode(&cache)),
+    akita_verifier::SetupMode::Check,
 )?;
 ```
 
@@ -251,6 +253,13 @@ let verifier = AkitaVerifier::for_selection(
 out of range. `TrustedTerminalCache::View` reads `'static` bytes in place
 without a copy or a range pass. Pass `None` to let the verifier compute the
 transform itself.
+
+`SetupMode::Check` provisions a verifier that evaluates direct setup queries
+against the public matrix. `SetupMode::Defer` provisions one that exports
+those evaluations as obligations. A `Defer` verifier keeps only the
+compression-map coefficients, so it requires a cache: `for_selection` returns
+`InvalidSetup` for `Defer` with `None`. A `Defer` verifier also rejects
+replay under `SetupPolicy::Check`.
 [Per-level replay](../how/verification.md#per-level-replay) describes what the
 verifier checks about a cache and what it cannot check. The recursion guest in
 `profile/akita-recursion/guest/src/integration.rs` uses this path with a cache
