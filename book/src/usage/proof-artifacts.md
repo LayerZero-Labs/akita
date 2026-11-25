@@ -57,6 +57,73 @@ use the same session bytes and independently bind the same public instance.
 The [transcript chapter](../how/transcript.md) lists the exact binding order and
 explains the wire checks used by transcript tests.
 
+The protocol revision of the bundle is `akita_transcript::PROTOCOL_VERSION`,
+currently `8`. It names the proof format and the transcript schedule. Akita
+absorbs it first, inside a 32-byte protocol tag:
+`akita-pcs/transcript/v8/sha3`, or `akita-pcs/transcript/v8/keccak` when the
+`keccak256-digests` feature is on. A proof made under one revision or digest
+hash does not verify under another.
+
+## Embed Akita in a host transcript
+
+A proof system that already has its own transcript usually wants one
+transcript, not two. Akita supports this with a second pair of entries.
+
+- **Standalone.** `batched_prove` and `batched_verify` build a fresh
+  transcript state from the session label. The proof is the whole byte string.
+- **Embedded.** `batched_prove_embedded` and `batched_verify_embedded` take a
+  transcript state that the host owns. Akita appends its messages to the
+  host's proof string and draws its challenges from the host's sponge.
+
+The standalone entries call the embedded ones, so both modes run the same
+code. The host state must use Akita's channel types,
+`akita_transcript::ProverChannel` and `akita_transcript::VerifierChannel`.
+
+```rust
+// Prover. `channel` is the host's ProverChannel.
+// ... the host absorbs its statement and sends its messages ...
+scheme.batched_prove_embedded(&prover_setup, opening, &backend, &mut channel, basis)?;
+// ... the host sends its remaining messages ...
+
+// Verifier. `state` is the host's VerifierChannel over the same proof string.
+// ... the host replays its messages ...
+let pending = verifier.batched_verify_embedded(
+    &mut state,
+    statement,
+    basis,
+    akita_verifier::SetupPolicy::Check(None),
+)?;
+// ... the host replays its remaining messages ...
+pending.check_eof(state)?;
+```
+
+The verifier has one more step than in standalone mode.
+`batched_verify_embedded` does not accept a proof. It returns a `PendingEof`
+value. The proof is accepted only when `PendingEof::check_eof` succeeds on the
+same state after the host's last message. That call checks that the whole
+proof string was read and that no step failed. On any error, Akita marks the
+state as failed before it returns, so every later read and the final check
+fail even if the host ignores the error.
+
+The host has four duties:
+
+1. Call the embedded verifier at the same transcript position where the
+   prover called the embedded prover.
+2. Bind each commitment before any host challenge that depends on it. The
+   32-byte commitment digest is enough.
+3. Stop on any error from Akita.
+4. Pass the state that Akita verified on to `check_eof`. Nothing ties the
+   `PendingEof` value to a state, so another state would skip the check.
+
+Akita absorbs its own statement in both modes: the protocol tag, the instance
+descriptor, each commitment digest, the opening points, and the claimed
+values. Its soundness therefore does not depend on what the host absorbed.
+[Running inside a caller's transcript](../how/transcript.md#running-inside-a-callers-transcript)
+gives the exact order. The tests in
+`crates/akita-pcs/tests/embedded_transcript.rs` check that a standalone proof
+equals an embedded proof on a fresh state, that an embedded proof verifies
+between host messages, and that a rejection leaves the host state failed.
+
 ## Carry the trusted row selection
 
 `SelectedProverOpeningData::selection()` returns an

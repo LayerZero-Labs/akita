@@ -62,12 +62,26 @@ commit, prove, and verify phases for protocol comparisons.
 | `AKITA_MODE` | `onehot_fp128` | Configuration and source representation |
 | `AKITA_NUM_VARS` | `32` | Number of multilinear variables; use 36 for parity measurements |
 | `AKITA_NUM_POLYS` | `1` | Number of polynomials in the final group |
+| `AKITA_SETUP_MODE` | `direct` | Setup contribution mode: `direct` or `recursive` |
+| `AKITA_PROFILE_CONTRACT_ONLY` | unset | When set to `1`, print the workload contract and exit before proving |
 | `AKITA_PROFILE_PROVE_THREADS` | Rayon default | Prover worker count |
 | `AKITA_PROFILE_VERIFY_THREADS` | Prover count | Verifier worker count |
 | `RAYON_NUM_THREADS` | Rayon default | Fallback worker count |
 
 The compiled binary accepts only modes enabled by its feature set. An unknown
 mode prints the available names.
+
+`AKITA_SETUP_MODE` selects how the workload handles the setup contribution.
+With `direct`, the verifier scans the public setup. With `recursive`, the
+workload uses [setup offloading](../how/setup-offloading.md). The harness
+accepts only the pairs of `AKITA_MODE` and `AKITA_SETUP_MODE` that
+`crates/akita-pcs/examples/profile/workloads.json` declares. Any other pair
+stops the run with `unsupported profile mode/setup combination`.
+
+`AKITA_PROFILE_CONTRACT_ONLY=1` checks a configuration without the cost of a
+proof. The harness validates the workload, prints one JSON object, and exits.
+The object has the fields `mode`, `setup_mode`, `family`, `num_vars`,
+`num_polys`, `onehot_k`, `precommitted`, and `final_polys`.
 
 The repository also provides dense, small field, grouped, recursive setup, and
 multi chunk modes. Use the narrow feature that owns the selected mode when

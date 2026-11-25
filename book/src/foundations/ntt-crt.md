@@ -57,9 +57,9 @@ product does not meet the requested bound.
 Akita has two different AVX-512 paths. They must not be described as one
 backend.
 
-The ordinary i32 NTT path uses the scalar reference implementation or the
-runtime selected x86 implementation. `AKITA_SCALAR_NTT=1` forces the scalar
-path. The x86 transforms are written once over a vector-width trait and
+The ordinary i32 NTT path uses the scalar reference implementation, the
+runtime selected x86 implementation, or the NEON implementation on AArch64.
+`AKITA_SCALAR_NTT=1` forces the scalar path. The x86 transforms are written once over a vector-width trait and
 instantiated at 256 and 512 bits. Both use radix-4 passes whose butterfly
 half length is at least 16, followed (forward) or preceded (inverse) by a
 256-bit kernel that runs the last four or five stages in registers. Degrees
@@ -135,6 +135,43 @@ change setup bytes, proof bytes, transcript bytes, or setup digests.
 `crates/akita-algebra/src/ntt/ifma52/x86.rs`,
 `crates/akita-types/src/ntt_cache/exact.rs`, and, for the tail transforms,
 `crates/akita-algebra/src/ntt/avx/transform.rs`.
+
+## NEON on AArch64
+
+NEON is the SIMD instruction set of AArch64 processors, such as Apple
+silicon. SIMD means that one instruction works on several numbers at once.
+A NEON register holds four 32-bit lanes or eight 16-bit lanes, so one NEON
+butterfly step processes four or eight coefficients.
+
+The selection differs from x86. The NEON module is compiled whenever the
+target architecture is `aarch64`, and there is no runtime CPU feature test.
+The kernels are on by default, and `AKITA_SCALAR_NTT=1` forces the scalar
+path for an A/B measurement.
+
+The NEON kernels cover the same operations as the scalar reference:
+
+- forward and inverse transforms, negacyclic and cyclic, for 32-bit and
+  16-bit primes;
+- pointwise multiply-accumulate; and
+- conversion of centered 8-bit and 16-bit digits to Montgomery form.
+
+A 32-bit multiply reduces four lanes at once with a signed Montgomery
+multiplication built from the doubling high-multiply instruction. Twiddle
+factors are stored in Barrett form: each constant is kept with a precomputed
+quotient, so a multiplication by it needs no Montgomery conversion of the
+constant.
+
+A short transform does not fill the vector passes. The 32-bit kernels use the
+scalar transform below degree 32, and the 16-bit kernels use it below degree
+8. For example, a 16-bit transform at $D=64$ runs the NEON passes, and one at
+$D=4$ runs the scalar code.
+
+The rule is that every NEON kernel returns the same residues as the scalar
+reference. Which kernel runs is an implementation choice. The tests
+`neon_ntt_i32_matches_scalar_at_target_dimensions` and
+`neon_ntt_i16_matches_scalar_at_fallback_and_target_dimensions` in
+`crates/akita-algebra/src/ntt/neon/tests.rs` compare the two, and the
+portability workflow runs them on a native AArch64 machine.
 
 ## Accumulation capacity and chunking
 

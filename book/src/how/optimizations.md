@@ -1,4 +1,4 @@
-# Prover Optimizations
+# Optimizations
 
 Akita keeps protocol decisions separate from compute decisions. The protocol
 chooses the commitment layout, transcript order, and proof shape. A compute
@@ -14,6 +14,10 @@ The current CPU design has three important rules:
 
 These rules are most visible in one hot commitment and large ring switch
 operations.
+
+Most of this chapter describes the prover. The section
+[Paired equality tensors and the carry recurrence](#paired-equality-tensors-and-the-carry-recurrence)
+describes the verifier's evaluation kernels.
 
 ## One hot source geometry
 
@@ -85,6 +89,62 @@ Opening builds only the active challenge range. Batched opening keeps only the
 current polynomial and its current block tile. Suffix tensor projection
 consumes the recursive witness source directly. Cloning a one hot polynomial
 does not share mutable derived state.
+
+## Dense sources and shared storage
+
+A dense polynomial stores every coefficient. The optimizations in this section
+reduce what the CPU backend stores and copies for dense sources. None of them
+changes proof bytes.
+
+### Compact dense prefixes
+
+A polynomial has a logical domain of $2^{n}$ coefficients, but its tail may be
+all zero. `DensePoly::from_field_prefix` stores only a prefix and treats the
+rest as an implicit zero suffix. The logical polynomial and the commitment
+geometry keep the full domain. Storage is rounded up only to the largest
+supported commitment ring dimension, so memory and kernel work follow the
+stored prefix. The type is in
+`crates/akita-cpu-backend/src/sources/dense/poly.rs`, and the test
+`zero_suffix_preserves_full_shape_and_fold_values` checks that the compact
+source gives the same shape and fold values as the full one.
+
+### Shared setup-prefix coefficients
+
+[Setup offloading](./setup-offloading.md) commits to a prefix of the public
+setup. That prefix is already in memory as part of the expanded setup. A
+setup-prefix polynomial therefore holds a reference to the backend's single
+setup and a length, and it copies no coefficient. Ordinary polynomials still
+own their coefficients.
+
+The inner rows of such commitments repeat across prefix sizes. `InnerRowPool`
+in `crates/akita-cpu-backend/src/commitment/shared_inner.rs` stores each
+distinct row once. A hash only selects candidates; two rows share storage only
+when every coefficient is equal. The tests
+`setup_prefix_sources_share_the_setup_and_survive_owner_drop` and
+`overlapping_rows_share_storage_and_keep_their_order` cover both parts.
+
+### One digit-block interface
+
+Commitment, folding, and coefficient packing all read a source as blocks of
+digit planes. Sources store those digits in different ways: cached digits,
+ring values that are decomposed on demand, and packed digits. The internal
+`BlockDigits` trait in `crates/akita-cpu-backend/src/sources/block_digits.rs`
+gives every storage form the same interface. One driver then serves all of
+them, and it can choose the exact 16-bit or the batched 8-bit transform from
+the digit bound that the source reports. The trait is private to the CPU
+backend.
+
+### Lazy challenge embeddings
+
+Under subring coefficient packing, the fold challenges are drawn in a small
+challenge subring and then embedded into the A ring. The embedding keeps every
+coefficient and moves position $j$ to position $\text{stride}\cdot j$.
+`Challenges::embed_subring_positions` in
+`crates/akita-challenges/src/challenges.rs` does not rewrite the positions. It
+shares the sampled storage and records the stride. The embedded positions are
+built only when a caller first reads them as a slice. The test
+`checked_embeddings_are_lazy_composable_and_preserve_public_values` checks
+that the lazy form gives the same values.
 
 ## Streaming suffix tensor inputs
 
@@ -369,6 +429,134 @@ Exact prefix products use nonoverlapping parallel waves. Each wave reads a
 completed prefix and writes the next disjoint range. Dense differential tests
 cross the sequential boundary and every doubling boundary through the full
 supported domain.
+
+## Paired equality tensors and the carry recurrence
+
+This section describes verifier kernels. Several verifier chapters refer to
+the *paired tensor recurrence*; this is its definition.
+
+### The problem
+
+The equality polynomial $\operatorname{eq}(r,i)$ takes a point
+$r=(r_0,r_1,\ldots)$ and an index $i$. It is a product with one factor for
+each bit of $i$: the factor is $r_k$ when bit $k$ of $i$ is 1 and $1-r_k$
+when it is 0.
+
+The verifier must evaluate sums that contain two equality factors in each
+term:
+
+```text
+scalar * sum over (i_0, ..., i_k) of
+    product_j weight_j[i_j]
+  * eq(left,  left_offset  + sum_j left_stride_j  * i_j)
+  * eq(right, right_offset + sum_j right_stride_j * i_j)
+```
+
+One factor addresses a position in the witness. The other addresses a
+position in the setup or in the relation. The sum can have millions of terms,
+so the verifier cannot add them one by one.
+
+### Plain definitions
+
+- An **address** is the index passed to one equality factor.
+- An **axis** is one independent coordinate $i_j$, such as the claim, block,
+  digit, or row index. It has a length, a left stride, a right stride, and
+  weights.
+- A **stride** is the amount by which one step along an axis changes an
+  address. A stride may be zero on one side.
+- A **family** is one such sum: a pair of offsets, a scalar, and a list of
+  axes. The code type is `EqPairTensorFamily`.
+- A **carry** is what an addition passes from one bit to the next bit. An
+  offset that is not a multiple of the axis size causes carries.
+
+### The recurrence
+
+The recurrence computes the sum one address bit at a time, from the lowest
+bit upward. It keeps a small set of states. A state is a pair
+(left carry, right carry) with an accumulated weight.
+
+At each bit, every state is combined with every choice of the coordinate bits
+that enter at this bit. The choice is added to both carries. The lowest bit
+of each result selects the equality factor for that side, and the rest of the
+result is the next carry. States with equal carries are then merged by adding
+their weights. After the last bit, the answer is the weight of the state
+whose carries are both zero.
+
+The cost is about the number of bits times the number of states. It does not
+grow with the number of terms.
+
+### A small example
+
+Take one axis of length 4 with unit weights, left stride 1, right stride 1,
+left offset 3, and right offset 0. The left point is $(L_0,L_1,L_2)$ and the
+right point is $(R_0,R_1)$, lowest bit first. Write $\bar x=1-x$. The sum has
+four terms:
+
+$$
+\operatorname{eq}(L,3)\operatorname{eq}(R,0)
++\operatorname{eq}(L,4)\operatorname{eq}(R,1)
++\operatorname{eq}(L,5)\operatorname{eq}(R,2)
++\operatorname{eq}(L,6)\operatorname{eq}(R,3).
+$$
+
+The recurrence starts from the single state (3, 0) with weight 1. Bit 0 and
+bit 1 each add one coordinate bit to both carries. Bit 2 adds nothing.
+
+| After bit | States (left carry, right carry): weight |
+| --- | --- |
+| start | (3, 0): $1$ |
+| 0 | (1, 0): $L_0\bar R_0$; (2, 0): $\bar L_0R_0$ |
+| 1 | (0, 0): $L_0\bar R_0\,L_1\bar R_1$; (1, 0): $L_0\bar R_0\,\bar L_1R_1+\bar L_0R_0\,\bar L_1\bar R_1+\bar L_0R_0\,L_1R_1$ |
+| 2 | (0, 0): $\bar L_2\cdot L_0\bar R_0L_1\bar R_1+L_2\cdot(\ldots)$ |
+
+At bit 1 there are four combinations of state and choice. Three of them reach
+the carry pair (1, 0) and are merged into one state. The final weight
+expands to the four terms above. With a longer axis and the same offsets, the
+set never holds more than two states, while the number of terms doubles with
+every added axis bit.
+
+### Supporting kernels
+
+The entry point is `eval_boolean_pair_tensor_families` in
+`crates/akita-algebra/src/offset_eq/tensor_pair/`. It applies these exact
+reductions around the recurrence:
+
+- It contracts independent, aligned low axes first, so they never enter the
+  carry states.
+- It evaluates families with the same recurrence geometry as one batch.
+- It handles long unit-stride intervals with a shared binary-addition
+  contraction.
+- Construction merges adjacent unit-weight axes whose strides are contiguous,
+  so a uniform layout becomes one long axis.
+- A power-of-two axis whose weight is a product of one factor per bit stays in
+  that factored form (`EqPairTensorWeights::BitProduct`). The kernel never
+  expands it into a dense table.
+
+One call has one work budget, `MAX_COMPACT_STRIDE_TERMS = 2^28`. A call that
+would exceed it returns an error. All address arithmetic is checked, as the
+[verifier no-panic contract](./verification.md#the-verifier-no-panic-contract)
+requires.
+
+### Where Akita uses it
+
+- The setup-index weight of the setup contribution, in the direct scan and in
+  Stage 3: [Setup contribution and Stage 3](./verifying/setup_contribution.md).
+- The column weights of the evaluation-trace opening:
+  [Evaluation trace](./verifying/evaluation_trace.md).
+- The compression relation weights and the distributed relation verifier:
+  [The distributed relation verifier](./verifying/distributed-relation-verifier.md).
+
+Only the verifier uses these kernels. The prover materializes the dense
+weights instead.
+
+### Protocol rule and implementation choice
+
+The value of each sum is a protocol rule: the relation and the layout define
+it, and prover and verifier must agree on it. How the verifier computes the
+value is an implementation choice. Every reduction above is exact, so the
+choice of kernel cannot change whether a proof verifies. The tests under
+`crates/akita-algebra/src/offset_eq/` compare the kernels with dense
+reference evaluations.
 
 ## Design boundary
 

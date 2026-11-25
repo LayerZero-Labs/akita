@@ -220,7 +220,8 @@ its full width. The honest prover writes zero in that `z_hat^(j)` piece.
 
 The production verifier accepts every canonical exact partition. It skips
 empty `E` and `T` pieces. It evaluates short irregular pieces as checked affine
-intervals and long repeated geometry with paired equality tensors. It never
+intervals and long repeated geometry with
+[paired equality tensors](../optimizations.md#paired-equality-tensors-and-the-carry-recurrence). It never
 pads a shorter chunk or materializes a dense witness-sized equality table.
 
 The simple derivation below applies when every $B_j$ equals the same

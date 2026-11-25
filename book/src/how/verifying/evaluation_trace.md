@@ -43,7 +43,8 @@ boundaries.
 
 Preparation also chooses the concrete contraction kernel. For a short affine
 range, it stores the two small block-weight tables. For a long range, it stores
-the exact dyadic unit segments used by the paired recurrence. Evaluation does
+the exact dyadic unit segments used by the
+[paired recurrence](../optimizations.md#paired-equality-tensors-and-the-carry-recurrence). Evaluation does
 not rebuild either plan.
 
 ## Coefficient and address factors
