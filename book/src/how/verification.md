@@ -294,27 +294,37 @@ commitment, direct witness, or transcript input must be rejected with
 ### Checked challenge advice
 
 Recursive verification can use untrusted advice for sparse challenge decoding.
+A host produces it with `akita_challenges::record_checked_hints(verify)`, which
+runs native verification on the calling thread and returns the tape on success.
 Install it with `akita_challenges::install_checked_hints(bytes, max_bytes)`.
 Choose `max_bytes` from trusted schedule configuration or an application memory
-budget, independently of the supplied advice's length or header. The bound
-covers the entire input, including its frame header. The previous one-argument
-installer is replaced by this explicit resource contract.
+budget, independently of the supplied advice length. The bound covers the
+entire tape.
 
 Position advice includes a record for every in-range candidate examined, even
 when the operator-norm predicate rejects it. Its size therefore varies with the
 transcript. A captured honest proof's size is not a safe general bound; use the
 schedule's full candidate pools and the
-[schedule-derived budget formula](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame).
+[schedule-derived budget formula](../../../specs/sparse-challenge-stream.md#checked-rank-advice-tape).
 A smaller application budget can reject otherwise valid proofs.
 
-An existing session, an oversized input, or malformed framing is rejected before
+The tape stores little-endian words in verifier draw order. In unfiltered
+batches of at least 1024 challenges, D64 draws with 31 unit and 10
+double-magnitude coefficients use quartet records, and D128 draws with
+31 unit-magnitude coefficients use ternary records. Every other draw
+uses position records. For ternary draws,
+the verifier authenticates each supplied support and sign against the original
+transcript stream, then evaluates six coefficients per lookup group. It keeps
+the same challenge distribution and proof format.
+
+An existing session, an oversized input, or a partial word is rejected before
 any tape allocation. Tape storage uses fallible allocation; failures return
 `AkitaError::InvalidProof` without installing a partial session. Decoding borrows
 bounded slices from the installed storage and still checks every supplied rank
 and sign against the transcript. Finish a successful session with
 `finish_checked_hints` to require complete consumption, or discard a failed one
 with `abort_checked_hints` before retrying. The
-[advice frame specification](../../../specs/sparse-challenge-stream.md#checked-rank-advice-frame)
+[advice tape specification](../../../specs/sparse-challenge-stream.md#checked-rank-advice-tape)
 defines the binary layout and consumption order.
 
 ### Crates in scope

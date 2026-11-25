@@ -254,7 +254,7 @@ fn operator_norm_decode_accepts_only_predicate_challenges() {
             assert_eq!(challenges.len(), count);
             let binomials = BinomialTable::new(d, config.count_pm1.max(config.count_pm2)).unwrap();
             let decoder = CandidateDecoder {
-                position_hints: false,
+                advice: Advice::Off,
                 stream: &stream,
                 message: &message,
                 binomials: &binomials,
@@ -291,7 +291,7 @@ fn large_unfiltered_decode_matches_per_candidate_decode() {
     let challenges = stream.decode(&message).unwrap().unwrap();
     let binomials = BinomialTable::new(128, 31).unwrap();
     let decoder = CandidateDecoder {
-        position_hints: false,
+        advice: Advice::Off,
         stream: &stream,
         message: &message,
         binomials: &binomials,

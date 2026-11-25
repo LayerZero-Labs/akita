@@ -545,33 +545,31 @@ Ranked recommendation:
    plus a pool for the variable bit consumption. Its only advantage is a
    simpler decoder.
 
-### Checked rank-advice frame
+### Checked rank-advice tape
 
 `install_checked_hints(bytes, max_bytes)` accepts untrusted advice on the current
 thread within a trusted byte budget. `max_bytes` MUST come from trusted schedule
-configuration or an application memory budget, not from the untrusted frame or
-its length. It covers the entire input, including the 16-byte versioned header.
-The installer rejects an occupied session, oversized input and malformed framing
-before copying any tape. Tape storage is allocated fallibly; allocation failure
-returns `AkitaError::InvalidProof` and leaves the session unchanged. Decoders
+configuration or an application memory budget, independently of the supplied
+tape and its length. The installer rejects an occupied session, oversized input
+and partial words before copying the tape. Allocation failure returns
+`AkitaError::InvalidProof` and leaves the session unchanged. Decoders
 borrow checked word slices from the session without allocating shared owners.
-Callers of the previous one-argument installer MUST supply this trusted bound.
 
-For a versioned session, a conservative schedule-derived bound in bytes is:
+A conservative schedule-derived bound in bytes is:
 
 ```text
-max_bytes = 16
-          + sum over quartet draws of (32 * count)
+max_bytes = sum over quartet draws of (32 * count)
+          + sum over ternary draws of (32 * count)
           + sum over position draws of (8 * ceil(w / 4) * candidates)
 ```
 
 Sum over every fold draw covered by the installed session. For each draw,
 `count = num_live_blocks * num_claims`, `w = count_pm1 + count_pm2`, and
 `candidates = family.stream(count)?.candidates()`. Use the quartet term only
-for the unfiltered D64/31/10 draws with `count >= 1024`; all other draws use
-the position term. The 16 bytes cover the versioned header; omit them for an
-unversioned quartet-only tape. Compute products, ceiling division and sums with
-checked arithmetic, rejecting configurations whose bound cannot be represented.
+for unfiltered D64/31/10 draws with `count >= 1024`, and the ternary term only
+for unfiltered D128/31/0 draws with `count >= 1024`; all remaining draws use the
+position term. Compute products, ceiling division and sums with checked
+arithmetic, rejecting configurations whose bound cannot be represented.
 
 An unfiltered stream has `candidates == count`. An operator-norm stream has a
 larger candidate pool: every in-range candidate examined consumes a position
@@ -584,23 +582,24 @@ actually consumed, and finishing rejects unused words.
 
 Fold drawing selects the advice route explicitly; ordinary `SparseChallengeStream::decode`
 never reads or consumes that session. Position advice is consumed serially, even
-in a parallel build. Every used position or quartet is authenticated against the
+in a parallel build. Every used position, quartet or ternary group is authenticated against the
 squeezed message; advice does not replace transcript randomness or norm checks.
 
-The versioned frame is the concatenation of:
+The tape is a sequence of little-endian `u64` words without a header or tags.
+Producers MUST append records in verifier draw order, then in candidate order
+within each draw. While a session is installed, each draw selects its record
+encoding and consumes words at the shared cursor. After successful verification,
+`finish_checked_hints` MUST succeed. It rejects unused words and clears the
+session. On verification failure, `abort_checked_hints` clears the session
+without authenticating the remaining advice.
 
-| Bytes | Meaning |
-| --- | --- |
-| 0..8 | ASCII `AKITAH02` |
-| 8..16 | Little-endian `u64` byte length of the quartet section |
-| Next indicated bytes | Quartet tape; length MUST be a multiple of 8 |
-| Remaining bytes | Position tape; length MUST be a multiple of 8 |
-
-An unversioned input remains a quartet-only tape. A versioned frame can have an
-empty quartet section or an empty position section. After successful verification,
-`finish_checked_hints` MUST succeed: it rejects unused words in either tape and
-clears the session. On verification failure, `abort_checked_hints` clears the
-session without authenticating the remaining advice.
+`record_checked_hints(verify)` runs native verification on the current thread.
+On success it returns the result and the advice tape. In draw order, it records
+quartet and ternary codes after each packed draw, or one position record per
+in-range candidate the serial decoder examines. The closure must run only
+verification because every fold draw on the thread is recorded. A verification
+error discards the tape. Recording requires that the thread has no active
+advice session.
 
 Quartet advice is selected for unfiltered D64 draws with 31 coefficients of
 magnitude 1, 10 of magnitude 2, and at least 1024 challenges. Each challenge
@@ -615,7 +614,19 @@ follow draw order, then candidate index. Validation checks
 the magnitude counts, exact combined position rank, and all 41 transcript sign
 bits. These draws consume no position records.
 
-Other draws in a versioned session use position advice. Let
+Ternary advice is selected for unfiltered D128/31/0 batches of
+at least 1024 challenges. Each challenge consumes four little-endian `u64`
+words. For group `g` in `0..22`, its ten-bit code is
+`sum over j in 0..6 of ((c[6*g+j] + 1) * 3^j)`, where coefficients beyond
+position 127 are zero. The code occupies bits starting at `10 * (g % 6)` in
+word `g / 6`. Every code MUST be below 729. The upper four bits of words 0–2,
+the upper 24 bits of word 3, and the last group's four padding coefficients
+MUST be zero. Authentication checks exactly 31 nonzero unit coefficients,
+their combined colex rank, and all 31 transcript sign bits against the unchanged
+129-bit candidate stream. These draws consume no position records. Scalar
+evaluation uses 22 tables of 729 entries, retaining any subring embedding stride.
+
+Other draws in a session use position advice. Let
 `a = count_pm1`, `b = count_pm2`, and `w = a + b`. Each in-range candidate
 examined by the serial decoder consumes `ceil(w / 4)` little-endian `u64` words:
 
@@ -625,7 +636,7 @@ examined by the serial decoder consumes `ceil(w / 4)` little-endian `u64` words:
   those positions, in `0..(d - a)`. They are mapped to actual positions only
   after checking their rank.
 - Unused lanes in the last word MUST be zero. Signs come from the squeezed
-  message rather than the position tape.
+  message.
 
 Records follow draw order, then candidate order. An out-of-range candidate
 consumes no record. An in-range candidate consumes a record **before** the
@@ -635,12 +646,11 @@ The producer MUST NOT append advice for candidates after that stopping point.
 The verifier checks ordering, range, remaining room and exact transcript ranks;
 a missing record, invalid padding or mismatched rank rejects the proof.
 
-Allocation-failure tests reject oversized and duplicate installs without any
-allocation attempt, reject malformed position framing before copying quartet
-data, and inject first/second tape allocation failures for aligned and unaligned
-input. Every failed installation allows a later valid session.
+Allocation tests reject oversized inputs, duplicate installs, and partial words
+before allocation. They inject tape allocation failure for aligned and unaligned
+input and check that a later valid install succeeds with one allocation.
 
-The mixed-frame round-trip tests exercise unfiltered and operator-norm draws,
+The mixed-tape round-trip tests exercise unfiltered and operator-norm draws,
 the quartet threshold, candidates rejected by both range and predicate checks,
 and complete consumption. Authentication tests independently change sign bits
 and reject invalid quartet codes.

@@ -5,6 +5,7 @@
 //! the family, and the group's position in the transcript fixes its index and
 //! counts, so the message continues the squeeze run before it.
 
+use crate::checked_hint::{Advice, AdviceEncoding};
 use crate::sampler::SparseChallengeShell;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig, SparseChallengeStream};
 use akita_error::AkitaError;
@@ -138,19 +139,48 @@ pub trait FoldDraw {
             AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
         })?;
         let stream = family.stream(total)?;
-        if stream.uses_checked_quartets() && crate::checked_hint::active() {
-            return self.draw_message(stream.message_len(), |message| {
-                Ok(Some(Challenges::from_checked_quartets(
-                    stream.decode_checked_hints(message)?,
-                    num_live_blocks,
-                    num_claims,
-                )?))
-            });
+        let advice = crate::checked_hint::mode();
+        let encoding = stream.advice_encoding();
+        match (advice, encoding) {
+            (Advice::Verify, AdviceEncoding::Quartets) => {
+                return self.draw_message(stream.message_len(), |message| {
+                    Ok(Some(Challenges::from_checked_quartets(
+                        stream.decode_checked_hints(message)?,
+                        num_live_blocks,
+                        num_claims,
+                    )?))
+                });
+            }
+            (Advice::Verify, AdviceEncoding::Ternary) => {
+                return self.draw_message(stream.message_len(), |message| {
+                    Ok(Some(Challenges::from_checked_ternary(
+                        stream.decode_ternary_hints(message)?,
+                        num_live_blocks,
+                        num_claims,
+                    )?))
+                });
+            }
+            _ => {}
         }
-        let position_hints = crate::checked_hint::positions_active();
+        // Only position draws consume or record advice while decoding.
+        let positions = if encoding == AdviceEncoding::Positions {
+            advice
+        } else {
+            Advice::Off
+        };
         let challenges = self.draw_message(stream.message_len(), |message| {
-            stream.decode_with(message, position_hints)
+            stream.decode_with(message, positions)
         })?;
+        if let (Advice::Record, Some(challenges)) = (advice, &challenges) {
+            for challenge in challenges {
+                let words = match encoding {
+                    AdviceEncoding::Quartets => crate::checked_hint::encode_quartets(challenge),
+                    AdviceEncoding::Ternary => crate::checked_hint::ternary::encode(challenge),
+                    AdviceEncoding::Positions => break,
+                }?;
+                crate::checked_hint::record(words.into_iter())?;
+            }
+        }
         challenges
             .map(|challenges| {
                 Challenges::from_sampled(

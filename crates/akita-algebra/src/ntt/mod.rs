@@ -11,6 +11,7 @@ pub(crate) mod field_limbs;
 pub mod ifma52;
 #[cfg(all(feature = "ntt-inline", any(target_arch = "riscv64", test)))]
 pub(crate) mod jolt;
+pub mod lane_dif;
 pub(crate) mod montgomery;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;

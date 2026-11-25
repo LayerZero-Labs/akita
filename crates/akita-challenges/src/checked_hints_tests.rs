@@ -35,7 +35,7 @@ fn message() -> Message {
 fn checked_hints_match_frozen_field_values_with_unaligned_ingress() {
     let mut hints = vec![0];
     hints.extend_from_slice(HINTS);
-    crate::install_checked_hints(&hints[1..], HINTS.len()).unwrap();
+    crate::install_checked_hints(&hints[1..], hints.len() - 1).unwrap();
     let sampled = message()
         .draw_fold_challenges(&family(), 1024, 1)
         .unwrap()
@@ -64,11 +64,11 @@ fn checked_hints_match_frozen_field_values_with_unaligned_ingress() {
 }
 #[test]
 fn checked_hints_reject_another_valid_challenge_at_the_wrong_transcript_slot() {
-    let mut hints = HINTS.to_vec();
-    let first = hints[..32].to_vec();
-    hints.copy_within(32..64, 0);
-    hints[32..64].copy_from_slice(&first);
-    crate::install_checked_hints(&hints, HINTS.len()).unwrap();
+    let mut tape = HINTS.to_vec();
+    let first = tape[..32].to_vec();
+    tape.copy_within(32..64, 0);
+    tape[32..64].copy_from_slice(&first);
+    crate::install_checked_hints(&tape, tape.len()).unwrap();
     assert!(message().draw_fold_challenges(&family(), 1024, 1).is_err());
     crate::abort_checked_hints().unwrap();
 }
@@ -81,16 +81,22 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
         crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
         assert!(draw().unwrap().is_some());
         crate::finish_checked_hints().unwrap();
-        assert!(!crate::checked_hint::active());
+        assert_eq!(
+            crate::checked_hint::mode(),
+            crate::checked_hint::Advice::Off
+        );
     }
 
     // A malformed draw must stay rejected; abort only releases its session.
-    let mut malformed = HINTS.to_vec();
-    malformed[..8].fill(0xff);
-    crate::install_checked_hints(&malformed, HINTS.len()).unwrap();
+    let mut tape = HINTS.to_vec();
+    tape[..8].fill(0xff);
+    crate::install_checked_hints(&tape, tape.len()).unwrap();
     assert!(draw().is_err());
     crate::abort_checked_hints().unwrap();
-    assert!(!crate::checked_hint::active());
+    assert_eq!(
+        crate::checked_hint::mode(),
+        crate::checked_hint::Advice::Off
+    );
 
     crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
     assert!(draw().unwrap().is_some());
@@ -103,7 +109,10 @@ fn checked_hint_sessions_reuse_the_same_thread_after_success_and_failure() {
 fn finishing_an_incomplete_hint_session_rejects_and_clears_it() {
     crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
     assert!(crate::finish_checked_hints().is_err());
-    assert!(!crate::checked_hint::active());
+    assert_eq!(
+        crate::checked_hint::mode(),
+        crate::checked_hint::Advice::Off
+    );
     crate::install_checked_hints(HINTS, HINTS.len()).unwrap();
     assert!(message()
         .draw_fold_challenges(&family(), 1024, 1)
