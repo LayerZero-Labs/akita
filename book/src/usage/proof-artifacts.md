@@ -35,7 +35,7 @@ a clear protocol owner.
 ```rust
 const SESSION: &[u8] = b"my-system/akita-opening/v1";
 
-let proof = scheme.batched_prove(&prover_setup, opening, &stacks, SESSION, basis)?;
+let proof = scheme.batched_prove(&prover_setup, opening, &backend, SESSION, basis)?;
 scheme.verifier(verifier_setup)?.batched_verify(
     &proof,
     SESSION,

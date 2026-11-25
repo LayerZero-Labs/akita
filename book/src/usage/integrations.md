@@ -46,8 +46,8 @@ For each host polynomial, record:
 4. The point where the host protocol opens it.
 5. The position of its claimed value in the host transcript.
 
-Use `DensePolynomial` for a general evaluation table. Use `OneHotPoly` when the
-host already has one selected value in each fixed size chunk. Keeping one hot
+Use `DensePoly` for a general evaluation table. Use `OneHotPoly` when the
+host already has at most one selected value in each fixed size chunk. Keeping one hot
 data structured avoids building a large dense table only to recover the same
 sparsity inside the prover.
 

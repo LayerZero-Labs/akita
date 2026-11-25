@@ -163,8 +163,9 @@ intentional streamed work.
 
 `Prepared NTT cache size` reports the retained shared matrix footprint at the
 prewarm boundary. Compression cache entries are built by their operations and
-are not included in that line. `CpuPreparedSetup::ntt_cache_bytes` reports the
-complete resident cache when an application needs that number.
+are not included in that line. On the verifier side,
+`AkitaVerifier::terminal_ntt_cache_bytes` reports the in-memory size of the
+prepared terminal matrices.
 
 Dense statement preparation appears in traces but is excluded from protocol
 phase comparisons. It includes deterministic evaluation generation and the

@@ -77,7 +77,7 @@ use akita_config::proof_optimized::fp128;
 use akita_params::ChunkedWitnessCfg;
 use akita_pcs::AkitaCommitmentScheme;
 
-let bytes = std::fs::read("parameters/fp128_onehot.aks")?;
+let bytes = std::fs::read("path/to/fp128_onehot.aks")?;
 let chunking = ChunkedWitnessCfg::default_non_chunked();
 let scheme = AkitaCommitmentScheme::<fp128::OneHot>::from_schedule_artifact(&bytes, chunking)?;
 ```

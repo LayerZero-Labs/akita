@@ -5,8 +5,8 @@ preceding fold's witness-opening claim and a binding to that witness's inner
 A images. The prover sends a small folded response and the verifier checks the
 remaining relations directly.
 
-The terminal reveals that response, the ring opening partials, and the inner
-images. It does not send the complete original application table. These are
+The terminal reveals that response and the ring opening partials. The
+predecessor already revealed the inner images. The proof does not send the complete original application table. These are
 still witness-derived values, so this path provides no zero-knowledge
 guarantee.
 
@@ -26,9 +26,11 @@ $$
 
 The predecessor binds the canonical coefficients of every $\mathbf t_b$
 but the last, and a digest of the last, before its ring-switch and sumcheck
-challenges. The terminal response must contain exactly those bytes. Thus the
-prover cannot choose a new collection of inner images after seeing the
-opening point handed to the terminal.
+challenges. The terminal step sends no second copy. The verifier carries the
+bound coefficients and the digest forward and uses them as the $\mathbf t_b$
+segment of the terminal response. Thus the prover cannot choose a new
+collection of inner images after seeing the opening point handed to the
+terminal.
 
 Let $Q_p$ be the position weights derived from that opening point, and
 $G_a^{\mathrm{in}}$ the inner digit recomposition weights. The honest
@@ -186,9 +188,10 @@ The verifier performs the terminal handoff in this order:
 
 1. Check that the scheduled terminal geometry matches the remaining witness
    and that there is no deferred setup-prefix opening.
-2. Absorb the incoming inner-image binding and check that the response's
-   $\mathbf t_b$ coefficients match it exactly. The last block's digest was
-   already absorbed by the predecessor.
+2. Take the inner images $\mathbf t_b$ from the carried state and check that
+   their length and encoding match the terminal layout. The predecessor
+   already absorbed these coefficients and the last block's digest, so the
+   terminal absorbs neither again.
 3. Prepare the incoming point and claim. Replay extension-opening reduction
    when required.
 4. Absorb every $E_b$ but the last and the digest of the last, consume the
@@ -222,8 +225,11 @@ proof replay. It uses the base prime profile when the signed accumulation
 bound fits and adds the signed 16 bit tail only when required. A schedule
 whose bound exceeds every supported exact profile is invalid.
 
-Prepared matrix views are derived from the coefficient setup and are never
-serialized. These execution choices compute the same relation (5).
+By default the verifier derives the prepared matrix view from the coefficient
+setup when it is constructed. A caller may instead install a view that trusted
+provisioning built earlier, as
+[Verification](../verification.md) describes.
+These execution choices compute the same relation (5).
 
 ## Recompute the last block
 
@@ -243,7 +249,7 @@ E_{m-1}
 =c_{m-1}^{-1}\Bigl(
 \mathbf A\mathbf z-\sum_{b<m-1}c_b\mathbf t_b
 \Bigr).
-\tag{10}
+\tag{9}
 $$
 
 Once (4) and (5) hold, the last block carries no further information, so the
@@ -260,14 +266,14 @@ challenges and $E_{m-1}$ before the $c_b$. The digests enforce this order:
 - The terminal prover sends every $E_b$ but the last, followed by a digest
   of the last, before the $c_b$ are sampled.
 
-The verifier computes the last block from (10), hashes its canonical
+The verifier computes the last block from (9), hashes its canonical
 coefficients, and compares the result with the digest it received earlier.
-The scalar opening check (7) or (8) then runs over all $E_b$, including the
+The scalar opening check (6) or (7) then runs over all $E_b$, including the
 recovered one.
 
 ### Why omitting the block is sound
 
-Computing (10) alone proves nothing, because it makes (4) and (5) true by
+Computing (9) alone proves nothing, because it makes (4) and (5) true by
 construction. The digest comparison carries the argument. It reduces
 soundness to that of the *full-response protocol*, which sends the last
 block as fields in place of each digest, in the classical random-oracle
@@ -296,7 +302,7 @@ $$
 \epsilon_{\text{digest}}
 \le
 \epsilon+\frac{\binom{Q}{2}+2Q}{2^{256}},
-\tag{11}
+\tag{10}
 $$
 
 where $\epsilon$ is the soundness error of the full-response protocol with
@@ -310,7 +316,7 @@ Three points keep the argument exact:
   digest precedes the terminal fold-response nonce and the $c_b$. The
   terminal does not absorb $\mathbf t_{m-1}$ again after recovering it,
   because the earlier digest already binds it in the same transcript.
-- Statement (11) compares the two interactive protocols. A digest absorbs
+- Statement (10) compares the two interactive protocols. A digest absorbs
   different bytes than a block does, so the Fiat-Shamir challenges differ
   from those of a full-response proof. Expanding a proof does not yield a
   full-response proof.
@@ -324,7 +330,7 @@ but each fork recovers its own block from its own challenges and response.
 Two such forks recover the same block unless $H$ collides among the queries
 made while the tree is built. Outside that event, the extractor for the
 full-response protocol applies unchanged. The digest therefore adds a
-collision term over all $H$ queries to the Fiat-Shamir bound. Bound (11) does
+collision term over all $H$ queries to the Fiat-Shamir bound. Bound (10) does
 not carry over as written. A prover that restores state can expose a fresh
 digest in every prefix it queries, so the hit term grows with the number of
 $H$ queries times the number of digests exposed, not with $2Q$. Both terms
@@ -341,7 +347,7 @@ $q>(kB^2)^{k/2}$. For $B=2$ this needs only $q>256$.
 The verifier does not trust its own division either. It inverts $c_{m-1}$
 by multiplying with the conjugate $c_{m-1}(-X)$, whose product with
 $c_{m-1}$ lies in a ring of half the degree, and repeats until one field
-inversion remains. It then multiplies each candidate from (10) back by the
+inversion remains. It then multiplies each candidate from (9) back by the
 sparse challenge and checks (4) and (5) as written. A wrong inverse can
 therefore only cause a rejection. A challenge with no inverse is rejected.
 Recovery adds the inversion and $1+n_A$ dense multiplications by
@@ -359,8 +365,9 @@ sparse support, NTT capability, and matrix ranges before the hot kernels index
 prepared state. Malformed terminal bytes return `AkitaError` or
 `SerializationError`.
 
-- `crates/akita-verifier/src/fold/terminal.rs` checks the predecessor
-  binding and replays the terminal transcript.
+- `crates/akita-verifier/src/fold/terminal.rs` takes the inner images that
+  the predecessor bound, checks their shape, and replays the terminal
+  transcript.
 - `crates/akita-verifier/src/terminal/direct.rs` checks the
   decoded response norm, ring relations, and opening trace.
 - `crates/akita-verifier/src/terminal/ntt.rs` evaluates the

@@ -755,7 +755,7 @@ build_evaluation_trace_weights
       `-- T(x) on the committed e_hat segment
                          |
                          v
-accumulate_fused_relation_linear
+accumulate_fused_relation_linear_signed
       |
       `-- Stage 2 proves v_tr = sum_x w(x) T(x)
 ```

@@ -17,7 +17,8 @@ contains current commands, environment variables, and measured trace notes.
 
 ## The complete path
 
-The integration has four small crates.
+The integration has four main crates. The workspace also holds two
+`inline-parity` crates, which this chapter does not use.
 
 | Crate | Runs where | Responsibility |
 | --- | --- | --- |
@@ -72,18 +73,35 @@ The guest depends on `akita-verifier` rather than the complete PCS package. It
 does not carry the polynomial backend, setup generator, or planner into the
 RISC-V program.
 
-## The current configuration
+## The current configurations
 
-The harness uses `proof_optimized::fp128::OneHot`. Its input is one structured
-one hot polynomial, and the guest is compiled with a source-view dimension of
-$D = 256$. This fixed type is the root envelope for the current adaptive
-configuration. The generated schedule still chooses the dimensions used at
-each later fold.
+The harness runs a fixed list of cases. A case fixes the field, the polynomial
+arity, the polynomial count, the setup mode, and the root envelope. The root
+envelope is the source-view dimension $D$ that the guest is compiled with. The
+generated schedule still chooses the dimensions used at each later fold.
 
-`AKITA_NUM_VARS` chooses the polynomial arity. The artifact generator resolves
-the approved row for that exact arity and rejects a row that does not match the
-guest's fixed source view. The default is 20 variables. The 32 variable target
-uses the same $D = 256$ source view and is the large recursion benchmark.
+| Case | Field | Variables | Setup mode | Root envelope |
+| --- | --- | --- | --- | --- |
+| `onehot_fp32:30:1` | fp32 with degree four extension claims | 30 | direct | $D = 2048$ |
+| `onehot_fp64:30:1` | fp64 with degree two extension claims | 30 | direct | $D = 512$ |
+| `onehot_fp128:36:1:direct` | fp128 | 36 | direct | $D = 512$ |
+| `onehot_fp128:36:1:recursive` | fp128 | 36 | recursive | $D = 512$ |
+| `onehot_fp128_multi_group_recursive:32:4:recursive` | fp128 | 32 | recursive | $D = 512$ |
+
+The first four cases each open one structured one hot polynomial. Their names
+use the case syntax of the profile harness,
+`MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE]`. The last case opens several
+commitment groups in one proof. It is the default when no case is selected.
+
+Select a case with the `--case` flag of the artifact generator, or with the
+`AKITA_RECURSION_CASE` environment variable. A case does not accept separate
+overrides for its field, arity, or setup mode. `AKITA_NUM_VARS` applies only to
+the default grouped case, and that case accepts only 32.
+
+The verifier bundle stores the case identity. The guest declares one Jolt
+entrypoint for each case, and the host dispatches to the entrypoint that
+matches the bundle. A bundle cannot be replayed through the entrypoint of a
+different case.
 
 The recursion workspace is separate from the main Cargo workspace. It pins
 Rust 1.99.1, the RISC-V targets, and one exact Jolt revision. This keeps Jolt's
@@ -97,20 +115,26 @@ Then run these commands from `profile/akita-recursion/`:
 ```bash
 cargo build --release
 
-AKITA_NUM_VARS=20 \
-    ./target/release/akita-recursion-artifact
+AKITA_RECURSION_BLOB=target/onehot_fp128_nv36_recursive.bin \
+    ./target/release/akita-recursion-artifact \
+    --case onehot_fp128:36:1:recursive
 
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     AKITA_RECURSION_LOG=info \
     ./target/release/akita-recursion-host \
     --trace-only \
-    --trace-output /dev/null
+    --trace-output /dev/null \
+    --input target/onehot_fp128_nv36_recursive.bin
 ```
+
+`AKITA_RECURSION_BLOB` names the file that the artifact generator writes. The
+host reads the same file through `--input`. Both default to
+`target/akita_recursion_inputs.bin`.
 
 The artifact command proves and verifies natively before publishing the input
 blob. The trace command compiles and executes the guest without running the
 full Jolt prover. It is the fastest way to confirm that a new Akita revision or
-larger arity fits the guest.
+a new case fits the guest.
 
 The guest reports three cycle regions:
 
@@ -126,11 +150,13 @@ attributing it to the Akita verifier.
 
 ## Run the full recursive proof
 
-Begin with the 20 variable target, whose trace fits the guest's current
-$2^{32}$ instruction limit:
+The full pipeline runs only when the guest trace fits Jolt's current limit of
+$2^{32}$ instructions. Measure the selected case with `--trace-only` first.
+When the trace length is under the limit, run the same case without
+`--trace-only`:
 
 ```bash
-AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
+./target/release/akita-recursion-artifact --case onehot_fp64:30:1
 
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     AKITA_RECURSION_LOG=info \
@@ -142,10 +168,8 @@ The full command performs Jolt preprocessing, proves the guest execution, and
 verifies the resulting Jolt proof. Success ends with
 `Akita-in-Jolt proof OK`, `is_valid=true`, and `guest_panic=false`.
 
-The 32 variable target is intended for a server with enough memory for its
-large input and trace. Measure it with `--trace-only` first. The current
-follow-up is to record its adaptive trace length and raise Jolt's trace limit
-if that measured execution exceeds $2^{32}$ instructions.
+The larger cases are intended for a server with enough memory for their input
+and trace.
 
 ## Rejection is part of the proved execution
 
@@ -181,15 +205,15 @@ only for the ELF it builds through the pinned Jolt SDK.
 
 ## Keep the integration current
 
-The smoke workflow compiles and tests the glue, artifact, and host against the
-current Akita APIs. It does not run the expensive Jolt trace or proof. After an
+The smoke workflow tests the glue and compiles the artifact and host against
+the current Akita APIs. It does not run the expensive Jolt trace or proof. After an
 Akita or Jolt upgrade:
 
 1. Run the recursion workspace tests and release build.
 2. Generate a fresh artifact and confirm native verification.
 3. Run `--trace-only` and compare the three cycle markers.
-4. Run the full Jolt proof at a known arity.
-5. Measure the intended production arity on its deployment class machine.
+4. Run the full Jolt proof for a case whose trace fits the limit.
+5. Measure the intended production case on its deployment class machine.
 
 Pin the complete integration to one Akita revision. Regenerate the verifier
 bundle after every protocol upgrade because setup, schedule identity, proof

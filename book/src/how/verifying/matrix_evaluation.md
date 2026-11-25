@@ -77,12 +77,12 @@ compression digits, alignment ranges, and optional compression quotient rows
 
 For a group with `B_g` exact live blocks and `C` chunks, chunk `c` owns
 
-```math
+$$
 \left[
 \left\lfloor\frac{cB_g}{C}\right\rfloor,
 \left\lfloor\frac{(c+1)B_g}{C}\right\rfloor
 \right).
-```
+$$
 
 The ranges cover the exact live prefix. They are not padded to equal length.
 If there are more chunks than blocks, some ranges are empty.
@@ -117,12 +117,12 @@ subtract, and double fast paths where applicable.
 Let `tau1` select a row and let `x` select a flat witness coefficient. The
 verifier needs the multilinear extension
 
-```math
+$$
 \widetilde M(\tau_1,x)
 =
 \sum_{i,j}
 eq(\tau_1,i)eq(x,j)M_{i,j}.
-```
+$$
 
 The ring switch challenge `alpha` evaluates each native ring row. The schedule
 selects one of two coefficient functionals. Quotient lifting factors the common
@@ -132,7 +132,7 @@ residue kernel, which already includes those coefficient coordinates.
 
 In quotient-lift mode, the final result has three ordinary parts:
 
-```math
+$$
 \widetilde M
 =
 \widetilde M_{\mathrm{structured}}
@@ -140,7 +140,7 @@ In quotient-lift mode, the final result has three ordinary parts:
 \widetilde M_{\mathrm{setup}}
 +
 \widetilde M_{\mathrm{quotient}}.
-```
+$$
 
 The compressed F and H contribution is prepared separately and added by the
 Stage 2 verifier. This keeps the ordinary A, B, and D setup geometry unchanged.
@@ -148,13 +148,13 @@ Stage 2 verifier. This keeps the ordinary A, B, and D setup geometry unchanged.
 In reduced-evaluation mode there is no quotient term and no outer common-alpha
 factor:
 
-```math
+$$
 \widetilde M
 =
 \widetilde M_{\mathrm{structured,reduced}}
 +
 \widetilde M_{\mathrm{setup,reduced}}.
-```
+$$
 
 The separately prepared compressed F/H contribution uses the same reduced
 functional and is added once.
@@ -272,9 +272,10 @@ group offsets follow checked relation-group prefix sums.
 `SetupProjectionGeometry` owns mixed-ring projection, so verifier evaluation
 does not maintain a parallel setup-column layout.
 
-The active
+The implemented
 [`role-native-projected-digit-layout`](https://github.com/LayerZero-Labs/akita/blob/main/specs/role-native-projected-digit-layout.md)
-spec defines the E and T verifier cutover. Its target physical order is:
+spec records the E and T layout that the verifier evaluates. The physical
+order is:
 
 ```text
 [semantic value][role subcolumn][role digit][native coefficient]

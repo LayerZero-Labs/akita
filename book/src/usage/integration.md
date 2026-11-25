@@ -21,9 +21,9 @@ A complete host follows this order:
 5. Commit to each polynomial group and retain its private hint.
 6. Assemble the ordered opening claims for one proof.
 7. Let the catalog select the exact trusted row for that batch.
-8. Produce and encode the proof.
+8. Produce the proof. It is already the canonical byte string.
 9. Send the catalog identity, public statement, proof, and verifier setup.
-10. Restore the same approved catalog, decode under its expected shape, and verify.
+10. Restore the same approved catalog and verify the proof bytes.
 
 The [first proof](./quickstart.md) runs this lifecycle with one polynomial. The
 chapters below explain how to turn that example into an application boundary.

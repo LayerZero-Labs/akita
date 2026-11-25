@@ -19,7 +19,8 @@ Akita proof verified
 
 The complete source is
 [`crates/akita-pcs/examples/quickstart.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-pcs/examples/quickstart.rs).
-The normal Cargo checks compile this example with the public API. The chapter
+The normal Cargo checks compile this example. Apart from one workspace helper
+that loads the schedule artifact, it uses only the public API. The chapter
 therefore stays tied to code that works.
 
 ## The statement being proved
@@ -33,6 +34,14 @@ multilinear polynomial there. This value is the public claim. In a larger proof
 system, the host protocol usually produces the table, point, and claimed value.
 
 ```rust
+use akita_config::proof_optimized::fp128;
+use akita_cpu_backend::{CpuBackend, DensePoly, GroupContext};
+use akita_params::BasisMode;
+use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::SelectedProverOpeningData;
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use std::sync::Arc;
+
 type Config = fp128::Dense;
 type F = fp128::Field;
 
@@ -40,6 +49,27 @@ const NUM_VARS: usize = 14;
 
 let polynomial = DensePoly::from_field_evals(NUM_VARS, &evaluations)?;
 let evaluation = evaluate_multilinear(&evaluations, &point);
+```
+
+These are the main imports for the snippets in this chapter. The later
+snippets do not repeat them, and they write a few other items with their full
+path. The checked-in example imports `load_workspace_scheme` from its own
+support module instead of `AkitaCommitmentScheme`. It also imports
+`jolt_field::CanonicalEncoding`, which `akita_pcs` re-exports, to build field
+elements from integers.
+
+An application outside the workspace declares the crates behind these imports
+as dependencies. Pin every crate to the same Akita revision:
+
+```toml
+[dependencies]
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-cpu-backend = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
+akita-verifier = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
 ```
 
 The helper that computes `evaluation` is independent of the Akita prover. It
@@ -52,15 +82,30 @@ application loads approved artifact bytes from its own storage; Akita validates
 them before setup or proof work begins. `setup_prover` then sizes public matrix
 data from the exact rows in that catalog.
 
+The example runs inside the Akita workspace, so it uses a small helper that
+loads the artifact checked in at `artifacts/schedules/fp128_dense.aks`:
+
 ```rust
-let artifact_bytes = std::fs::read("parameters/fp128_dense.aks")?;
+let scheme =
+    load_workspace_scheme::<Config>(akita_params::ChunkedWitnessCfg::default_non_chunked())?;
+let setup = scheme.setup_prover(NUM_VARS, 1)?;
+let backend = Arc::new(CpuBackend::new(setup.expanded.clone())?);
+```
+
+`load_workspace_scheme` is workspace tooling. It is not part of the public API.
+An application outside the workspace reads the same artifact bytes from its own
+storage and calls the public constructor. Replace the path with the location
+where your application keeps its copy of the artifact:
+
+```rust
+let artifact_bytes = std::fs::read("path/to/fp128_dense.aks")?;
 let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
     &artifact_bytes,
     akita_params::ChunkedWitnessCfg::default_non_chunked(),
 )?;
-let setup = scheme.setup_prover(NUM_VARS, 1)?;
-let backend = std::sync::Arc::new(CpuBackend::new(setup.expanded.clone())?);
 ```
+
+Both forms validate the artifact and produce the same scheme.
 
 The prepared backend holds reproducible compute state such as transformed
 matrix prefixes. Applications should reuse it across commitments and proofs.
@@ -135,7 +180,10 @@ let proof = scheme.batched_prove(
 
 `BasisMode::Lagrange` means that the committed table contains values on the
 Boolean cube. This is the standard representation for multilinear extensions
-in proof systems.
+in proof systems. `BasisMode::Monomial` is for a table that holds the
+coefficients of the multilinear monomials instead. The commitment does not
+depend on the mode. The mode changes only the weights that the opening proof
+uses.
 
 ## Transport the proof
 

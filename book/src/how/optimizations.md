@@ -334,9 +334,9 @@ memory, and proof completion does not clear the shared cache. The
 [setup runtime guide](../usage/setup-runtime.md#reuse-and-release-cpu-caches)
 describes this application choice.
 
-`CpuPreparedSetup::shared_ntt_cache_bytes` and
-`compression_ntt_cache_bytes` report each namespace. `ntt_cache_bytes` returns
-their checked sum. Planned requirement metrics describe only shared matrix
+Inside `akita-cpu-backend`, `CpuPreparedSetup` counts the bytes of each
+namespace separately. These counters are internal to the crate and are not
+part of the public API. Planned requirement metrics describe only shared matrix
 work because compression entries are created by compression operations.
 
 ## Ring relation and quotient streaming

@@ -13,12 +13,14 @@ orchestration lives in `akita-pcs`.
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges |
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
+| `jolt-transcript` (external) | Spongefish prover and verifier states, sponge selection, and grinding, used by `akita-transcript` |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
-| `akita-transcript` | Spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks |
+| `akita-transcript` | Fiat-Shamir transcript over `jolt-transcript` (Spongefish), descriptor preamble, logging checks |
 | `akita-challenges` | Fiat-Shamir challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
 | `akita-params` | Parameter geometry, sizing, SIS tables, schedules, compression plans, witness layout, dispatch, and grinding plans |
+| `akita-sis-estimator` | Offline lattice estimator that regenerates the SIS tables; only the offline planner depends on it, behind an optional feature |
 | `akita-types` | Proof, setup, and claim wire values, shared protocol math, and native transcript replay |
 | `akita-planner` | `Cfg`-free offline schedule search and artifact emission |
 | `akita-schedules` | Versioned schedule artifacts, semantic row audit, and validated owned catalogs |
@@ -43,19 +45,20 @@ Key structural facts:
   search is `Cfg`-free and is not on the verifier runtime dependency path. The
   optional `catalog-gen` feature enables `akita-config`, so artifact-emission
   binaries may name concrete `CommitmentConfig` presets.
-- `akita-verifier` depends on `akita-config`, `akita-schedules`, and
-  `akita-params`. It receives a validated trusted catalog and never reaches
-  planner search.
-- Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
+- `akita-verifier` depends on `akita-config` and `akita-params`. It receives a
+  validated trusted catalog through `akita-config` and never reaches planner
+  search.
+- Verifier-only integrations should use `akita-verifier` + `akita-types` +
+  `akita-config` + `akita-params`, not the umbrella `akita-pcs` package.
 
 ## End-to-end lifecycle
 
 1. **Preset and trusted catalog selection.** The caller picks a `CommitmentConfig` preset and loads the matching schedule artifact from the same trusted parameter source used for setup or preprocessing. The caller constructs one `AkitaCommitmentScheme<Cfg>` with that catalog. The catalog contains complete expanded rows. Planner search remains offline. Each row selects `SubringCoefficientPacking` or `EvaluationTrace` for every nonterminal fold. EOR is present only for an evaluation trace opening over a proper extension field. See [Fold path and field geometry](./proving/fold-path.md).
-2. **Setup.** `akita-setup` scans the rows in the scheme's trusted catalog and expands the setup (Ajtai matrices and stride envelopes) to cover the requested capacity.
+2. **Setup.** `akita-setup` scans the rows in the scheme's trusted catalog and expands the setup to cover the requested capacity. The expanded setup holds one shared matrix. The Ajtai matrices for roles A, B, and D are prefix views of that matrix.
 3. **Commit.** The application consumes its polynomials into a reusable `CpuBackend` and commits the imported source using `GroupContext`. The result contains a public commitment and an opaque handle retaining the exact source and commitment parameters. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does. Explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
 5. **Prove.** `batched_prove` receives retained commitment handles and public claims. The backend checks that each claim matches its commitment before preparing a fresh proof session. The generic prover walks the schedule, absorbs backend messages, samples challenges, and assembles the proof. Source coefficients and witness arithmetic remain inside the backend.
-6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
+6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier both build the canonical instance descriptor with `transcript_instance_descriptor` and absorb it with `bind_instance` before any challenge, so Fiat-Shamir challenges match.
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/prove/root.rs`, `crates/akita-verifier/src/fold/verify.rs`.
 
@@ -85,9 +88,13 @@ generic prover has no production dependency on that crate. Source import and
 persistence are application/backend operations. Setup prefixes enter generic
 proving as ordinary reusable commitment handles with checked public metadata.
 
-A shared `ConsumerIdentity` binds all fold levels to the same setup. A
-`ProofContext` identifies an active proof, fold level, and source group before
-private preparation starts. Witness assembly checks those identities before
+A `BackendInstanceIdentity` names one backend instance. It includes the
+implementation type, so identities from different backends never compare
+equal. A `ProofContext` carries the backend identifier, the setup digest, the
+proof scope, the fold level, and, when the step targets one group, the source
+group. It identifies an active
+proof step before private preparation starts, and it binds every fold level to
+the same setup. Witness assembly checks those identities before
 consuming its inputs, and checks that each accepted fold carries its original
 public challenges. EOR openings also bind to the exact witness operation that
 produced them. Finishing or abandoning a proof invalidates its retained scope

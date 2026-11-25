@@ -36,7 +36,7 @@ The next choice is the representation of the table.
 | Representation | Use it when | Main benefit |
 | --- | --- | --- |
 | `Dense` | Entries may be arbitrary field elements | General purpose commitment path |
-| `OneHot` | Each fixed size chunk contains one selected position | Preserves the compact source and skips work for zero entries |
+| `OneHot` | Each fixed size chunk contains at most one selected position (an all-zero chunk is allowed) | Preserves the compact source and skips work for zero entries |
 | `DenseBounded` | Every centered coefficient fits the declared signed bound | Uses fewer commitment digits than full width dense data |
 
 The direct fp128 types are `fp128::Dense` and `fp128::OneHot`.
@@ -92,26 +92,72 @@ earlier groups while selecting the recursive adapter for the complete opening.
 
 ## Partition large prover work
 
-The fp128 configuration module also provides multi chunk companions for
-selected production workloads. These configurations divide the witness
-relation into exact chunks during the first folds. They let the prover spread
-large work across a controlled partition without changing the public claim.
+A deployment can divide the witness relation into exact chunks during the
+first folds. Chunking lets the prover spread large work across a controlled
+partition without changing the public claim.
 
-The profile name `W8R2` means eight chunks in the first two folds (levels 0 and
-1), followed by single-chunk folds. R3 extends that prefix to three folds
-(levels 0, 1, and 2). The fp128 presets `OneHotMultiChunkW2R3`,
-`OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3` offer two, four, and eight
-chunks; `DenseMultiChunkW8R3` offers eight chunks for dense sources.
-`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW2R3>`,
-`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW4R3>`, and
-`RecursiveCommitmentConfig<fp128::OneHotMultiChunkW8R3>` combine each chunk
-width with recursive setup offloading. Each preset uses its own trusted schedule catalog;
-`OneHotMultiChunk` and `DenseMultiChunk` continue to use W8R2.
+Chunking is a runtime argument. It is not fixed by the configuration type. The
+caller passes a `ChunkedWitnessCfg` when it loads the schedule artifact:
 
-Multi chunk configurations are deployment choices for measured large
-workloads. Begin with `Dense` or `OneHot`. Move to a multi chunk companion after
+```rust
+let chunking = akita_params::ChunkedWitnessCfg {
+    num_chunks: 2,
+    num_activated_levels: 3,
+};
+let scheme = AkitaCommitmentScheme::<Config>::from_schedule_artifact(
+    &artifact_bytes,
+    chunking,
+)?;
+```
+
+`num_chunks` is the number of chunks. It must be a power of two. The value 1
+means no chunking. `num_activated_levels` is the number of leading folds that
+use the chunked layout. Later folds use a single chunk.
+`ChunkedWitnessCfg::default_non_chunked()` gives the single chunk case.
+
+The two fields must agree. One chunk requires `num_activated_levels = 0`. More
+than one chunk requires at least one activated level. Any other combination
+is rejected.
+
+Admission checks that the artifact was generated for the same chunking value.
+A mismatch is rejected before setup or proof work begins.
+
+The name `W8R2` is shorthand for one chunking value: eight chunks in the first
+two folds (levels 0 and 1). `R3` extends the chunked prefix to three folds
+(levels 0, 1, and 2). `akita_params::MultiChunkProfileId` provides these values,
+for example `MultiChunkProfileId::W2R3.cfg()`.
+
+The fp128 module also keeps configuration types that name the packaged
+artifacts. Each type identifies one checked-in artifact. Every artifact records the
+family name of its configuration type, and admission checks that name. An
+application that loads a packaged multi chunk artifact must therefore use the
+matching type. An application that keeps a base type such as `OneHot` needs an
+artifact that was generated for that base family with the chosen chunking
+value.
+
+| Configuration type | Chunks | Chunked folds | Source |
+| --- | --- | --- | --- |
+| `OneHotMultiChunk` | 8 | 2 | one hot |
+| `OneHotMultiChunkW2R2` | 2 | 2 | one hot |
+| `OneHotMultiChunkW4R2` | 4 | 2 | one hot |
+| `OneHotMultiChunkW2R3` | 2 | 3 | one hot |
+| `OneHotMultiChunkW4R3` | 4 | 3 | one hot |
+| `OneHotMultiChunkW8R3` | 8 | 3 | one hot |
+| `DenseMultiChunk` | 8 | 2 | dense |
+| `DenseMultiChunkW8R3` | 8 | 3 | dense |
+
+`RecursiveCommitmentConfig<Cfg>` combines chunking with recursive setup
+offloading. It accepts `OneHotMultiChunk`, `OneHotMultiChunkW2R3`,
+`OneHotMultiChunkW4R3`, and `OneHotMultiChunkW8R3`. The `W2R2` and `W4R2` types
+have no recursive companion. Each combination uses its own trusted schedule
+catalog.
+
+Chunking is a deployment choice for measured large workloads. Begin with
+`Dense` or `OneHot` and a single chunk. Move to a chunked catalog after
 profiling the complete host application and confirming that its trusted
 external catalog contains the required row.
+[Runtime witness chunking](../how/configuration.md#runtime-witness-chunking)
+gives the details.
 
 ## Let the trusted catalog choose dimensions
 
@@ -137,7 +183,7 @@ Use these starting points:
 | Application data | Starting configuration |
 | --- | --- |
 | Arbitrary values in the fp128 field | `fp128::Dense` |
-| One selected entry in each fixed size chunk | `fp128::OneHot` |
+| At most one selected entry in each fixed size chunk | `fp128::OneHot` |
 | Values known to fit the full `u64` range | `fp128::DenseBounded` |
 | A host using a small prime field | The matching `fp32` or `fp64` family |
 | A verifier that must avoid a large direct setup scan | A supported `RecursiveCommitmentConfig<Cfg>` |

@@ -17,9 +17,9 @@ proof boundary, and reviewers who want to connect each protocol claim to the
 code that enforces it.
 
 The same `batched_prove` and `batched_verify` APIs always use a folded schedule.
-Every schedule contains a root fold and a terminal cleartext witness, with zero
-or more recursive folds between them. The root may connect directly to the
-terminal witness when no recursive fold is needed. Schedule selection rejects
+Every schedule contains a root fold and a terminal step, with zero or more
+recursive folds between them. The root may connect directly to the terminal
+step when no recursive fold is needed. Schedule selection rejects
 a request when the audited fold domain contains no valid complete schedule.
 
 ## The complete proof in one view
@@ -43,10 +43,12 @@ An Akita opening moves through the following stages.
    witness produced by its predecessor and repeats the same reduction. A fold
    may also authenticate a prepared setup prefix when setup offloading was
    selected.
-6. **Check the terminal witness.** The final witness is sent in clear encoded
-   form. The verifier checks its consistency, commitment relation, evaluation
-   trace, and any scheduled norm bound directly. There is no further recursive
-   commitment and no terminal sum-check cascade.
+6. **Check the terminal response.** The prover folds one last time and sends
+   the short folded response and its opening values in the clear. The
+   verifier checks their consistency, commitment relation, evaluation trace,
+   and any scheduled norm bound directly. There is no further recursive
+   commitment and no Stage 1 or Stage 2 sum-check.
+   [Terminal verification](./verifying/terminal.md) gives the details.
 
 The verifier performs the same steps in the same transcript order. It does not
 trust the proof to choose a schedule or describe its own lengths. Public
@@ -68,7 +70,7 @@ polynomial groups + opening claims
           zero or more recursive folds
                  |
                  v
-      clear terminal witness check
+      clear terminal response check
                  |
                  v
               accept
