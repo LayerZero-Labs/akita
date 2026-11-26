@@ -1,10 +1,16 @@
 # The distributed relation verifier
 
 This chapter explains what one verifier does differently when the prover
-splits the witness into several chunks. Read it after
-[Matrix evaluation at a point](./matrix_evaluation.md), which defines the row
-families, the witness order, and the compact evaluator. This chapter adds only
-the chunk axis.
+splits the witness into several chunks. Read these pages first:
+
+- [Matrix evaluation at a point](./matrix_evaluation.md) defines the row
+  families, the witness order, and the compact evaluator.
+- [Subring-coefficient-packing consistency](../proving/akita-fold.md#subring-coefficient-packing-consistency)
+  defines the packed consistency relation, which every chunked fold uses.
+- [Method-dependent structured terms](./stage2.md#method-dependent-structured-terms)
+  says how the verifier evaluates that relation.
+
+This chapter collects what depends on the chunk axis in those pages.
 
 > **A note on the name.** "Distributed verifier" would be a misnomer: nothing
 > about the verification is distributed. There is a *single* verifier, running on
@@ -18,24 +24,29 @@ the chunk axis.
 
 A fold with $C$ witness chunks proves the same relation rows as a fold with
 one chunk. [Multiple witness chunks](../proving/advanced-relation-layouts.md#multiple-witness-chunks)
-derives this. The verifier still needs one value,
+derives this. The verifier still evaluates the relation matrix at one point,
 
 $$
 \widetilde M(\tau_1,x)
 =
-\sum_{i,c}\operatorname{eq}(\tau_1,i)\operatorname{eq}(x,c)M_{i,c},
+\sum_{i,k}\operatorname{eq}(\tau_1,i)\operatorname{eq}(x,k)M_{i,k},
 $$
 
-where $i$ is a relation row and $c$ is a flat witness coefficient.
+where $i$ is a relation row and $k$ is a flat witness coefficient.
 
 | Axis | Effect of chunking |
 |---|---|
 | Rows $i$ | None. No row family is duplicated, and the public right-hand side is unchanged. |
 | Row weights $\operatorname{eq}(\tau_1,i)$ | None. Each row weight is applied once to the sum over all chunks. |
-| Columns $c$ | The ordinary witness body is laid out once per chunk. |
+| Columns $k$ | The ordinary witness body is laid out once per chunk. |
 
 So every term of $\widetilde M$ keeps its row factor, and its column factor
 becomes a sum over chunk units.
+
+In a chunked fold the relation value has two parts. The relation-matrix
+evaluator computes the commitment rows and the quotient rows. The packing
+terms cover the fold-evaluation consistency row. [Which modes a chunked fold
+uses](#which-modes-a-chunked-fold-uses) explains this split.
 
 ## Two kinds of segment
 
@@ -56,8 +67,9 @@ partial responses of different chunks before it writes the next witness.
 
 ## The chunked witness layout
 
-`WitnessLayout` is the only owner of the witness coefficient ranges. For a
-multi-chunk fold it produces:
+The canonical walk of
+[Matrix evaluation at a point](./matrix_evaluation.md#canonical-walk) has this
+form for a multi-chunk fold:
 
 ```text
 chunk 0:  group in relation order: [Z | E | T]   then alignment gap
@@ -70,8 +82,10 @@ compression digits, alignment ranges, and compression quotient rows
 The chunk index is the outer key, and the commitment group is the inner key.
 One `[Z | E | T]` unit exists for every chunk and group pair. After each chunk
 of a multi-chunk fold, the layout pads the body to a multiple of the next
-fold's source-block coefficient width. These alignment gaps are committed
-coordinates with no relation equation. The quotient rows and the compression
+fold's source-block coefficient width. Each chunk body then ends on a block
+boundary of the next fold, so no source block of the next fold belongs to two
+chunks. These alignment gaps are committed coordinates with no relation
+equation. The quotient rows and the compression
 suffix appear once, after all chunks. They are not replicated.
 
 Every unit records its exact global block range. Inside a unit, the block
@@ -99,7 +113,8 @@ only `B_j` and the unit's start address depend on the chunk.
 The verifier does not derive chunk ranges from the chunk count alone. It reads
 them from the schedule through `WitnessLayout`.
 
-- A root source or a frozen commitment group uses the proportional partition.
+- Every source group except an inherited recursive witness uses the
+  proportional partition. This covers root sources and precommitted groups.
   Chunk $j$ of $C$ owns
   $[\lfloor jB/C\rfloor,\lfloor (j+1)B/C\rfloor)$ for $B$ live blocks.
 - A recursive witness inherits its ranges. Each chunk body that the previous
@@ -134,6 +149,12 @@ chunked witness. Both setup contribution modes remain available.
 
 ## Term by term
 
+A setup term pairs setup columns with witness addresses. An **address tensor**
+is a compact description of such a set of pairs: one start column, one start
+address, and a list of axes. Each axis has a length, a stride on the setup
+side, and a stride on the witness side. The verifier contracts an address
+tensor against the equality point without listing the pairs.
+
 The table lists each part of the relation value for a chunked fold.
 
 | Term | Rows | What the chunk axis adds |
@@ -141,14 +162,14 @@ The table lists each part of the relation value for a chunked fold.
 | Setup `D * E` | D | One address tensor per nonempty unit and claim. The setup column of a block follows its global block index, so every setup column maps to one witness address. |
 | Setup `B * T` | B | The same, with the `a_row` axis. |
 | Setup `A * Z` | A | One address tensor per unit, including empty units. All of them start at setup column zero. |
-| Structured `E` and `T` challenge terms | A, and consistency for evaluation trace | A sum over the nonempty units; each unit uses the challenges of its own global blocks. |
+| Structured `T` challenge term | A | A sum over the nonempty units; each unit uses the challenges of its own global blocks. |
 | Packing terms | consistency | Evaluated from the compact packing factors over the same units. |
 | Quotient rows and compression | all | Nothing. They are shared once. |
 
 The `A * Z` row is the one place where replication is visible. All $C$
 replicated `Z` segments are read by the same columns of the same matrix
 $\mathbf A$. The verifier prepares one `Z` column-weight vector per group. The
-address tensors of all units add into it, so the weight of setup column $c$ is
+address tensors of all units add into it, so the weight of one setup column is
 the sum of the equality weights of the $C$ witness addresses that the column
 reads. The setup scan then visits each $\mathbf A$ coefficient once, exactly as
 in a single-chunk fold.
@@ -172,8 +193,8 @@ bind the sum of the partial responses, while the range check bounds each
 partial response separately. The A-role collision target is therefore
 multiplied by $C$, and the schedule must select an A-role SIS row that covers
 it. [Security](../security.md) gives the formula. A chunked schedule can
-therefore need a larger A-role cell than a single-chunk schedule. The chunk
-count is a schedule parameter for this reason.
+therefore need a stronger A-role SIS row than a single-chunk schedule. The
+chunk count is a schedule parameter for this reason.
 
 The verifier never materializes a dense witness-sized weight table for these
 terms. Address tensors describe repeated affine address axes, and the
@@ -222,7 +243,3 @@ not change that interface.
   packing terms.
 - `crates/akita-algebra/src/offset_eq/tensor_pair/` owns the paired equality
   contraction and its dense test oracle.
-
-`crates/akita-verifier/src/relation/evaluation_trace.rs` can also build
-per-chunk trace descriptors. No admitted schedule reaches that path with more
-than one chunk.

@@ -321,7 +321,7 @@ both the mathematical layout and the physical recursive-witness layout; the
 row geometry records the native dimension and the number of coordinate planes.
 
 The coefficient-packing consistency row is the one nonstandard geometry. It is
-an equation over `E[Y]/(Y^s + 1)`, represented as `k` base-field coordinate
+an equation over `E[U]/(U^s + 1)`, represented as `k` base-field coordinate
 planes of length `s`. Its quotient therefore has `k s` physical coordinates.
 It is not reinterpreted as one ring of dimension `k s`. Its modulus evaluates
 to `alpha^s + 1`, as in the packing identity in Equation (2).

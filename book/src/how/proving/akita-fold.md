@@ -15,9 +15,11 @@ $$
 The opening-consistency relation has two method-dependent geometries:
 
 - `EvaluationTrace` keeps a full ring partial and proves the relation in $R$.
-- `SubringCoefficientPacking` keeps $s$ extension-field coefficients, proves
-  the corresponding relation in the challenge subring, and embeds the same
-  sparse challenge into $R$ for the source fold.
+- `SubringCoefficientPacking` keeps $s$ extension-field coefficients and
+  proves the corresponding relation in the extension opening ring
+  $E[U]/(U^s+1)$. It samples the sparse fold challenge from the challenge
+  subring $F[U]/(U^s+1)$ and embeds the same challenge into $R$ for the source
+  fold.
 
 The other three semantic roles—inner-commitment, outer-commitment, and
 opening-commitment consistency—are unchanged by that choice.

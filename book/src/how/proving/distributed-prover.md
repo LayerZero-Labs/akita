@@ -215,9 +215,11 @@ distributed round and merges them into one owner.
 
 ## The next-round witness and the relation change
 
-After the distributed rounds, each machine $P_j$ holds its own
-$(\widehat{\mathbf t}^{(j)},\,\widehat{\mathbf e}^{(j)},\,\mathbf z_j,\,\mathbf r_j)$
-and can proceed to the next round on its own. Supporting this requires changing the
+After the fold of a distributed round, each machine $P_j$ holds its own
+$(\widehat{\mathbf t}^{(j)},\,\widehat{\mathbf e}^{(j)},\,\mathbf z_j)$
+and can proceed to the next round on its own. The quotient is not part of this
+local data: the witness holds one shared quotient range, as the ring-switch
+section below explains. Supporting this requires changing the
 witness format and the relation matrix $\mathbf M$ so the relation is stated over the
 *concatenation* of the per-machine witnesses rather than over one global folded
 response. The rest of this chapter makes that change precise.
@@ -299,6 +301,20 @@ right-hand side obtained by summing the partial commitments.
 
 ## Ring-switch lift and next-level commitment
 
+The displays in this section and the next one show the lift for rows over one
+ring $R_q$ with one modulus $X^d+1$. The complete relation has more row kinds,
+and each is lifted in its own ring. The packed consistency row is lifted in
+$E[U]$ with modulus $U^s+1$; its quotient is the
+[packing quotient](./root-fold-ring-switch.md#the-packing-consistency-quotient)
+$Q_{\mathrm{pack}}$. A compressed payload adds the F and H rows with their own
+quotients, and mixed ring dimensions give each row its native modulus. The
+schedule gives every multi-chunk fold the quotient-lift relation mode; it
+admits reduced evaluation only for single-chunk folds. In every case the
+quotient is a linear function of the witness once the challenges are fixed.
+The single-ring displays therefore show the complete structure: the global
+quotient is the sum of the per-machine contributions, and the witness holds
+one shared quotient range, not one per machine.
+
 Each machine lifts its partial relation $\mathbf M_j\mathbf w_j = \mathbf h_j$ from
 $R_q = \mathbb Z_q[X]/(X^d+1)$ to $\mathbb Z_q[X]$: there is a unique quotient
 $\mathbf r_j \in (\mathbb Z_q^{<d}[X])^n$, with $n = n_A + n_B + n_D + 1$, such that
@@ -314,18 +330,6 @@ partial commitments. The aggregated quotient is digit-decomposed as
 $\widehat{\mathbf r} := \mathbf G_{b,n}^{-1}(\mathbf r)$, recovering the same
 ring-switch witness shape as the single-machine protocol — except the root witness
 stays written as the concatenation of the per-machine witnesses.
-
-The display above shows the lift for rows over one ring $R_q$. The complete
-relation has more row kinds, and each is lifted in its own ring. The packed
-consistency row is lifted in $E[U]$ with modulus $U^s+1$; its quotient is the
-[packing quotient](./root-fold-ring-switch.md#the-packing-consistency-quotient)
-$Q_{\mathrm{pack}}$. A compressed payload adds the F and H rows with their own
-quotients, and mixed ring dimensions give each row its native modulus. Every
-multi-chunk fold uses quotient lifting; reduced evaluation is admitted only
-for single-chunk folds. In every case the quotient is a linear function of the
-witness once the challenges are fixed, so the global quotient is still the sum
-of the per-machine contributions and the witness holds one shared quotient
-range, not one per machine.
 
 Let $\mathbf w' := (\mathbf w \,\|\, \widehat{\mathbf r})$ be the extended witness.
 The lifted relation is $\mathbf M_{\mathrm{ext}}\mathbf w' = \mathbf h$ over

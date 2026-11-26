@@ -468,15 +468,15 @@ Subring coefficient packing shortens this partial by contracting one part of
 the inner axis before the opening digits are formed.
 
 The length of a partial matters because every partial is digit-decomposed and
-stored in the next committed witness, and the D commitment binds those digits.
-A shorter partial gives a shorter $\hat{\mathbf e}$ segment and a narrower D
-input. A packed partial has $D/\eta$ base-field coordinates instead of $D$,
-where $\eta$ is the packing factor defined below. Packing also binds an
+stored in the next committed witness, and the opening-commitment matrix
+$\mathbf D$ binds those digits. A shorter partial gives a shorter
+$\hat{\mathbf e}$ segment and a narrower input to $\mathbf D$. A packed
+partial has $D/\eta$ base-field coordinates instead of the $D$ coefficients of
+$E_b$, where $\eta$ is the packing factor defined below. Packing also binds an
 extension-valued opening directly, without EOR. The cost is a restriction on
 the fold challenge. The [next chapter](./akita-fold.md#subring-coefficient-packing-consistency)
-shows that the challenge must come from a smaller ring with only $s$
-coefficients. That ring needs its own sparse challenge family and can change
-the response bound.
+shows that the challenge must come from a ring that is smaller than $R$. That
+ring needs its own sparse challenge family and can change the response bound.
 
 The word "pack" has two meanings on this page. Equations (2) and (6) pack
 values into ring coefficients. That is a lossless change of representation.

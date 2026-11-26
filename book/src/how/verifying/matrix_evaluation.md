@@ -75,8 +75,9 @@ optional shared ordinary quotient rows
 compression digits, alignment ranges, and optional compression quotient rows
 ```
 
-For a root source or a frozen commitment group with `B_g` exact live blocks
-and `C` chunks, chunk `c` owns
+Every source group except an inherited recursive witness uses the proportional
+partition. This covers root sources and precommitted groups. For such a group
+with `B_g` exact live blocks and `C` chunks, chunk `c` owns
 
 $$
 \left[
@@ -88,7 +89,8 @@ $$
 A recursive witness does not use this formula. It inherits the block ranges
 of the chunk bodies that the previous fold produced, so its ranges can differ
 by more than one block. In a multi-chunk fold, each chunk body is also
-followed by an alignment gap. [Chunks and fold challenges](../proving/opening-points-layout.md#chunks-and-fold-challenges)
+followed by an alignment gap, so that the body ends on a block boundary of the
+next fold. [Chunks and fold challenges](../proving/opening-points-layout.md#chunks-and-fold-challenges)
 states the complete rule.
 
 In both cases the ranges cover the exact live prefix. They are not padded to

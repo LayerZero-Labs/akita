@@ -235,7 +235,9 @@ This locality has a cost. The $\hat{\mathbf e}$ and
 $\hat{\mathbf t}$ segments are partitioned across chunks and do not grow in
 total, but every chunk carries a full-width $\hat{\mathbf z}^{(j)}$ segment.
 For $C$ chunks, the live ordinary witness therefore gains
-$(C-1)|\hat{\mathbf z}|$ coordinates relative to the single-chunk layout.
+$(C-1)|\hat{\mathbf z}|$ coordinates relative to the single-chunk layout. The
+alignment gaps after the chunk bodies, described below, add further
+coordinates.
 
 | Object | Effect of multi-chunking |
 |---|---|
@@ -281,7 +283,8 @@ The schedule fixes the method of each nonterminal fold as follows:
 | level 2 or later | several | `SubringCoefficientPacking` |
 | level 2 or later | one | `SubringCoefficientPacking` or `EvaluationTrace` |
 
-Chunking is active only on the leading fold levels. After the last chunked
+The schedule uses several chunks only on the leading fold levels. After the
+last chunked
 fold, the witness has one chunk again, and a later fold may select
 `EvaluationTrace`. Such a fold is the single-chunk case. Its fold-evaluation
 consistency relation is the evaluation-trace relation of
@@ -304,7 +307,8 @@ Root source chunks use the [canonical proportional
 partition](./opening-points-layout.md#chunks-and-fold-challenges), including
 unequal and empty ranges. When the producer has multiple chunks, each emitted
 Z/E/T body is aligned to a multiple of the next fold's source-block coefficient
-width. The canonical prover fills the alignment gaps with zero. The next fold
+width, so that each body ends on a block boundary of the next fold. The
+canonical prover fills the alignment gaps with zero. The next fold
 inherits those bodies instead of repartitioning the witness equally; if its
 chunk count contracts, it merges adjacent owners. The last owner also receives
 the complete quotient and compression tail and the final power-of-two padding.
@@ -418,11 +422,12 @@ opening gadget weights $G_d^{\mathrm{open}}$, it is
 $$
 \operatorname{Rec}_{\mathrm{open}}(\hat{\mathbf e}_b)
 =
-\sum_{j,t,d}\beta_tG_d^{\mathrm{open}}\hat e_{b,d,t,j}U^j.
+\sum_{m,t,d}\beta_tG_d^{\mathrm{open}}\hat e_{b,d,t,m}U^m.
 $$
 
-In this formula $j$ is the retained coefficient index of the packed partial,
-not the chunk index. Collect the blocks belonging to chunk $j$ into
+Here $m$ is the retained coefficient index of the packed partial. The fold
+page writes it as $j$, which this section uses for the chunk index. Collect
+the blocks belonging to chunk $j$ into
 $\hat{\mathbf e}^{(j)}$. The complete opening-digit vector is their
 concatenation:
 
@@ -563,7 +568,7 @@ directly.
 
 This aggregation must also be reflected in weak binding. Stage 1 checks every
 $\hat{\mathbf z}^{(j)}$ against the same balanced digit interval, but the shared
-A rows bind $\mathbf z_\Sigma=\sum_j\mathbf z^{(j)}$. For basis $b$ and fold
+A rows bind the sum $\mathbf z=\sum_j\mathbf z^{(j)}$. For basis $b$ and fold
 depth $\delta$, one accepted chunk has exact difference diameter
 $b^\delta-1$; $C$ accepted chunks therefore have aggregate diameter
 $C(b^\delta-1)$. The A-role SIS row is sized for this aggregate envelope, not
