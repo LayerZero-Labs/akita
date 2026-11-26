@@ -197,8 +197,11 @@ The most useful order depends on what you need.
 6. [Fold path and field geometry](./fold-path.md)
 7. [Sum-check stages](./sumcheck-stages.md)
 
-Read [Root fold and ring switching](./root-fold-ring-switch.md) when you want
-the complete coefficient-packing derivation. Read [Extension-opening
+The coefficient-packing derivation has three parts. Read them in this order:
+the [direct scalar opening](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials),
+the [source consistency identity](./akita-fold.md#subring-coefficient-packing-consistency),
+and the [packing quotient and ring switch](./root-fold-ring-switch.md#subring-coefficient-packing).
+Read [Extension-opening
 reduction](./extension-opening-reduction.md) for the evaluation-trace path over
 a proper extension field.
 

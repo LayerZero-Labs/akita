@@ -182,7 +182,8 @@ h   = 2,
 k h = 8,
 ```
 
-the A-ring coefficient index is `a + 8j`. For every fixed `j`, the partial
+the A-ring coefficient index is `u + 8j`, where `h` is the packing factor
+$\eta$ and `u` is the column index. For every fixed `j`, the partial
 contracts eight base-field coefficients into one element of the degree-four
 extension field. That value occupies four base-field coordinates:
 
@@ -320,7 +321,7 @@ both the mathematical layout and the physical recursive-witness layout; the
 row geometry records the native dimension and the number of coordinate planes.
 
 The coefficient-packing consistency row is the one nonstandard geometry. It is
-an equation over `E[Y]/(Y^s + 1)`, represented as `k` base-field coordinate
+an equation over `E[U]/(U^s + 1)`, represented as `k` base-field coordinate
 planes of length `s`. Its quotient therefore has `k s` physical coordinates.
 It is not reinterpreted as one ring of dimension `k s`. Its modulus evaluates
 to `alpha^s + 1`, as in the packing identity in Equation (2).

@@ -15,9 +15,11 @@ $$
 The opening-consistency relation has two method-dependent geometries:
 
 - `EvaluationTrace` keeps a full ring partial and proves the relation in $R$.
-- `SubringCoefficientPacking` keeps $s$ extension-field coefficients, proves
-  the corresponding relation in the challenge subring, and embeds the same
-  sparse challenge into $R$ for the source fold.
+- `SubringCoefficientPacking` keeps $s$ extension-field coefficients and
+  proves the corresponding relation in the extension opening ring
+  $E[U]/(U^s+1)$. It samples the sparse fold challenge from the challenge
+  subring $F[U]/(U^s+1)$ and embeds the same challenge into $R$ for the source
+  fold.
 
 The other three semantic roles—inner-commitment, outer-commitment, and
 opening-commitment consistency—are unchanged by that choice.
@@ -511,6 +513,21 @@ U(e_0+e_1U)
 =
 UL(\mathbf s).
 $$
+
+A general element of $R$ does not have this property. Multiplying by $X$
+moves every entry one column to the right, so the first row becomes
+$(-b_3,a_0,a_1,a_2)$. Its packed value is
+
+$$
+-I_0^{\mathrm{pack}}b_3
++I_1^{\mathrm{pack}}a_0
++I_2^{\mathrm{pack}}a_1
++I_3^{\mathrm{pack}}a_2.
+$$
+
+Each entry now meets a different packing weight, so $e_0$ and $e_1$ do not
+determine this value. Only the powers of $X^{k\eta}$ move complete rows, and
+their linear combinations are exactly the image of $\iota$.
 
 Because any $c(U)\in S$ is a linear combination of these row shifts, the same
 commuting identity holds for every challenge:

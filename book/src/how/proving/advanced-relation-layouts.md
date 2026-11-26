@@ -235,7 +235,9 @@ This locality has a cost. The $\hat{\mathbf e}$ and
 $\hat{\mathbf t}$ segments are partitioned across chunks and do not grow in
 total, but every chunk carries a full-width $\hat{\mathbf z}^{(j)}$ segment.
 For $C$ chunks, the live ordinary witness therefore gains
-$(C-1)|\hat{\mathbf z}|$ coordinates relative to the single-chunk layout.
+$(C-1)|\hat{\mathbf z}|$ coordinates relative to the single-chunk layout. The
+alignment gaps after the chunk bodies, described below, add further
+coordinates.
 
 | Object | Effect of multi-chunking |
 |---|---|
@@ -247,8 +249,8 @@ $(C-1)|\hat{\mathbf z}|$ coordinates relative to the single-chunk layout.
 ### Chunk ranges and commitment-side data
 
 To isolate the chunk axis, assume one commitment group, one polynomial claim,
-the `EvaluationTrace` opening method, one unsliced $\mathbf B$ matrix, and one
-common ring
+the `SubringCoefficientPacking` opening method, one unsliced $\mathbf B$
+matrix, and one common ring
 
 $$
 R=F[X]/(X^D+1).
@@ -257,14 +259,38 @@ $$
 Commitment slicing is a separate axis. It uses the same proportional partition,
 as described in [B slices and chunks](./opening-points-layout.md#b-slices-and-chunks).
 
-The `EvaluationTrace` assumption only simplifies the notation. Admitted
-schedules do not combine it with chunking: every multi-chunk fold must use
-subring coefficient packing, and schedule validation rejects a multi-chunk
-fold that selects evaluation trace. The chunk partition, the per-chunk
-responses, and the aggregate $\mathbf A$ relation (5) below do not depend on
-the opening method. In a real multi-chunk fold, the fold-evaluation
-consistency relation (4) takes its packed form from
-[Semantic relations in an Akita fold](./akita-fold.md#subring-coefficient-packing-consistency).
+Every multi-chunk fold uses subring coefficient packing. Schedule validation
+rejects a multi-chunk fold that selects `EvaluationTrace`. This section
+therefore reuses the packing objects from
+[Semantic relations in an Akita fold](./akita-fold.md#subring-coefficient-packing-consistency):
+
+| Object | Meaning |
+|---|---|
+| $S=F[U]/(U^s+1)$ | challenge subring; the transcript samples each $c_b$ from it |
+| $\iota:S\hookrightarrow R$ | embedding with $\iota(U)=X^{k\eta}$; the source fold uses $\iota(c_b)$ |
+| $C_{\mathrm{pack}}=E[U]/(U^s+1)$ | ring of the packed partials; the fold page calls it $C$, which this section uses for the chunk count |
+| $L$ | public linear packing map from one source-block vector to $C_{\mathrm{pack}}$ |
+
+The identity that connects them is $L(\iota(c)\mathbf s)=cL(\mathbf s)$ for
+every $c\in S$. Chunking does not change these objects. It only restricts the
+sums over blocks to one block range at a time.
+
+The schedule fixes the method of each nonterminal fold as follows:
+
+| Fold | Chunks | Opening method |
+|---|---|---|
+| level 0 or 1 | one or several | `SubringCoefficientPacking` |
+| level 2 or later | several | `SubringCoefficientPacking` |
+| level 2 or later | one | `SubringCoefficientPacking` or `EvaluationTrace` |
+
+The schedule uses several chunks only on the leading fold levels. After the
+last chunked
+fold, the witness has one chunk again, and a later fold may select
+`EvaluationTrace`. Such a fold is the single-chunk case. Its fold-evaluation
+consistency relation is the evaluation-trace relation of
+[Semantic relations in an Akita fold](./akita-fold.md#1-fold-evaluation-consistency),
+and none of the chunk sums below appear in it. The combination of several
+chunks with `EvaluationTrace` does not occur.
 
 Let $N$ be the number of live blocks. Let $C$ be a supported power-of-two chunk
 count and, for this derivation, assume $C\mid N$. For $j=0,\ldots,C-1$, chunk
@@ -281,7 +307,8 @@ Root source chunks use the [canonical proportional
 partition](./opening-points-layout.md#chunks-and-fold-challenges), including
 unequal and empty ranges. When the producer has multiple chunks, each emitted
 Z/E/T body is aligned to a multiple of the next fold's source-block coefficient
-width. The canonical prover fills the alignment gaps with zero. The next fold
+width, so that each body ends on a block boundary of the next fold. The
+canonical prover fills the alignment gaps with zero. The next fold
 inherits those bodies instead of repartitioning the witness equally; if its
 chunk count contracts, it merges adjacent owners. The last owner also receives
 the complete quotient and compression tail and the final power-of-two padding.
@@ -293,8 +320,8 @@ filler becomes part of the next fold's source and can affect its responses,
 which must still meet that fold's enforced bounds. See
 [response security accounting](../security.md#alignment-coordinates).
 This ownership changes no relation below.
-The transcript still samples one challenge $c_b$ for every global live block; it does not sample an
-independent challenge family for each chunk.
+The transcript still samples one challenge $c_b\in S$ for every global live
+block; it does not sample an independent challenge family for each chunk.
 
 Before the opening query, the incoming commitment has already fixed the
 commitment-side data. For every $b\in\mathcal I_j$, the commitment computation
@@ -373,22 +400,34 @@ Multi-chunking does not create one compression payload per chunk.
 
 ### Chunk-local partial evaluations and opening commitment
 
-The opening point supplies the same opening vector $(Q_p)_p$ as in the basic
-derivation. Let $\mathbf G_{\mathrm{in}}$ recompose the inner digits at every
-position of a block, and let $\mathbf Q$ be the row map induced by the weights
-$Q_p$. For every block $b\in\mathcal I_j$, chunk $j$ computes the partial
-evaluation directly from its block vector and decomposes the result:
+The opening point supplies the same position weights $Q_p$ and packing weights
+$I_u^{\mathrm{pack}}$ as in the basic derivation. The packing map $L$ applies
+them, together with the inner gadget weights. For every block
+$b\in\mathcal I_j$, chunk $j$ computes the packed partial directly from its
+block vector and decomposes the result:
 
 $$
-E_b
+e_b
 =
-\mathbf Q\mathbf G_{\mathrm{in}}\mathbf s_b
+L(\mathbf s_b)
 =
-\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b.
+\operatorname{Rec}_{\mathrm{open}}(\hat{\mathbf e}_b)
+\qquad\text{in }C_{\mathrm{pack}}.
 $$
 
-Here $\mathbf G_{\mathrm{open}}$ recomposes the opening digits
-$\hat{\mathbf e}_b$ of $E_b$. Collect the blocks belonging to chunk $j$ into
+Here $\operatorname{Rec}_{\mathrm{open}}$ rebuilds a packed partial from its
+opening digits. With the canonical basis $\beta_t$ of $E$ over $F$ and the
+opening gadget weights $G_d^{\mathrm{open}}$, it is
+
+$$
+\operatorname{Rec}_{\mathrm{open}}(\hat{\mathbf e}_b)
+=
+\sum_{m,t,d}\beta_tG_d^{\mathrm{open}}\hat e_{b,d,t,m}U^m.
+$$
+
+Here $m$ is the retained coefficient index of the packed partial. The fold
+page writes it as $j$, which this section uses for the chunk index. Collect
+the blocks belonging to chunk $j$ into
 $\hat{\mathbf e}^{(j)}$. The complete opening-digit vector is their
 concatenation:
 
@@ -400,7 +439,7 @@ $$
 \hat{\mathbf e}^{(C-1)}.
 $$
 
-The partial evaluations $E_b$ and the digit segments
+The packed partials $e_b$ and the digit segments
 $\hat{\mathbf e}^{(j)}$ remain local to their chunks. Partition the columns of
 the opening-commitment matrix along the same ranges,
 
@@ -452,13 +491,14 @@ transcript samples the fold challenges $c_b$. Computing the basic global
 response at this point would require the workers to reduce a full-width
 vector. Multi-chunking instead keeps the response local.
 
-Chunk $j$ then folds only its own source blocks:
+Chunk $j$ then folds only its own source blocks, with the embedded
+challenges:
 
 $$
 \boxed{
 \mathbf z^{(j)}
 =
-\sum_{b\in\mathcal I_j}c_b\mathbf s_b.
+\sum_{b\in\mathcal I_j}\iota(c_b)\mathbf s_b.
 }
 \tag{3}
 $$
@@ -528,7 +568,7 @@ directly.
 
 This aggregation must also be reflected in weak binding. Stage 1 checks every
 $\hat{\mathbf z}^{(j)}$ against the same balanced digit interval, but the shared
-A rows bind $\mathbf z_\Sigma=\sum_j\mathbf z^{(j)}$. For basis $b$ and fold
+A rows bind the sum $\mathbf z=\sum_j\mathbf z^{(j)}$. For basis $b$ and fold
 depth $\delta$, one accepted chunk has exact difference diameter
 $b^\delta-1$; $C$ accepted chunks therefore have aggregate diameter
 $C(b^\delta-1)$. The A-role SIS row is sized for this aggregate envelope, not
@@ -543,30 +583,35 @@ $$
 \begin{gathered}
 \sum_{j=0}^{C-1}
 \sum_{b\in\mathcal I_j}
-c_bE_b
+c_be_b
 =
-\mathbf Q\mathbf G_{\mathrm{in}}\mathbf z,
+L(\mathbf z)
+\qquad\text{in }C_{\mathrm{pack}},
 \\
 \sum_{j=0}^{C-1}
 \sum_{b\in\mathcal I_j}
-c_b\mathbf t_b
+\iota(c_b)\mathbf t_b
 =
-\mathbf A\mathbf z.
+\mathbf A\mathbf z
+\qquad\text{in }R.
 \end{gathered}
 $$
 
-Substituting the digit decompositions of $E_b$, $\mathbf t_b$, and the derived
-$\mathbf z$ gives the aggregate fold-evaluation consistency relation
+The first identity uses $L(\iota(c_b)\mathbf s_b)=c_be_b$ for every block. The
+map $L$ is linear, so it also splits over the chunk-local responses:
+$L(\mathbf z)=\sum_jL(\mathbf z^{(j)})$. Substituting the digit decompositions
+of $e_b$, $\mathbf t_b$, and the derived $\mathbf z$ gives the aggregate
+fold-evaluation consistency relation
 
 $$
 \boxed{
 \sum_{j=0}^{C-1}
 \sum_{b\in\mathcal I_j}
-c_b\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b
+c_b\operatorname{Rec}_{\mathrm{open}}(\hat{\mathbf e}_b)
 =
 \sum_{j=0}^{C-1}
-\mathbf Q\mathbf G_{\mathrm{in}}\mathbf G_{\mathrm{fold}}
-\hat{\mathbf z}^{(j)}.
+L\!\left(\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}\right)
+\qquad\text{in }C_{\mathrm{pack}}.
 }
 \tag{4}
 $$
@@ -577,14 +622,18 @@ $$
 \boxed{
 \sum_{j=0}^{C-1}
 \sum_{b\in\mathcal I_j}
-c_b\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
+\iota(c_b)\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
 =
 \sum_{j=0}^{C-1}
 \mathbf A\mathbf G_{\mathrm{fold}}
-\hat{\mathbf z}^{(j)}.
+\hat{\mathbf z}^{(j)}
+\qquad\text{in }R.
 }
 \tag{5}
 $$
+
+Equations (4) and (5) use the same transcript challenges $c_b$. Equation (4)
+uses them in $S$, and Equation (5) uses their embeddings in $R$.
 
 ### Semantic relations remain unchanged
 
@@ -596,10 +645,9 @@ $$
 \sum_{j=0}^{C-1}
 \left(
 \sum_{b\in\mathcal I_j}
-c_b\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b
+c_b\operatorname{Rec}_{\mathrm{open}}(\hat{\mathbf e}_b)
 -
-\mathbf Q\mathbf G_{\mathrm{in}}\mathbf G_{\mathrm{fold}}
-\hat{\mathbf z}^{(j)}
+L\!\left(\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}\right)
 \right)
 &=0,
 &&\text{fold-evaluation consistency},
@@ -607,7 +655,7 @@ c_b\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b
 \sum_{j=0}^{C-1}
 \left(
 \sum_{b\in\mathcal I_j}
-c_b\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
+\iota(c_b)\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
 -
 \mathbf A\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}
 \right)
@@ -626,8 +674,9 @@ c_b\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
 \end{aligned}
 $$
 
-These are the same four semantic relations as in the basic setting. Their
-semantic target remains
+These are the same four semantic relations as in the basic setting. The first
+is a relation in $C_{\mathrm{pack}}$; the other three are relations in $R$. Their semantic
+target remains
 
 $$
 \mathbf y
@@ -643,9 +692,12 @@ rows.
 Raw and compressed modes realize these same semantic relations as described on
 the [realizations page](./akita-fold-realizations.md). Chunking does not
 replicate the ordinary quotient family or the shared $\mathbf F/\mathbf H$
-compression chains. A multi-chunk fold uses subring coefficient packing, so it
-has no field-valued evaluation-trace relation. Its opening consistency is the
-[packed relation](./akita-fold.md#subring-coefficient-packing-consistency)
+compression chains. The packed fold-evaluation consistency relation is
+realized through one
+[packing quotient](./root-fold-ring-switch.md#the-packing-consistency-quotient)
+for the group, not one quotient per chunk. A multi-chunk fold has no
+field-valued evaluation-trace relation. Its scalar opening is the
+[direct packed opening relation](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials)
 over the chunk-local opening-digit ranges.
 
 When $C=1$, the sole range contains every live block, the single local response
@@ -705,6 +757,11 @@ consistency families remain $\mathbf A$-native, while the two commitment-image
 families use the native rings of $\mathbf B$ and $\mathbf D$.
 
 ### Role-native projection and decomposition
+
+Let $\mathbf G_{\mathrm{in}}$ recompose the inner digits at every position of
+a block, and let $\mathbf Q$ be the row map induced by the position weights
+$Q_p$. The evaluation-trace partial of block $b$ is then
+$E_b=\mathbf Q\mathbf G_{\mathrm{in}}\mathbf s_b$.
 
 The source block $\mathbf s_b$, its inner image
 $\mathbf t_b=\mathbf A\mathbf s_b$, the partial evaluation $E_b$, and the

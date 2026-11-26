@@ -337,8 +337,10 @@ The embedding preserves the coefficient norms of the challenge. It also
 preserves invertibility. These properties let the protocol use a compact
 challenge without changing the security bound applied after embedding.
 
-The [root fold and ring switching](../how/proving/root-fold-ring-switch.md#subring-coefficient-packing)
-chapter shows the full coefficient grid and the current packed proof relation.
+The proving chapters write the same quantities as $k$ for $K$, $\eta$ for $h$,
+and $U$ for $Y$. [Field-to-ring evaluation reduction](../how/proving/field-ring-reduction.md#subring-coefficient-packing-shorter-partials)
+shows the full coefficient grid. [Root fold and ring switching](../how/proving/root-fold-ring-switch.md#subring-coefficient-packing)
+gives the current packed proof relation.
 
 ## Implementation and review map
 
