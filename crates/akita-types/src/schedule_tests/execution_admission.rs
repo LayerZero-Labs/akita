@@ -2,12 +2,12 @@ use super::*;
 pub(super) use akita_params::test_fixtures::exact_test_a_bound;
 
 #[test]
-fn accepts_packing_prefix_then_evaluation_trace_prefix() {
+fn rejects_extension_trace_prefix_and_accepts_packing_prefix() {
     let packing = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
     let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-    let mut schedule = recursive_schedule(64, 64, true);
+    let mut schedule = recursive_schedule(128, 128, true);
     schedule.root.params.witness_chunk = akita_params::MultiChunkProfileId::W2R2.cfg();
     schedule.recursive_folds[0].params.witness_chunk =
         akita_params::MultiChunkProfileId::W2R2.cfg();
@@ -56,7 +56,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     level2.params.own_group_mut().opening.opening_method = OpeningMethod::EvaluationTrace;
     level2.params.own_group_mut().opening.fold_challenge_config = production;
     level2.params.own_group_mut().opening.fold_challenge_config = production;
-    let natural_len = 64;
+    let natural_len = 128;
     provision_setup_prefix_capacity(&mut level2.params, natural_len);
     let commitment_params =
         akita_params::setup_prefix_precommitted_params(&level2.params, natural_len)
@@ -103,6 +103,27 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
         .unwrap();
     assert_ne!(digest, crate::digest_effective_schedule(&changed));
     assert!(changed.validate_nonterminal_opening_execution(1).is_err());
+
+    // The same later prefix is canonical, so an extension-field trace cannot
+    // interpret its coefficients as a tensor-subfield commitment.
+    use_expected_producer_encodings(&mut schedule, 2);
+    let error = schedule
+        .validate_nonterminal_opening_execution(2)
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        AkitaError::InvalidSetup(
+            "extension-field setup prefixes require subring coefficient packing".into(),
+        )
+        .to_string(),
+    );
+    schedule.recursive_folds[1]
+        .params
+        .set_setup_prefix(None)
+        .unwrap();
+    schedule
+        .validate_nonterminal_opening_execution(2)
+        .expect("a tensor witness without a canonical prefix still admits evaluation trace");
 }
 
 fn use_expected_producer_encodings(schedule: &mut FoldSchedule, extension_degree: usize) {
